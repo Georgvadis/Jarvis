@@ -27,14 +27,6 @@
     ["retro", "Ретро"],
     ["minimal", "Минимал"],
   ];
-  const services = [
-    ["alice", "Алиса", "Джарвис передаёт команду штатной Алисе — она умеет всё, что подключено к Яндексу", () => true],
-    ["yandexmusic", "Яндекс Музыка", "«Включи музыку», «поставь песню…» Джарвис отдаёт Алисе — играет из Яндекс Музыки. Выключено — всё играет с YouTube", () => true],
-    ["smartlife", "Smart Life", "Напрямую по домашней сети — быстрее всего", (state) => state.smartlife?.signed_in],
-    ["xiaomi", "Xiaomi Home", "Через облако Xiaomi: пылесос, увлажнитель, лампы Mi Home", (state) => state.xiaomi?.signed_in],
-    ["yandex", "Яндекс Умный дом", "Сам Джарвис через API Яндекса, без Алисы — нужен токен", (state) => !!state.keys?.yandex],
-    ["homeassistant", "Home Assistant", "Ваш сервер Home Assistant", (state) => state.home_assistant?.configured],
-  ];
 
   const ranges = [
     {
@@ -556,46 +548,10 @@
   </div>
 </header>
 
-{#snippet homeFields()}
-  <div class={styles.services}>
-    {#each services as [id, name, description, ready] (id)}
-      {@const available = !!ready(state)}
-      {@const checked = available && settings.home_use?.[id] !== false}
-      <label class={["sw hu", { off: !available }]}>
-        <input type="checkbox" {checked} disabled={!available || pending.has(id)}
-          onchange={(event) => {
-            const input = event.currentTarget;
-            const next = input.checked;
-            input.checked = checked;
-            saveService(id, name, next);
-          }}>
-        <span class="tr"></span>
-        <span class="hu-t">
-          <b>{name}</b>
-          <small>{description}{#if !available} · <a href="/connections">сначала подключите</a> — тогда галочка включится сама{/if}</small>
-        </span>
-      </label>
-    {/each}
-  </div>
-{/snippet}
-{#if tab === "general"}
-  {@render settingSection("Умный дом и музыка",
-    "",
-    homeFields, "home")}
-{/if}
-
-{#snippet locationFields()}
-  <div class="f">
-    <label for="s-room">Комната, где стоит колонка {@html tip("«Выключи свет», «включи кондиционер» без названия комнаты — Джарвис сделает это здесь, как Алиса.")}</label>
-    <input id="s-room" type="text" list="s-rooms" value={settings.speaker_room || ""} disabled={pending.has("speaker_room")}
-      placeholder="Например, Зал" autocomplete="off" onchange={(event) => saveText(event, "speaker_room")}>
-    <datalist id="s-rooms">
-      {#each state.rooms || [] as room}<option value={room}></option>{/each}
-    </datalist>
-  </div>
+{#snippet generalFields()}
   <div class="grid g2">
     <div class="f">
-      <label for="s-city">Город</label>
+      <label for="s-city">Город {@html tip("Используется для прогноза погоды и утреннего брифинга.")}</label>
       <input id="s-city" type="text" value={settings.city || ""} disabled={pending.has("city")}
         placeholder="Например, Москва" onchange={(event) => saveText(event, "city")}>
     </div>
@@ -609,11 +565,29 @@
       </select>
     </div>
   </div>
+  <div class="f">
+    <span class="lbl">Язык общения</span>
+    <div class="seg" role="group" aria-label="Язык общения">
+      {#each languages as [id, label] (id)}
+        <button type="button" class:on={language === id} aria-pressed={language === id}
+          disabled={pending.has("language")} onclick={() => saveLanguage(id, label)}>{label}</button>
+      {/each}
+    </div>
+  </div>
+  <label class="sw">
+    <input type="checkbox" checked={settings.home_use?.yandexmusic !== false} disabled={pending.has("yandexmusic")}
+      onchange={(event) => {
+        const input = event.currentTarget;
+        const next = input.checked;
+        input.checked = settings.home_use?.yandexmusic !== false;
+        saveService("yandexmusic", "Яндекс Музыка", next);
+      }}>
+    <span class="tr"></span>
+    Яндекс Музыка через Алису {@html tip("Выключено — вся музыка по голосовым запросам играет через YouTube.")}
+  </label>
 {/snippet}
 {#if tab === "general"}
-  {@render settingSection("Локация",
-    "",
-    locationFields, "globe")}
+  {@render settingSection("Основные", "", generalFields, "sliders")}
 {/if}
 
 {#snippet wakeFields()}
@@ -758,20 +732,6 @@
 {/snippet}
 {#if tab === "voice"}
   {@render settingSection("Микрофон и активация", "", wakeFields, "mic")}
-{/if}
-
-{#snippet languageFields()}
-  <div class="seg" role="group" aria-label="Язык общения">
-    {#each languages as [id, label] (id)}
-      <button type="button" class:on={language === id} aria-pressed={language === id}
-        disabled={pending.has("language")} onclick={() => saveLanguage(id, label)}>{label}</button>
-    {/each}
-  </div>
-{/snippet}
-{#if tab === "general"}
-  {@render settingSection("Язык",
-    "",
-    languageFields, "globe")}
 {/if}
 
 {#if tab === "light"}

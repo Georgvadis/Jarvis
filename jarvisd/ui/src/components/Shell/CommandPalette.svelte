@@ -14,10 +14,10 @@
 
   let items = $derived.by(() => {
     const list = [
-      { id: "nav-home", group: "Навигация", label: "Главная", hint: "Чат и быстрый пульт", icon: "home", action: () => goto("/") },
+      { id: "nav-home", group: "Навигация", label: "Гостиная", hint: "Очаг, сценарии, беседа и уют", icon: "flame", action: () => goto("/") },
       { id: "nav-player", group: "Навигация", label: "Медиа", hint: "Плеер, YouTube, AI-DJ, фон", icon: "music", action: () => goto("/player") },
       { id: "nav-dj", group: "Навигация", label: "AI-DJ", hint: "Медиа · Умный радиоэфир", icon: "disc", action: () => goto("/player?tab=dj") },
-      { id: "nav-ambient", group: "Навигация", label: "Фон и радио", hint: "Медиа · Фоновые звуки", icon: "radio", action: () => goto("/player?tab=ambient") },
+      { id: "nav-ambient", group: "Навигация", label: "Камин и радио", hint: "Медиа · Фоновые звуки", icon: "radio", action: () => goto("/player?tab=ambient") },
       { id: "nav-studio", group: "Навигация", label: "Студия", hint: "Подкаст, книги, игры, автоматизации", icon: "layers", action: () => goto("/studio") },
       { id: "nav-books", group: "Навигация", label: "Библиотека книг", hint: "Студия · Книги", icon: "book", action: () => goto("/studio?tab=books") },
       { id: "nav-games", group: "Навигация", label: "Голосовые игры", hint: "Студия · Мелодия, Детектив, Мафия", icon: "gamepad", action: () => goto("/studio?tab=games") },
@@ -25,12 +25,12 @@
       { id: "nav-memory", group: "Навигация", label: "Знания и память", hint: "Умный поиск и факты", icon: "brain", action: () => goto("/memory") },
       { id: "nav-notes", group: "Навигация", label: "Заметки CyberNotes", hint: "Знания · Заметки", icon: "note", action: () => goto("/memory?tab=notes") },
       { id: "nav-chars", group: "Навигация", label: "Характеры", hint: "Ассистенты · Системные роли", icon: "smile", action: () => goto("/characters") },
-      { id: "nav-speaker", group: "Навигация", label: "Система · Колонка", hint: "Звук, ПК, присутствие", icon: "speaker", action: () => goto("/speaker") },
-      { id: "nav-speaker-int", group: "Навигация", label: "Система · Интеграции", hint: "ПК-компаньон, Home Assistant", icon: "link", action: () => goto("/speaker?tab=integrations") },
-      { id: "nav-conn", group: "Навигация", label: "Система · Подключения", hint: "Ключи и плагины", icon: "puzzle", action: () => goto("/connections") },
-      { id: "nav-charts", group: "Навигация", label: "Система · Мониторинг", hint: "Узлы, CPU, память, температура", icon: "activity", action: () => goto("/charts") },
-      { id: "nav-logs", group: "Навигация", label: "Система · Журнал", hint: "Логи событий", icon: "terminal", action: () => goto("/logs") },
-      { id: "nav-sec", group: "Навигация", label: "Система · Защита", hint: "Пароль, бэкап и обновления", icon: "shield", action: () => goto("/security") },
+      { id: "nav-speaker", group: "Навигация", label: "Настройки · Колонка", hint: "Звук, микрофон, свет и ночь", icon: "speaker", action: () => goto("/speaker") },
+      { id: "nav-speaker-int", group: "Навигация", label: "Настройки · Интеграции", hint: "ПК-компаньон, присутствие, Ollama, брифинг", icon: "link", action: () => goto("/speaker?tab=integrations") },
+      { id: "nav-conn", group: "Навигация", label: "Настройки · Сервисы и ИИ", hint: "Ключи, YouTube, VPN и плагины", icon: "puzzle", action: () => goto("/connections") },
+      { id: "nav-charts", group: "Навигация", label: "Настройки · Мониторинг", hint: "Узлы, CPU, память, температура", icon: "activity", action: () => goto("/charts") },
+      { id: "nav-logs", group: "Навигация", label: "Настройки · Журнал", hint: "Логи событий", icon: "terminal", action: () => goto("/logs") },
+      { id: "nav-sec", group: "Навигация", label: "Настройки · Бэкап и доступ", hint: "Пароль и резервная копия", icon: "shield", action: () => goto("/security") },
 
       { id: "sc-work", group: "Сценарии", label: "Режим работы", hint: "Фокус 25м + тихий Lo-Fi", icon: "briefcase", action: () => runScenario("work") },
       { id: "sc-evening", group: "Сценарии", label: "Вечерний режим", hint: "AI-DJ или джаз", icon: "moon", action: () => runScenario("evening") },

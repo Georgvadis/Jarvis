@@ -43,7 +43,6 @@
   let focusRem = $derived(Number($activity.focus?.remaining_s || 0));
   let isTalking = $state(Boolean(S.speaker?.talking));
   let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
-  let completed = $derived(overview.steps.filter(({ done }) => done).length);
 
   let liveItems = $derived(summarizeActivity($activity));
   let nonAmbientLive = $derived(liveItems.filter((i) => i.id !== "ambient"));
@@ -373,20 +372,6 @@
       </button>
     {/each}
   </section>
-
-  {#if completed < overview.steps.length}
-    <section class="card" aria-label="Первичная настройка">
-      <h2>{@html icon("sparkles")} Настройка <span class="count">{completed} из {overview.steps.length}</span></h2>
-      <progress class="bar" value={completed} max={overview.steps.length} aria-label="Настройка колонки"></progress>
-      {#each overview.steps as step (step.title)}
-        <a class="step" class:done={step.done} href={step.href}>
-          {@html icon(step.done ? "done" : "todo")}
-          <span class="sb"><b>{step.title}</b><small>{step.text}</small></span>
-          {#if !step.done}{@html icon("right")}{/if}
-        </a>
-      {/each}
-    </section>
-  {/if}
 
   <!-- Уровень 3: Сбалансированная гостиная (Беседа + Уют и управление) -->
   <div class="home" class:chat-expanded={chatExpanded}>

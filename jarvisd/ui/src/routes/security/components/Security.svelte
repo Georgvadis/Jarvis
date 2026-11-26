@@ -2,9 +2,7 @@
   import SystemNav from "#components/Shell/SystemNav.svelte";
   import { act, api, icon, tip } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
-  import { wizOpen } from "#state/wizard.js";
   import Backup from "./Backup/Backup.svelte";
-  import Updates from "./Updates/Updates.svelte";
 
   let currentPassword = $state("");
   let newPassword = $state("");
@@ -55,7 +53,7 @@
 <SystemNav current="security" />
 
 <header class="ph">
-  <h1>Защита и бэкап</h1>
+  <h1>Бэкап и доступ</h1>
 </header>
 
 <section class="sec">
@@ -125,28 +123,7 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>{@html icon("refresh")}Обновления</h2>
-  </div>
-  <div class="sec-b"><Updates /></div>
-</section>
-
-<section class="sec">
-  <div class="sec-h">
     <h2>{@html icon("archive")}Резервная копия</h2>
   </div>
   <div class="sec-b"><Backup /></div>
-</section>
-
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("sparkles")}Знакомство</h2>
-  </div>
-  <div class="sec-b">
-    <div class="row">
-      <button class="btn" type="button" onclick={() => wizOpen(0)}>{@html icon("right")}Показать знакомство</button>
-      <a class="btn ghost" href="https://github.com/newfpv/YaJarvis" target="_blank" rel="noopener noreferrer">
-        {@html icon("ext")}GitHub
-      </a>
-    </div>
-  </div>
 </section>

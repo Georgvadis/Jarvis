@@ -14,7 +14,7 @@ const servicePlugin = (id) => S.providers?.[id]?.plugin || "home";
 
 export const NET_NAMES = { chatgpt: "ChatGPT", openai: "OpenAI", gemini: "Gemini", grok: "Grok", elevenlabs: "ElevenLabs", youtube: "YouTube", vpn: "VPN" };
 export const VPN_NAMES = [["chatgpt", "Подписка ChatGPT"], ["openai", "OpenAI"], ["gemini", "Google Gemini"], ["grok", "xAI Grok"],
-  ["elevenlabs", "ElevenLabs"], ["youtube", "YouTube"], ["smartlife", "Smart Life"], ["xiaomi", "Xiaomi Home"], ["gdrive", "Google Диск"], ["yandex", "Яндекс"], ["plugins", "Плагины"]];
+  ["elevenlabs", "ElevenLabs"], ["youtube", "YouTube"], ["gdrive", "Google Диск"], ["plugins", "Плагины"]];
 
 function homeProvider(id, mono, name, about, more) {
   const provider = S[id] || {};
@@ -79,10 +79,9 @@ export function connDefs() {
   ];
 }
 
-// Разделы вкладки «Сервисы».
+// Разделы вкладки «Сервисы» (без ненужного «Умного дома»).
 export const CONN_GROUPS = [
-  ["voice", "Голос и мозг", "Чем Джарвис говорит и думает. Достаточно одного"],
-  ["home", "Умный дом", "Свет, розетки, пылесосы и сценарии"],
+  ["voice", "Голос и ИИ", "Движки речи и модели"],
   ["media", "Музыка и видео", ""],
   ["system", "Сеть", ""],
 ];

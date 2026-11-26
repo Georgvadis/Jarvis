@@ -46,7 +46,7 @@
 <SystemNav current="connections" />
 
 <header class="section-head">
-  <h1>Подключения</h1>
+  <h1>Сервисы и ИИ</h1>
   <div class="section-head-right">
     {#if catalog}
       <div class="seg cx-tabs {styles.tabs}" id="cx-tabs" role="tablist" aria-label="Подключения">
