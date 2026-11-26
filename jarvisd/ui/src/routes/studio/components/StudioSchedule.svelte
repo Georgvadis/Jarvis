@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, icon, toast } from "#helpers/core.js";
   import { activity, fmtClock, refreshActivity } from "#state/activity.js";
+  import StudioScenarios from "./StudioScenarios.svelte";
 
   const QUICK_TIMERS = [
     { minutes: 3, label: "3 мин" },
@@ -65,6 +66,10 @@
   let rVolume = $state("");
 
   let timers = $derived(Array.isArray($activity.timers) ? $activity.timers : []);
+  let scenarioOptions = $derived([
+    ...SCENARIO_PRESETS,
+    ...($activity.custom_scenarios || []).map((s) => ({ id: s.id, label: s.name })),
+  ]);
   let ambientOptions = $derived(
     Array.isArray($activity.ambient?.presets) && $activity.ambient.presets.length
       ? $activity.ambient.presets
@@ -105,7 +110,7 @@
     if (!payload) return "";
     if (action === "scenario") {
       if (payload === "relax") return "Вечер";
-      return SCENARIO_PRESETS.find((s) => s.id === payload)?.label || payload;
+      return scenarioOptions.find((s) => s.id === payload)?.label || payload;
     }
     if (action === "ambient") {
       return ambientOptions.find((a) => a.id === payload)?.name || payload;
@@ -468,7 +473,7 @@
           <div class="f">
             <label for="sched-r-scen">Сценарий</label>
             <select id="sched-r-scen" bind:value={rPayload} disabled={busy}>
-              {#each SCENARIO_PRESETS as sc (sc.id)}
+              {#each scenarioOptions as sc (sc.id)}
                 <option value={sc.id}>{sc.label}</option>
               {/each}
             </select>
@@ -600,3 +605,5 @@
     </div>
   </section>
 </div>
+
+<StudioScenarios />

@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { api, icon, toast } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
-  import { refreshActivity, runScenario } from "#state/activity.js";
+  import { activity, refreshActivity, runScenario } from "#state/activity.js";
   import { refreshRoute, reload } from "#state/panelState.js";
   import { themeState, toggleThemeMode } from "#state/theme.js";
 
@@ -35,6 +35,14 @@
       { id: "sc-evening", group: "Сценарии", label: "Вечерний режим", hint: "AI-DJ или джаз", icon: "moon", action: () => runScenario("evening") },
       { id: "sc-sleep", group: "Сценарии", label: "Режим сна", hint: "Тихий океан · таймер 20м", icon: "moon", action: () => runScenario("sleep") },
       { id: "sc-morning", group: "Сценарии", label: "Утренний режим", hint: "Джаз · средняя громкость", icon: "coffee", action: () => runScenario("morning") },
+      ...($activity.custom_scenarios || []).map((sc) => ({
+        id: `sc-${sc.id}`,
+        group: "Сценарии",
+        label: sc.name,
+        hint: sc.phrase ? `«${sc.phrase}»` : `Шагов: ${sc.steps_count || 1}`,
+        icon: sc.icon || "sparkles",
+        action: () => runScenario(sc.id),
+      })),
 
       {
         id: "act-talk", group: "Действия", label: "Слушать прямо сейчас", hint: "Активировать микрофон", icon: "mic",

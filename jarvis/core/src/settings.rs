@@ -393,6 +393,12 @@ pub struct Settings {
     pub presence_away_min: i64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub presence_greeting: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub presence_arrive_scenario: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub presence_leave_scenario: String,
+    #[serde(default = "default_true")]
+    pub presence_notify_away_timers: bool,
     #[serde(default = "default_true")]
     pub cybernotes_enabled: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -495,6 +501,9 @@ impl Default for Settings {
             presence_phone_ip: String::new(),
             presence_away_min: default_presence_away_min(),
             presence_greeting: String::new(),
+            presence_arrive_scenario: String::new(),
+            presence_leave_scenario: String::new(),
+            presence_notify_away_timers: true,
             cybernotes_enabled: true,
             custom_radios: vec![],
             night: NightSettings::default(),

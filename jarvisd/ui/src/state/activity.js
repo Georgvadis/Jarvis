@@ -11,6 +11,7 @@ const DEFAULT_ACTIVITY = {
   debate_active: false,
   presence: { state: "unknown" },
   timers: [],
+  custom_scenarios: [],
 };
 
 export const activity = writable(DEFAULT_ACTIVITY);
@@ -39,6 +40,7 @@ export async function refreshActivity() {
       ...prev,
       ...data,
       timers: Array.isArray(data.timers) ? data.timers : [],
+      custom_scenarios: Array.isArray(data.custom_scenarios) ? data.custom_scenarios : prev.custom_scenarios,
       ambient: {
         ...prev.ambient,
         ...(data.ambient || {}),

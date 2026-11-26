@@ -12,6 +12,7 @@ mod games;
 mod modes;
 mod presence;
 mod reader;
+mod scenarios;
 mod scheduler;
 mod sfx;
 mod telegram_bot;
@@ -315,6 +316,7 @@ async fn run(f: Flags, store: settings::Store) {
     let dj = dj::AiDj::new();
     let presence = presence::Presence::new();
     let scheduler = scheduler::Scheduler::load(f.data.clone(), store.clone());
+    let scenarios = scenarios::ScenarioStore::load(f.data.clone());
     {
         let host = host.clone();
         let ambient = ambient.clone();
@@ -367,6 +369,8 @@ async fn run(f: Flags, store: settings::Store) {
     tools.games = Some(games.clone());
     tools.reader = Some(reader.clone());
     tools.dj = Some(dj.clone());
+    tools.scenarios = Some(scenarios.clone());
+    tools.presence = Some(presence.clone());
     {
         let ec = engine_cell.clone();
         tools.on_debate = Some(Arc::new(move |topic: String| {
@@ -441,7 +445,7 @@ async fn run(f: Flags, store: settings::Store) {
     presence.clone().spawn(engine.clone());
     scheduler.clone().spawn(engine.clone());
     telegram_bot::spawn(engine.clone(), host.clone(), proxy.clone(), ambient.clone(), focus.clone());
-    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes, reader, games, dj, presence, scheduler);
+    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes, reader, games, dj, presence, scheduler, scenarios);
     #[cfg(unix)]
     {
         let app = app.clone();

@@ -36,6 +36,13 @@ struct State {
     misses: u32,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProbeEvent {
+    None,
+    Arrived,
+    Left,
+}
+
 pub struct Presence {
     st: Mutex<State>,
 }
@@ -54,6 +61,10 @@ impl Presence {
         })
     }
 
+    pub fn is_away(&self) -> bool {
+        self.st.lock().unwrap().link == LinkState::Away
+    }
+
     pub fn status(&self, store: &Store) -> Value {
         let s = store.get();
         let g = self.st.lock().unwrap();
@@ -62,6 +73,9 @@ impl Presence {
             "ip": s.presence_phone_ip,
             "away_min": s.presence_away_min,
             "greeting": s.presence_greeting,
+            "arrive_scenario": s.presence_arrive_scenario,
+            "leave_scenario": s.presence_leave_scenario,
+            "notify_away_timers": s.presence_notify_away_timers,
             "state": g.link.as_str(),
             "last_seen_ago_s": g.last_seen.map(|t| t.elapsed().as_secs()),
             "away_for_s": g.away_since.map(|t| t.elapsed().as_secs()),
@@ -80,9 +94,28 @@ impl Presence {
                         .await
                         .unwrap_or(false);
                     let away_thresh = Duration::from_secs((s.presence_away_min.clamp(5, 240) as u64) * 60);
-                    let should_greet = self.update_probe(&ip, reachable, away_thresh, &engine.store);
-                    if should_greet {
-                        self.greet_home(&engine).await;
+                    match self.update_probe(&ip, reachable, away_thresh, &engine.store) {
+                        ProbeEvent::Arrived => {
+                            let sc_id = s.presence_arrive_scenario.trim().to_string();
+                            if !sc_id.is_empty() {
+                                engine.journal.note("присутствие", "Возвращение домой", &sc_id);
+                                if let Err(err) = crate::tools::run_scenario(engine.clone(), &sc_id) {
+                                    engine.journal.fail(&format!("Автоматизация прихода ({sc_id}): {err}"));
+                                }
+                            } else {
+                                self.greet_home(&engine).await;
+                            }
+                        }
+                        ProbeEvent::Left => {
+                            let sc_id = s.presence_leave_scenario.trim().to_string();
+                            if !sc_id.is_empty() {
+                                engine.journal.note("присутствие", "Уход из дома", &sc_id);
+                                if let Err(err) = crate::tools::run_scenario(engine.clone(), &sc_id) {
+                                    engine.journal.fail(&format!("Автоматизация ухода ({sc_id}): {err}"));
+                                }
+                            }
+                        }
+                        ProbeEvent::None => {}
                     }
                 } else {
                     let mut g = self.st.lock().unwrap();
@@ -98,7 +131,7 @@ impl Presence {
         });
     }
 
-    fn update_probe(&self, ip: &str, reachable: bool, away_thresh: Duration, store: &Store) -> bool {
+    fn update_probe(&self, ip: &str, reachable: bool, away_thresh: Duration, store: &Store) -> ProbeEvent {
         let mut g = self.st.lock().unwrap();
         if g.ip != ip {
             g.ip = ip.to_string();
@@ -118,9 +151,9 @@ impl Presence {
             g.away_since = None;
             if was_away_long && cooldown_ok && !store.is_night() {
                 g.last_greeted = Some(now);
-                return true;
+                return ProbeEvent::Arrived;
             }
-            return false;
+            return ProbeEvent::None;
         }
 
         // Unreachable
@@ -137,11 +170,12 @@ impl Presence {
                 if g.misses >= 4 {
                     g.link = LinkState::Away;
                     g.away_since = Some(now);
+                    return ProbeEvent::Left;
                 }
             }
             LinkState::Away => {}
         }
-        false
+        ProbeEvent::None
     }
 
     pub async fn greet_home(&self, engine: &Arc<Engine>) {
@@ -243,5 +277,31 @@ mod tests {
 192.168.1.50     0x1         0x0         00:00:00:00:00:00     *        wlan0\n";
         assert!(arp_line_reachable(sample, "192.168.1.1"));
         assert!(!arp_line_reachable(sample, "192.168.1.50"));
+    }
+
+    #[test]
+    fn probe_transitions_emit_left_and_arrived_events() {
+        let dir = std::env::temp_dir().join(format!("jarvis-pres-{}", crate::settings::rand_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(dir.join("settings.json")).unwrap();
+        let p = Presence::new();
+
+        // Unknown -> Home (первое подключение не стреляет Arrived)
+        assert_eq!(p.update_probe("192.168.1.50", true, Duration::from_secs(0), &store), ProbeEvent::None);
+        assert!(!p.is_away());
+
+        // Home -> Away требует 4 пропуска подряд
+        for i in 0..3 {
+            assert_eq!(p.update_probe("192.168.1.50", false, Duration::from_secs(0), &store), ProbeEvent::None, "miss {i}");
+        }
+        assert_eq!(p.update_probe("192.168.1.50", false, Duration::from_secs(0), &store), ProbeEvent::Left);
+        assert!(p.is_away());
+
+        // Away -> Home с zero away_thresh (при не ночном режиме; выставим день через update если нужно)
+        store.update(|s| { s.night.enabled = false; Ok::<(), std::io::Error>(()) }).unwrap();
+        assert_eq!(p.update_probe("192.168.1.50", true, Duration::from_secs(0), &store), ProbeEvent::Arrived);
+        assert!(!p.is_away());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

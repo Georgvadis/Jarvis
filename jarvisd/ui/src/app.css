@@ -1987,3 +1987,25 @@ input[type=range]::-moz-range-thumb {
 .health-dot[data-tone="warn"] { background: var(--warn); }
 .health-dot[data-tone="bad"] { background: var(--bad); }
 .health-dot[data-tone="off"] { background: var(--fg3); opacity: .55; }
+
+/* === Конструктор пользовательских сценариев (lite2fix22) === */
+.scen-builder { margin-top: 18px; }
+.icon-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.icon-pick {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg0); color: var(--fg2); cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.icon-pick:hover { border-color: var(--acc); color: var(--fg); }
+.icon-pick.active {
+  background: var(--acc-soft);
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--line));
+  color: var(--acc-ink);
+}
+.step-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg0);
+}
+.step-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }

@@ -220,6 +220,7 @@ pub async fn activity(State(app): State<App>) -> Response {
             "debate_active": crate::debate::is_active(),
             "presence": app.presence.status(&app.store),
             "timers": app.scheduler.active_timers_json(),
+            "custom_scenarios": app.scenarios.custom_summary_json(),
         }),
     )
 }
@@ -228,6 +229,68 @@ pub async fn scenario_run(State(app): State<App>, axum::Json(value): axum::Json<
     let id = value["id"].as_str().unwrap_or("");
     match crate::tools::run_scenario(app.engine.clone(), id) {
         Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+fn parse_scenario_input(value: &serde_json::Value) -> Result<(String, String, String, Vec<crate::scenarios::ScenarioStep>), String> {
+    let name = value["name"].as_str().unwrap_or("").to_string();
+    let phrase = value["phrase"].as_str().unwrap_or("").to_string();
+    let icon = value["icon"].as_str().unwrap_or("sparkles").to_string();
+    let arr = value["steps"].as_array().ok_or("Нужен массив шагов")?;
+    let mut steps = Vec::with_capacity(arr.len());
+    for item in arr {
+        steps.push(crate::scenarios::ScenarioStep {
+            kind: item["kind"].as_str().unwrap_or("").to_string(),
+            value: item["value"].as_str().unwrap_or("").to_string(),
+            number: item.get("number").and_then(serde_json::Value::as_i64),
+        });
+    }
+    Ok((name, phrase, icon, steps))
+}
+
+pub async fn scenarios_list(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.scenarios.list_json())
+}
+
+pub async fn scenarios_create(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let (name, phrase, icon, steps) = match parse_scenario_input(&value) {
+        Ok(parsed) => parsed,
+        Err(e) => return super::bad(e),
+    };
+    match app.scenarios.create(name, phrase, icon, steps) {
+        Ok(list) => reply(StatusCode::OK, list),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn scenarios_update(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID сценария");
+    }
+    let (name, phrase, icon, steps) = match parse_scenario_input(&value) {
+        Ok(parsed) => parsed,
+        Err(e) => return super::bad(e),
+    };
+    match app.scenarios.update(&id, name, phrase, icon, steps) {
+        Ok(list) => reply(StatusCode::OK, list),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn scenarios_delete(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID сценария");
+    }
+    match app.scenarios.delete(&id) {
+        Ok(list) => reply(StatusCode::OK, list),
         Err(e) => super::bad(e),
     }
 }

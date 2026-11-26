@@ -73,6 +73,7 @@
   import { page } from "$app/state";
   import { SvelteSet } from "svelte/reactivity";
   import { api, copyText, icon, jelly, tip, toast } from "#helpers/core.js";
+  import { activity } from "#state/activity.js";
   import { S, reload } from "#state/panelState.js";
   import { loadWakeProfiles, modelLabel, selectWakeProfile } from "#helpers/wake-training.js";
   import Lighting from "./Lighting/Lighting.svelte";
@@ -104,6 +105,16 @@
   let phoneIpInput = $state(untrack(() => S.settings.presence_phone_ip || ""));
   let awayMinInput = $state(untrack(() => S.settings.presence_away_min || 30));
   let greetingInput = $state(untrack(() => S.settings.presence_greeting || ""));
+  let arriveScenarioInput = $state(untrack(() => S.settings.presence_arrive_scenario || ""));
+  let leaveScenarioInput = $state(untrack(() => S.settings.presence_leave_scenario || ""));
+  let notifyAwayTimers = $state(untrack(() => S.settings.presence_notify_away_timers !== false));
+  let scenarioChoices = $derived([
+    { id: "morning", label: "Утро" },
+    { id: "work", label: "Работа" },
+    { id: "evening", label: "Вечер" },
+    { id: "sleep", label: "Сон" },
+    ...($activity.custom_scenarios || []).map((s) => ({ id: s.id, label: s.name })),
+  ]);
   let presenceInfo = $state({ state: "unknown" });
   let notesInfo = $state({ available: false, total_notes: 0 });
   let settings = $derived(state.settings);
@@ -408,6 +419,9 @@
       presence_phone_ip: phoneIpInput.trim(),
       presence_away_min: Number(awayMinInput) || 30,
       presence_greeting: greetingInput.trim(),
+      presence_arrive_scenario: arriveScenarioInput,
+      presence_leave_scenario: leaveScenarioInput,
+      presence_notify_away_timers: notifyAwayTimers,
     }), "Присутствие сохранено");
     void loadExtraStatuses();
   }
@@ -759,6 +773,31 @@
     <label for="s-pres-greet">Своя фраза приветствия (пусто — сгенерирует ИИ)</label>
     <input id="s-pres-greet" type="text" maxlength="200" placeholder="С возвращением домой!" bind:value={greetingInput}>
   </div>
+  <div class="grid g2">
+    <div class="f">
+      <label for="s-pres-arrive">Сценарий при возвращении</label>
+      <select id="s-pres-arrive" bind:value={arriveScenarioInput}>
+        <option value="">По умолчанию (голосовое приветствие)</option>
+        {#each scenarioChoices as sc (sc.id)}
+          <option value={sc.id}>{sc.label}</option>
+        {/each}
+      </select>
+    </div>
+    <div class="f">
+      <label for="s-pres-leave">Сценарий при уходе</label>
+      <select id="s-pres-leave" bind:value={leaveScenarioInput}>
+        <option value="">Ничего не делать</option>
+        {#each scenarioChoices as sc (sc.id)}
+          <option value={sc.id}>{sc.label}</option>
+        {/each}
+      </select>
+    </div>
+  </div>
+  <label class="sw">
+    <input type="checkbox" bind:checked={notifyAwayTimers}>
+    <span class="tr"></span>
+    Дублировать таймеры в Telegram, если не дома
+  </label>
   <div class="row">
     <button type="button" class="btn primary" disabled={pending.has("presence")} onclick={savePresence}>{@html icon("save")}Сохранить</button>
     <button type="button" class="btn" onclick={testPresence}>{@html icon("play", "solid")}Тест</button>

@@ -75,6 +75,9 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "presence_phone_ip",
         "presence_away_min",
         "presence_greeting",
+        "presence_arrive_scenario",
+        "presence_leave_scenario",
+        "presence_notify_away_timers",
         "cybernotes_enabled",
     ];
     let mut out = serde_json::to_value(&*s)?;
@@ -163,6 +166,8 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
     }
     next.presence_away_min = next.presence_away_min.clamp(5, 240);
     next.presence_greeting = next.presence_greeting.trim().chars().take(200).collect();
+    next.presence_arrive_scenario = next.presence_arrive_scenario.trim().chars().take(64).collect();
+    next.presence_leave_scenario = next.presence_leave_scenario.trim().chars().take(64).collect();
     for time in [&next.night.from, &next.night.to] {
         if !time.is_empty() && crate::settings::hhmm(time).is_none() {
             return Err(invalid("Время ночного режима — HH:MM"));

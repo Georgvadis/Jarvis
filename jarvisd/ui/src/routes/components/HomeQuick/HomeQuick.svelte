@@ -106,6 +106,12 @@
       {@html icon("moon")}
       <span>Сон</span>
     </button>
+    {#each $activity.custom_scenarios || [] as sc (sc.id)}
+      <button type="button" class="scen-btn" disabled={busy} onclick={() => triggerScenario(sc.id)}>
+        {@html icon(sc.icon || "sparkles")}
+        <span>{sc.name}</span>
+      </button>
+    {/each}
   </div>
 
   <div class="quick-util">

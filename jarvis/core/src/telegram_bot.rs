@@ -90,6 +90,21 @@ async fn send_tg(client: &reqwest::Client, token: &str, chat_id: &str, text: &st
         .await;
 }
 
+pub async fn notify_telegram(plugins: &Host, proxy: &Proxy, text: &str) {
+    if text.trim().is_empty() {
+        return;
+    }
+    let token = plugins.plugin_setting_str("telegram-sender", "bot_token");
+    let chat_id = plugins.plugin_setting_str("telegram-sender", "chat_id");
+    if token.trim().is_empty() || chat_id.trim().is_empty() {
+        return;
+    }
+    let route = proxy.route("plugins");
+    if let Ok((_, client)) = build_tg_client(&route) {
+        send_tg(&client, token.trim(), chat_id.trim(), text).await;
+    }
+}
+
 pub fn spawn(
     engine: Arc<Engine>,
     plugins: Arc<Host>,
@@ -480,12 +495,22 @@ async fn handle_message(
 
     if cmd == "/scenario" {
         if rest.trim().is_empty() {
-            return "Укажите сценарий: /scenario <утро|работа|вечер|сон>".into();
+            let mut msg = "Сценарии: утро, работа, вечер, сон".to_string();
+            if let Some(sc_store) = &engine.tools.scenarios {
+                let list = sc_store.custom_summary_json();
+                if let Some(arr) = list.as_array()
+                    && !arr.is_empty()
+                {
+                    let names: Vec<&str> = arr.iter().filter_map(|s| s["name"].as_str()).collect();
+                    if !names.is_empty() {
+                        msg.push_str(&format!("\nПользовательские: {}", names.join(", ")));
+                    }
+                }
+            }
+            return format!("{msg}\n\nЗапуск: /scenario <название>");
         }
-        let Some(id) = map_tg_scenario(rest) else {
-            return "Неизвестный сценарий. Доступны: утро, работа, вечер, сон.".into();
-        };
-        return match crate::tools::run_scenario(engine.clone(), id) {
+        let target = map_tg_scenario(rest).unwrap_or_else(|| rest.trim());
+        return match crate::tools::run_scenario(engine.clone(), target) {
             Ok(msg) => msg,
             Err(e) => e,
         };

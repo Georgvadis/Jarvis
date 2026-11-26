@@ -59,6 +59,10 @@ pub struct Tools {
     pub reader: Option<Arc<crate::reader::BookReader>>,
     /// Персональный AI-DJ.
     pub dj: Option<Arc<crate::dj::AiDj>>,
+    /// Пользовательские сценарии.
+    pub scenarios: Option<Arc<crate::scenarios::ScenarioStore>>,
+    /// Определение присутствия по Wi-Fi.
+    pub presence: Option<Arc<crate::presence::Presence>>,
 }
 
 const DAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -99,6 +103,8 @@ impl Tools {
             games: None,
             reader: None,
             dj: None,
+            scenarios: None,
+            presence: None,
         }
     }
 
@@ -245,6 +251,14 @@ impl Tools {
             && let Ok(ans) = run_scenario(eng, scenario_id)
         {
             return Some(ans);
+        }
+        if let Some(sc_store) = &self.scenarios
+            && let Some(sc) = sc_store.match_voice(text)
+            && let Some(eng) = self.engine()
+        {
+            let name = sc.name.clone();
+            crate::scenarios::ScenarioStore::execute(eng, sc);
+            return Some(format!("Запускаю сценарий «{name}»."));
         }
         if let Some(on_focus) = &self.on_focus
             && let Some(ans) = on_focus(text)
@@ -1067,7 +1081,16 @@ pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<Stri
             engine.journal.note("сценарий", "Утренний режим", "Джаз + громкость 5");
             Ok("Доброе утро! Утренний режим включён.".into())
         }
-        _ => Err("Неизвестный сценарий".into()),
+        _ => {
+            if let Some(sc_store) = &engine.tools.scenarios
+                && let Some(sc) = sc_store.find_by_query(id)
+            {
+                let name = sc.name.clone();
+                crate::scenarios::ScenarioStore::execute(engine.clone(), sc);
+                return Ok(format!("Сценарий «{name}» запущен."));
+            }
+            Err("Неизвестный сценарий".into())
+        }
     }
 }
 

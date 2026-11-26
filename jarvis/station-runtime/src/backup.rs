@@ -77,7 +77,7 @@ pub fn allowed_backup_path(rel: &str) -> bool {
     }
     if matches!(
         rel,
-        "settings.json" | "schedules.json" | "plugins.json" | "chatgpt-chat.json" | "chatgpt-chat-archive.jsonl"
+        "settings.json" | "schedules.json" | "scenarios.json" | "plugins.json" | "chatgpt-chat.json" | "chatgpt-chat-archive.jsonl"
     ) {
         return true;
     }
@@ -255,6 +255,7 @@ mod tests {
         for ok in [
             "settings.json",
             "schedules.json",
+            "scenarios.json",
             "plugins.json",
             "chatgpt-chat.json",
             "chatgpt-chat-archive.jsonl",

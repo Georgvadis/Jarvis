@@ -310,12 +310,26 @@ impl Scheduler {
         }
 
         for t in expired {
-            let speech = if t.label == "Таймер" || t.label.is_empty() {
+            let is_default_lbl = t.label == "Таймер" || t.label.is_empty();
+            let speech = if is_default_lbl {
                 "[sfx:bell] Таймер вышел!".to_string()
             } else {
                 format!("[sfx:bell] Напоминаю: {}!", t.label)
             };
             engine.journal.note("таймер", &t.label, "Время вышло");
+            if engine.tools.presence.as_ref().is_some_and(|p| p.is_away())
+                && engine.store.with(|s| s.presence_notify_away_timers)
+            {
+                let tg_msg = if is_default_lbl {
+                    "⏱ Таймер на колонке вышел!".to_string()
+                } else {
+                    format!("⏱ Напоминание на колонке: {}", t.label)
+                };
+                let e_tg = engine.clone();
+                tokio::spawn(async move {
+                    crate::telegram_bot::notify_telegram(&e_tg.host, &e_tg.proxy, &tg_msg).await;
+                });
+            }
             let e = engine.clone();
             tokio::task::spawn_blocking(move || {
                 let _ = e.say_aloud(&speech, Duration::from_secs(20));
