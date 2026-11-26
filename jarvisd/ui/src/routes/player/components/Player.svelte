@@ -12,7 +12,7 @@
   import YouTubeSearch from "./YouTubeSearch/YouTubeSearch.svelte";
   import YouTubeLibrary from "./YouTubeLibrary/YouTubeLibrary.svelte";
 
-  const VALID_TABS = new Set(["search", "queue", "dj", "ambient"]);
+  const VALID_TABS = new Set(["search", "library", "queue", "dj", "ambient"]);
   let tab = $state("search");
 
   $effect(() => {
@@ -35,44 +35,51 @@
   });
 </script>
 
-<header class="ph">
-  <h1>Медиа</h1>
-</header>
+<div class="media-layout">
+  <aside class="media-stage" aria-label="Сейчас играет">
+    <NowPlaying />
+  </aside>
 
-<NowPlaying />
+  <div class="media-deck">
+    <div class="hub-tabs media-tabs" role="tablist" aria-label="Разделы медиа">
+      <button type="button" role="tab" aria-selected={tab === "search"} class="hub-tab" class:on={tab === "search"} onclick={() => switchTab("search")}>
+        {@html icon("search")}
+        <span>Поиск</span>
+      </button>
+      <button type="button" role="tab" aria-selected={tab === "library"} class="hub-tab" class:on={tab === "library"} onclick={() => switchTab("library")}>
+        {@html icon("heart")}
+        <span>Медиатека</span>
+      </button>
+      <button type="button" role="tab" aria-selected={tab === "queue"} class="hub-tab" class:on={tab === "queue"} onclick={() => switchTab("queue")}>
+        {@html icon("list")}
+        <span>Очередь</span>
+      </button>
+      <button type="button" role="tab" aria-selected={tab === "dj"} class="hub-tab" class:on={tab === "dj"} onclick={() => switchTab("dj")}>
+        {@html icon("disc")}
+        <span>AI-DJ</span>
+        {#if djLive}<span class="sdot"></span>{/if}
+      </button>
+      <button type="button" role="tab" aria-selected={tab === "ambient"} class="hub-tab" class:on={tab === "ambient"} onclick={() => switchTab("ambient")}>
+        {@html icon("flame")}
+        <span>Камин и радио</span>
+        {#if ambLive}<span class="sdot"></span>{/if}
+      </button>
+    </div>
 
-<div class="hub-tabs" role="tablist" aria-label="Разделы медиа">
-  <button type="button" role="tab" aria-selected={tab === "search"} class="hub-tab" class:on={tab === "search"} onclick={() => switchTab("search")}>
-    {@html icon("search")}
-    <span>Поиск и медиатека</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "queue"} class="hub-tab" class:on={tab === "queue"} onclick={() => switchTab("queue")}>
-    {@html icon("list")}
-    <span>Очередь</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "dj"} class="hub-tab" class:on={tab === "dj"} onclick={() => switchTab("dj")}>
-    {@html icon("disc")}
-    <span>AI-DJ</span>
-    {#if djLive}<span class="sdot"></span>{/if}
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "ambient"} class="hub-tab" class:on={tab === "ambient"} onclick={() => switchTab("ambient")}>
-    {@html icon("radio")}
-    <span>Фон и радио</span>
-    {#if ambLive}<span class="sdot"></span>{/if}
-  </button>
+    <div class="media-pane">
+      {#if tab === "search"}
+        <YouTubeSearch />
+      {:else if tab === "library"}
+        <YouTubeLibrary />
+      {:else if tab === "queue"}
+        <div class="media-queue-stack" id="player-queue">
+          <PlayerQueue />
+        </div>
+      {:else if tab === "dj"}
+        <StudioDj />
+      {:else}
+        <HomeAmbient />
+      {/if}
+    </div>
+  </div>
 </div>
-
-{#if tab === "search"}
-  <YouTubeSearch />
-  <YouTubeLibrary />
-{:else if tab === "queue"}
-  <div class="cols stagger" id="player-queue">
-    <PlayerQueue />
-  </div>
-{:else if tab === "dj"}
-  <StudioDj />
-{:else}
-  <div class="player-ambient">
-    <HomeAmbient />
-  </div>
-{/if}

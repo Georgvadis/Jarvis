@@ -1722,6 +1722,284 @@ dialog::backdrop {
 }
 
 /* ==========================================================================
+   Глубокая переработка 4 разделов (lite2fix34):
+   Медиа (Vinyl Lounge), Студия (фокус-режимы), Знания, Настройки (Bento)
+   ========================================================================== */
+
+/* --- 1. Медиа: 2-колоночный Vinyl Lounge --- */
+.media-layout {
+  display: grid;
+  grid-template-columns: 370px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.media-stage {
+  position: sticky;
+  top: 92px;
+  min-width: 0;
+}
+.media-deck {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.media-tabs {
+  margin-bottom: 0;
+  flex-wrap: wrap;
+}
+.media-pane {
+  min-width: 0;
+}
+.media-queue-stack {
+  display: grid;
+  gap: 16px;
+}
+
+/* --- 2. Студия: Эфир, Книги, Игры, Автоматика --- */
+.studio-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr);
+  gap: 18px;
+  align-items: start;
+}
+.studio-mode-seg {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+.studio-mode-seg button {
+  justify-content: center;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Книги: Hero-карточка «Читаю сейчас / Продолжить» */
+.book-hero {
+  display: grid;
+  gap: 14px;
+  border-color: color-mix(in srgb, var(--acc) 26%, var(--glass-border)) !important;
+  background:
+    radial-gradient(360px 180px at 0% 100%, color-mix(in srgb, var(--acc) 16%, transparent), transparent 72%),
+    var(--glass-card) !important;
+}
+.book-hero.live {
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--glass-border)) !important;
+  background:
+    radial-gradient(420px 200px at 0% 100%, rgb(242 136 52 / .28), transparent 74%),
+    var(--glass-card) !important;
+  box-shadow:
+    inset 0 1px 0 var(--glass-spec),
+    0 20px 44px -22px rgb(0 0 0 / .72),
+    0 0 32px -14px var(--acc-glow) !important;
+}
+.book-hero-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.book-hero-cover {
+  width: 50px;
+  height: 50px;
+  border-radius: 15px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, var(--acc-soft), color-mix(in srgb, var(--ember) 14%, transparent));
+  border: 1px solid color-mix(in srgb, var(--acc) 36%, var(--glass-border));
+  color: var(--acc-ink);
+}
+.book-hero.live .book-hero-cover {
+  background: linear-gradient(145deg, var(--acc), var(--ember));
+  color: var(--on-acc);
+  box-shadow: 0 8px 22px -6px var(--acc-glow);
+}
+.book-hero-cover .ic { width: 22px; height: 22px; }
+.book-hero-meta {
+  flex: 1;
+  min-width: 180px;
+  display: grid;
+  gap: 2px;
+}
+.book-hero-meta b {
+  font-size: 16px;
+  font-weight: 750;
+  color: var(--fg);
+}
+.book-hero-meta small {
+  font-size: 12.5px;
+  color: var(--fg2);
+}
+.book-hero-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Игры: активная карточка-селектор */
+.game-pick {
+  position: relative;
+}
+.game-pick.on {
+  border-color: color-mix(in srgb, var(--acc) 58%, var(--glass-border)) !important;
+  background:
+    linear-gradient(145deg, var(--acc-soft), color-mix(in srgb, var(--acc) 6%, transparent)),
+    var(--glass-card) !important;
+  box-shadow:
+    inset 0 1px 0 var(--glass-spec),
+    0 14px 30px -18px rgb(0 0 0 / .72),
+    0 0 24px -12px var(--acc-glow);
+}
+.game-pick.on .scene-badge {
+  background: linear-gradient(145deg, var(--acc), var(--ember));
+  border-color: var(--acc);
+  color: var(--on-acc);
+}
+.game-pick .sdot {
+  margin-left: auto;
+  flex: none;
+}
+
+/* Автоматика: крупные карточки активных таймеров */
+.timer-active-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.timer-big-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px !important;
+  border-color: color-mix(in srgb, var(--acc) 36%, var(--glass-border)) !important;
+  background:
+    radial-gradient(240px 140px at 0% 100%, var(--acc-soft), transparent 74%),
+    var(--glass-card) !important;
+}
+.timer-big-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.timer-big-head b {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timer-big-clock {
+  font-size: 34px;
+  line-height: 1.05;
+  font-weight: 800;
+  letter-spacing: -.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--acc-ink);
+}
+.timer-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.timer-min-in {
+  width: 96px;
+  max-width: 96px;
+  flex: none !important;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 3. Знания: Единая база + сворачиваемые настройки --- */
+.mem-head-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.mem-inline-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mem-admin-drawer {
+  padding: 0 !important;
+  overflow: hidden;
+}
+.mem-admin-drawer > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 18px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--fg2);
+  user-select: none;
+  transition: color .15s, background-color .15s;
+}
+.mem-admin-drawer > summary::-webkit-details-marker { display: none; }
+.mem-admin-drawer > summary .ic { width: 16px; height: 16px; color: var(--acc); flex: none; }
+.mem-admin-drawer > summary::after {
+  content: "";
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor;
+  transform: rotate(45deg);
+  opacity: .65;
+  transition: transform .18s var(--ease);
+}
+.mem-admin-drawer[open] > summary::after {
+  transform: rotate(-135deg);
+}
+.mem-admin-drawer > summary:hover {
+  color: var(--fg);
+  background: var(--glass-inset);
+}
+.mem-admin-drawer[open] > summary {
+  color: var(--fg);
+  border-bottom: 1px solid var(--glass-border);
+}
+.mem-admin-drawer > .studio-stack {
+  padding: 16px 18px 18px;
+}
+.note-composer {
+  margin-bottom: 14px;
+  padding: 14px 16px !important;
+  border-radius: 16px;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+}
+.notes-grid-wide {
+  grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)) !important;
+}
+
+/* --- 4. Настройки: 2-колоночная Bento-сетка карточек --- */
+.bento-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.bento-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.bento-card > h2 {
+  margin: 0;
+}
+.bento-full {
+  grid-column: 1 / -1;
+}
+
+/* ==========================================================================
    Адаптив (планшеты и телефоны)
    ========================================================================== */
 @media (max-width: 1120px) {
@@ -1732,10 +2010,20 @@ dialog::backdrop {
   .lounge-card { min-height: 0; }
 }
 
+@media (max-width: 1040px) {
+  .media-layout { grid-template-columns: minmax(0, 1fr); }
+  .media-stage { position: static; }
+}
+
 @media (max-width: 1020px) {
   .top-brand-copy small,
   .top-asst-name { display: none; }
   .top-nav a { padding: 0 11px; font-size: 13.5px; }
+}
+
+@media (max-width: 960px) {
+  .studio-split { grid-template-columns: minmax(0, 1fr); }
+  .bento-2 { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 860px) {
@@ -1754,6 +2042,8 @@ dialog::backdrop {
   .scene-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
   .scene-tile { padding: 12px; gap: 10px; }
   .scene-badge { width: 34px; height: 34px; border-radius: 10px; }
+  .studio-mode-seg { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .timer-preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
   .mbar {
     background: var(--glass-side) !important;

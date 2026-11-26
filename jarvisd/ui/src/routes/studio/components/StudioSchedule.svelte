@@ -52,9 +52,9 @@
   let loading = $state(true);
   let busy = $state(false);
   let sub = $state("timers");
+  let showRoutineForm = $state(false);
   let confirmDeleteId = $state("");
   let editingId = $state("");
-  let routineFormEl = $state();
 
   let timerMinutes = $state(5);
   let timerLabel = $state("");
@@ -121,6 +121,7 @@
 
   function resetRoutineForm() {
     editingId = "";
+    showRoutineForm = false;
     rTime = "08:00";
     rTitle = "";
     rDays = [1, 2, 3, 4, 5];
@@ -132,6 +133,7 @@
   function startEdit(r) {
     confirmDeleteId = "";
     editingId = r.id;
+    showRoutineForm = true;
     rTime = r.time || "08:00";
     rTitle = r.title || "";
     rDays = Array.isArray(r.days) ? [...r.days] : [];
@@ -139,25 +141,17 @@
     if (rAction === "scenario" && r.payload === "relax") rPayload = "evening";
     else rPayload = r.payload || "";
     rVolume = r.volume ? String(r.volume) : "";
-    routineFormEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-
-  function cancelEdit() {
-    resetRoutineForm();
   }
 
   function toggleDay(dayId) {
-    if (rDays.includes(dayId)) {
-      rDays = rDays.filter((d) => d !== dayId);
-    } else {
-      rDays = [...rDays, dayId].sort((a, b) => a - b);
-    }
+    if (rDays.includes(dayId)) rDays = rDays.filter((d) => d !== dayId);
+    else rDays = [...rDays, dayId].sort((a, b) => a - b);
   }
 
   function handleActionChange() {
     if (rAction === "scenario") rPayload = "morning";
     else if (rAction === "dj") rPayload = "Ночной Токио";
-    else if (rAction === "ambient") rPayload = "rain";
+    else if (rAction === "ambient") rPayload = "fireplace";
     else rPayload = "";
   }
 
@@ -167,7 +161,7 @@
     try {
       const data = await api("POST", "/api/schedule/timer", {
         minutes,
-        label: timerLabel.trim() || "Таймер",
+        label: timerLabel.trim() || `Таймер ${minutes}м`,
       });
       applyStatus(data);
       await refreshActivity();
@@ -189,10 +183,7 @@
     busy = true;
     try {
       const label = timerLabel.trim() || "Напоминание";
-      const data = await api("POST", "/api/schedule/timer", {
-        minutes: Math.round(mins),
-        label,
-      });
+      const data = await api("POST", "/api/schedule/timer", { minutes: Math.round(mins), label });
       applyStatus(data);
       timerLabel = "";
       await refreshActivity();
@@ -220,14 +211,8 @@
   }
 
   async function submitRoutine() {
-    if (!rTime) {
-      toast("Укажите время", true);
-      return;
-    }
-    if (rAction === "say" && !rPayload.trim()) {
-      toast("Введите фразу для озвучки", true);
-      return;
-    }
+    if (!rTime) return toast("Укажите время", true);
+    if (rAction === "say" && !rPayload.trim()) return toast("Введите фразу для озвучки", true);
     if (busy) return;
     busy = true;
     try {
@@ -258,9 +243,7 @@
     if (busy) return;
     busy = true;
     try {
-      const data = await api("POST", `/api/schedule/routine/${encodeURIComponent(r.id)}/toggle`, {
-        enabled: !r.enabled,
-      });
+      const data = await api("POST", `/api/schedule/routine/${encodeURIComponent(r.id)}/toggle`, { enabled: !r.enabled });
       applyStatus(data);
     } catch (err) {
       toast(err.message, true);
@@ -302,7 +285,10 @@
 
 <div class="seg sched-sub-seg" role="tablist" aria-label="Автоматизации">
   <button type="button" role="tab" aria-selected={sub === "timers"} class:on={sub === "timers"} onclick={() => { sub = "timers"; }}>
-    {@html icon("clock")} Таймеры и рутины
+    {@html icon("clock")} Таймеры {#if timers.length}<span class="sdot"></span>{/if}
+  </button>
+  <button type="button" role="tab" aria-selected={sub === "routines"} class:on={sub === "routines"} onclick={() => { sub = "routines"; }}>
+    {@html icon("bell")} Расписание
   </button>
   <button type="button" role="tab" aria-selected={sub === "scenarios"} class:on={sub === "scenarios"} onclick={() => { sub = "scenarios"; }}>
     {@html icon("sparkles")} Сценарии
@@ -310,219 +296,129 @@
 </div>
 
 {#if sub === "timers"}
-<div class="studio-grid">
-  <section class="card">
-    <div class="card-head">
-      <h2>{@html icon("clock")} Таймеры и напоминания</h2>
-      {#if timers.length}
-        <span class="badge ok">{timers.length} акт.</span>
-      {/if}
-    </div>
-
-    <div class="studio-stack">
-      <div class="quick-grid">
-        {#each QUICK_TIMERS as qt (qt.minutes)}
-          <button
-            type="button"
-            class="scen-btn"
-            disabled={busy}
-            onclick={() => addQuickTimer(qt.minutes)}
-          >
-            {@html icon("clock")}
-            <span>{qt.label}</span>
-          </button>
-        {/each}
-      </div>
-
-      <form class="sched-form" onsubmit={(e) => { e.preventDefault(); addCustomTimer(); }}>
-        <div class="row sched-row-fields">
-          <div class="f sched-min-f">
-            <label for="sched-t-min">Минуты</label>
-            <input
-              id="sched-t-min"
-              type="number"
-              min="1"
-              max="1440"
-              step="1"
-              bind:value={timerMinutes}
-              disabled={busy}
-            >
-          </div>
-          <div class="f">
-            <label for="sched-t-lbl">Напоминание</label>
-            <input
-              id="sched-t-lbl"
-              type="text"
-              maxlength="80"
-              placeholder="Например: Проверить духовку"
-              bind:value={timerLabel}
-              disabled={busy}
-            >
-          </div>
-        </div>
-        <button type="submit" class="btn primary" disabled={busy}>
-          {@html icon("bell")} Запустить таймер
-        </button>
-      </form>
-
-      {#if timers.length}
-        <div class="sched-list">
-          {#each timers as t (t.id)}
-            <div class="timer-row">
-              <span class="timer-ic">{@html icon("clock")}</span>
-              <div class="timer-main">
-                <strong>{t.label}</strong>
-              </div>
-              <span class="badge ok timer-clock">{fmtClock(t.remaining_s)}</span>
-              <button
-                type="button"
-                class="btn ghost sm"
-                disabled={busy}
-                aria-label="Отменить таймер"
-                onclick={() => cancelTimer(t.id)}
-              >
+  <div class="studio-stack">
+    {#if timers.length}
+      <div class="timer-active-grid">
+        {#each timers as t (t.id)}
+          <div class="card timer-big-card">
+            <div class="timer-big-head">
+              <b>{t.label}</b>
+              <button type="button" class="ib" disabled={busy} aria-label="Снять таймер" onclick={() => cancelTimer(t.id)}>
                 {@html icon("x")}
               </button>
             </div>
+            <div class="timer-big-clock">{fmtClock(t.remaining_s)}</div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+
+    <section class="card">
+      <h2>{@html icon("clock")} Быстрый запуск</h2>
+      <div class="studio-stack">
+        <div class="timer-preset-grid">
+          {#each QUICK_TIMERS as qt (qt.minutes)}
+            <button type="button" class="scen-btn" disabled={busy} onclick={() => addQuickTimer(qt.minutes)}>
+              {@html icon("clock")}
+              <span>{qt.label}</span>
+            </button>
           {/each}
         </div>
-      {:else}
-        <p class="empty-msg">Активных таймеров нет</p>
-      {/if}
-    </div>
-  </section>
-
+        <form class="mode-row" onsubmit={(e) => { e.preventDefault(); addCustomTimer(); }}>
+          <input type="number" min="1" max="1440" step="1" class="timer-min-in" aria-label="Минуты" bind:value={timerMinutes} disabled={busy}>
+          <input type="text" maxlength="80" placeholder="Подпись (например: Проверить духовку)" bind:value={timerLabel} disabled={busy}>
+          <button type="submit" class="btn primary" disabled={busy}>{@html icon("bell")} Старт</button>
+        </form>
+      </div>
+    </section>
+  </div>
+{:else if sub === "routines"}
   <section class="card">
     <div class="card-head">
-      <h2>{@html icon("bell")} Рутины по расписанию</h2>
-      {#if routines.length}
-        <span class="badge">{routines.length}</span>
-      {/if}
+      <h2>{@html icon("bell")} Рутины по расписанию {#if routines.length}<span class="badge">{routines.length}</span>{/if}</h2>
+      <button type="button" class="btn sm" class:primary={!showRoutineForm} onclick={() => { if (showRoutineForm) resetRoutineForm(); else showRoutineForm = true; }}>
+        {@html icon(showRoutineForm ? "x" : "plus")} {showRoutineForm ? "Скрыть форму" : "Новая рутина"}
+      </button>
     </div>
 
     <div class="studio-stack">
-      <form class="sched-form" bind:this={routineFormEl} onsubmit={(e) => { e.preventDefault(); submitRoutine(); }}>
-        <div class="row sched-row-fields">
-          <div class="f sched-time-f">
-            <label for="sched-r-time">Время</label>
-            <input id="sched-r-time" type="time" bind:value={rTime} disabled={busy}>
+      {#if showRoutineForm || (!loading && !routines.length)}
+        <form class="mode-drawer sched-form" onsubmit={(e) => { e.preventDefault(); submitRoutine(); }}>
+          <div class="row sched-row-fields">
+            <div class="f sched-time-f">
+              <label for="sched-r-time">Время</label>
+              <input id="sched-r-time" type="time" bind:value={rTime} disabled={busy}>
+            </div>
+            <div class="f">
+              <label for="sched-r-title">Название</label>
+              <input id="sched-r-title" type="text" maxlength="80" placeholder="Доброе утро" bind:value={rTitle} disabled={busy}>
+            </div>
           </div>
-          <div class="f">
-            <label for="sched-r-title">Название</label>
-            <input
-              id="sched-r-title"
-              type="text"
-              maxlength="80"
-              placeholder="Напр: Доброе утро"
-              bind:value={rTitle}
-              disabled={busy}
-            >
-          </div>
-        </div>
 
-        <div class="f">
-          <span class="lbl">Дни недели</span>
-          <div class="day-pills">
-            {#each DAYS as d (d.id)}
-              <button
-                type="button"
-                class="day-pill"
-                class:active={rDays.includes(d.id)}
-                disabled={busy}
-                onclick={() => toggleDay(d.id)}
-              >
-                {d.label}
-              </button>
-            {/each}
-            <button
-              type="button"
-              class="day-pill ghost-pill"
-              class:active={rDays.length === 0 || rDays.length === 7}
-              disabled={busy}
-              onclick={() => { rDays = []; }}
-            >
-              Все
-            </button>
-            <button
-              type="button"
-              class="day-pill ghost-pill"
-              class:active={rDays.join(",") === "1,2,3,4,5"}
-              disabled={busy}
-              onclick={() => { rDays = [1, 2, 3, 4, 5]; }}
-            >
-              Будни
-            </button>
+          <div class="f">
+            <span class="lbl">Дни недели</span>
+            <div class="day-pills">
+              {#each DAYS as d (d.id)}
+                <button type="button" class="day-pill" class:active={rDays.includes(d.id)} disabled={busy} onclick={() => toggleDay(d.id)}>{d.label}</button>
+              {/each}
+              <button type="button" class="day-pill ghost-pill" class:active={rDays.length === 0 || rDays.length === 7} disabled={busy} onclick={() => { rDays = []; }}>Все</button>
+              <button type="button" class="day-pill ghost-pill" class:active={rDays.join(",") === "1,2,3,4,5"} disabled={busy} onclick={() => { rDays = [1, 2, 3, 4, 5]; }}>Будни</button>
+            </div>
           </div>
-        </div>
 
-        <div class="row sched-row-fields">
-          <div class="f">
-            <label for="sched-r-act">Действие</label>
-            <select
-              id="sched-r-act"
-              bind:value={rAction}
-              onchange={handleActionChange}
-              disabled={busy}
-            >
-              {#each Object.entries(ACTION_META) as [val, meta] (val)}
-                <option value={val}>{meta.label}</option>
-              {/each}
-            </select>
+          <div class="row sched-row-fields">
+            <div class="f">
+              <label for="sched-r-act">Действие</label>
+              <select id="sched-r-act" bind:value={rAction} onchange={handleActionChange} disabled={busy}>
+                {#each Object.entries(ACTION_META) as [val, meta] (val)}
+                  <option value={val}>{meta.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="f sched-vol-f">
+              <label for="sched-r-vol">Громкость</label>
+              <select id="sched-r-vol" bind:value={rVolume} disabled={busy}>
+                <option value="">Текущая</option>
+                {#each [2, 3, 4, 5, 6, 7, 8, 9, 10] as v (v)}
+                  <option value={String(v)}>{v} / 10</option>
+                {/each}
+              </select>
+            </div>
           </div>
-          <div class="f sched-vol-f">
-            <label for="sched-r-vol">Громкость</label>
-            <select id="sched-r-vol" bind:value={rVolume} disabled={busy}>
-              <option value="">Текущая</option>
-              {#each [2, 3, 4, 5, 6, 7, 8, 9, 10] as v (v)}
-                <option value={String(v)}>{v} / 10</option>
-              {/each}
-            </select>
-          </div>
-        </div>
 
-        {#if rAction === "scenario"}
-          <div class="f">
-            <label for="sched-r-scen">Сценарий</label>
-            <select id="sched-r-scen" bind:value={rPayload} disabled={busy}>
-              {#each scenarioOptions as sc (sc.id)}
-                <option value={sc.id}>{sc.label}</option>
-              {/each}
-            </select>
-          </div>
-        {:else if rAction === "ambient"}
-          <div class="f">
-            <label for="sched-r-amb">Звуковой фон</label>
-            <select id="sched-r-amb" bind:value={rPayload} disabled={busy}>
-              {#each ambientOptions as amb (amb.id)}
-                <option value={amb.id}>{amb.name || amb.label}</option>
-              {/each}
-            </select>
-          </div>
-        {:else if rAction !== "briefing"}
-          <div class="f">
-            <label for="sched-r-pay">Параметры</label>
-            <input
-              id="sched-r-pay"
-              type="text"
-              maxlength="300"
-              placeholder={ACTION_META[rAction]?.placeholder || ""}
-              bind:value={rPayload}
-              disabled={busy}
-            >
-          </div>
-        {/if}
-
-        <div class="row">
-          <button type="submit" class="btn primary" disabled={busy}>
-            {@html icon(editingId ? "save" : "plus")} {editingId ? "Сохранить" : "Добавить рутину"}
-          </button>
-          {#if editingId}
-            <button type="button" class="btn ghost" disabled={busy} onclick={cancelEdit}>
-              {@html icon("x")} Отмена
-            </button>
+          {#if rAction === "scenario"}
+            <div class="f">
+              <label for="sched-r-scen">Сценарий</label>
+              <select id="sched-r-scen" bind:value={rPayload} disabled={busy}>
+                {#each scenarioOptions as sc (sc.id)}<option value={sc.id}>{sc.label}</option>{/each}
+              </select>
+            </div>
+          {:else if rAction === "ambient"}
+            <div class="f">
+              <label for="sched-r-amb">Звуковой фон</label>
+              <select id="sched-r-amb" bind:value={rPayload} disabled={busy}>
+                {#each ambientOptions as amb (amb.id)}<option value={amb.id}>{amb.name || amb.label}</option>{/each}
+              </select>
+            </div>
+          {:else if rAction !== "briefing"}
+            <div class="f">
+              <label for="sched-r-pay">Параметры</label>
+              <input id="sched-r-pay" type="text" maxlength="300" placeholder={ACTION_META[rAction]?.placeholder || ""} bind:value={rPayload} disabled={busy}>
+            </div>
           {/if}
-        </div>
-      </form>
+
+          <div class="row">
+            <button type="submit" class="btn primary" disabled={busy}>
+              {@html icon(editingId ? "save" : "plus")} {editingId ? "Сохранить" : "Добавить рутину"}
+            </button>
+            {#if editingId || routines.length}
+              <button type="button" class="btn ghost" disabled={busy} onclick={resetRoutineForm}>
+                {@html icon("x")} Отмена
+              </button>
+            {/if}
+          </div>
+        </form>
+      {/if}
 
       {#if loading}
         <p class="empty-msg">Загрузка…</p>
@@ -531,91 +427,37 @@
           {#each routines as r (r.id)}
             <div class="sched-row" class:dimmed={!r.enabled}>
               <label class="sw" title={r.enabled ? "Отключить" : "Включить"}>
-                <input
-                  type="checkbox"
-                  checked={r.enabled}
-                  disabled={busy}
-                  onchange={() => toggleRoutine(r)}
-                >
+                <input type="checkbox" checked={r.enabled} disabled={busy} onchange={() => toggleRoutine(r)}>
                 <span class="tr"></span>
               </label>
-
               <div class="sched-info">
                 <div class="sched-top">
                   <span class="sched-time">{r.time}</span>
                   <strong>{r.title}</strong>
-                  {#if r.volume}
-                    <span class="badge">гр. {r.volume}</span>
-                  {/if}
+                  {#if r.volume}<span class="badge">гр. {r.volume}</span>{/if}
                 </div>
                 <div class="sched-meta">
                   <span>{ACTION_META[r.action]?.label || r.action}</span>
-                  {#if r.payload}
-                    <span>· {formatPayload(r.action, r.payload)}</span>
-                  {/if}
+                  {#if r.payload}<span>· {formatPayload(r.action, r.payload)}</span>{/if}
                   <span>· {formatDays(r.days)}</span>
                 </div>
               </div>
-
               <div class="sched-actions">
                 {#if confirmDeleteId === r.id}
-                  <button
-                    type="button"
-                    class="btn danger sm"
-                    disabled={busy}
-                    title="Подтвердить удаление"
-                    onclick={() => deleteRoutine(r.id)}
-                  >
-                    {@html icon("check")}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn ghost sm"
-                    disabled={busy}
-                    title="Отмена"
-                    onclick={() => { confirmDeleteId = ""; }}
-                  >
-                    {@html icon("x")}
-                  </button>
+                  <button type="button" class="btn danger sm" disabled={busy} onclick={() => deleteRoutine(r.id)}>{@html icon("check")}</button>
+                  <button type="button" class="btn ghost sm" disabled={busy} onclick={() => { confirmDeleteId = ""; }}>{@html icon("x")}</button>
                 {:else}
-                  <button
-                    type="button"
-                    class="btn ghost sm"
-                    disabled={busy}
-                    title="Запустить сейчас"
-                    onclick={() => runRoutineNow(r)}
-                  >
-                    {@html icon("play", "solid")}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn ghost sm"
-                    disabled={busy}
-                    title="Изменить"
-                    onclick={() => startEdit(r)}
-                  >
-                    {@html icon("edit")}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn ghost danger sm"
-                    disabled={busy}
-                    title="Удалить"
-                    onclick={() => { confirmDeleteId = r.id; }}
-                  >
-                    {@html icon("trash")}
-                  </button>
+                  <button type="button" class="btn ghost sm" disabled={busy} title="Запустить" onclick={() => runRoutineNow(r)}>{@html icon("play", "solid")}</button>
+                  <button type="button" class="btn ghost sm" disabled={busy} title="Изменить" onclick={() => startEdit(r)}>{@html icon("edit")}</button>
+                  <button type="button" class="btn ghost danger sm" disabled={busy} title="Удалить" onclick={() => { confirmDeleteId = r.id; }}>{@html icon("trash")}</button>
                 {/if}
               </div>
             </div>
           {/each}
         </div>
-      {:else}
-        <p class="empty-msg">Нет запланированных рутин</p>
       {/if}
     </div>
   </section>
-</div>
 {:else}
-<StudioScenarios />
+  <StudioScenarios />
 {/if}

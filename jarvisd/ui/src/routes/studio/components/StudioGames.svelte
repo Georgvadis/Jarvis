@@ -4,6 +4,12 @@
 
   const PARTY_STORAGE = "jarvis.partyPlayers";
   const melodyThemes = ["Аниме-опенинги", "Хиты 2000-х", "Рок", "Игры"];
+  const GAME_CARDS = [
+    { id: "melody", title: "Угадай мелодию", hint: "8 сек · счёт", ic: "music" },
+    { id: "detective", title: "Нуарный детектив", hint: "Улики и допрос", ic: "eye" },
+    { id: "party", title: "Мафия / Бункер", hint: "Компания 3+", ic: "users" },
+    { id: "modes", title: "RPG и Викторина", hint: "Голосовые режимы", ic: "gamepad" },
+  ];
 
   function loadPlayers() {
     try {
@@ -18,6 +24,7 @@
     ];
   }
 
+  let selectedGame = $state("melody");
   let melodyTheme = $state("Аниме-опенинги");
   let detectiveTheme = $state("");
   let partyGame = $state("mafia");
@@ -34,6 +41,11 @@
 
   let games = $derived($activity.games || { active_game: "", melody: {}, detective: {}, party: {} });
   let mode = $derived($activity.modes?.mode || "normal");
+
+  function isLive(id) {
+    if (id === "modes") return mode === "rpg" || mode === "quiz";
+    return games.active_game === id;
+  }
 
   async function startMelody(theme = melodyTheme) {
     if (busy) return;
@@ -134,9 +146,34 @@
 </script>
 
 <div class="studio-stack">
-  <div class="game-grid">
+  <div class="scene-ribbon" role="tablist" aria-label="Выбор игры">
+    {#each GAME_CARDS as card (card.id)}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selectedGame === card.id}
+        class="scene-tile game-pick"
+        class:on={selectedGame === card.id}
+        onclick={() => { selectedGame = card.id; }}
+      >
+        <span class="scene-badge">{@html icon(card.ic)}</span>
+        <span class="scene-copy">
+          <b>{card.title}</b>
+          <small>{isLive(card.id) ? "Идёт игра" : card.hint}</small>
+        </span>
+        {#if isLive(card.id)}<span class="sdot"></span>{/if}
+      </button>
+    {/each}
+  </div>
+
+  {#if selectedGame === "melody"}
     <section class="card">
-      <h2>{@html icon("music")} Угадай мелодию</h2>
+      <div class="card-head">
+        <h2>{@html icon("music")} Угадай мелодию</h2>
+        {#if games.active_game === "melody"}
+          <span class="badge acc">Раунд {games.melody.round}/{games.melody.total} · Счёт {games.melody.score}</span>
+        {/if}
+      </div>
       {#if games.active_game === "melody"}
         <div class="dj-bar">
           <div class="dj-info">
@@ -152,7 +189,7 @@
       <form class="studio-stack" onsubmit={(e) => { e.preventDefault(); startMelody(melodyTheme); }}>
         <div class="chip-row">
           {#each melodyThemes as theme (theme)}
-            <button type="button" class="btn sm ghost" onclick={() => { melodyTheme = theme; startMelody(theme); }}>{theme}</button>
+            <button type="button" class="btn sm" onclick={() => { melodyTheme = theme; startMelody(theme); }}>{theme}</button>
           {/each}
         </div>
         <div class="mode-row">
@@ -161,9 +198,14 @@
         </div>
       </form>
     </section>
-
+  {:else if selectedGame === "detective"}
     <section class="card">
-      <h2>{@html icon("eye")} Нуарный детектив</h2>
+      <div class="card-head">
+        <h2>{@html icon("eye")} Нуарный детектив</h2>
+        {#if games.active_game === "detective"}
+          <span class="badge acc">Улики {games.detective.clues_shown}/{games.detective.clues_total}</span>
+        {/if}
+      </div>
       {#if games.active_game === "detective"}
         <div class="dj-bar">
           <div class="dj-info">
@@ -182,96 +224,99 @@
       {/if}
       <form class="studio-stack" onsubmit={startDetective}>
         <div class="mode-row">
-          <input type="text" maxlength="100" placeholder="Сеттинг (необяз., например: особняк 1940-х)" bind:value={detectiveTheme} disabled={busy}>
-          <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Дело</button>
+          <input type="text" maxlength="100" placeholder="Сеттинг (например: особняк 1940-х)" bind:value={detectiveTheme} disabled={busy}>
+          <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Новое дело</button>
         </div>
       </form>
-      <div class="nav-sep"></div>
+    </section>
+  {:else if selectedGame === "party"}
+    <section class="card">
+      <div class="card-head">
+        <h2>{@html icon("users")} Мафия / Бункер</h2>
+        {#if games.active_game === "party"}
+          <div class="actions">
+            <span class="badge acc">{games.party.game === "bunker" ? "Бункер" : "Мафия"} · Раунд {games.party.round} · {games.party.phase}</span>
+            <button type="button" class="btn sm primary" disabled={busy} onclick={nextPartyPhase}>{@html icon("skip")} Следующая фаза</button>
+            <button type="button" class="btn sm ghost danger" onclick={stopGames}>{@html icon("stop", "solid")} Завершить</button>
+          </div>
+        {/if}
+      </div>
+
+      {#if games.active_game === "party" && games.party.game === "bunker" && games.party.scenario}
+        <div class="bunker-banner">
+          <b>Катастрофа:</b> {games.party.scenario}
+        </div>
+      {/if}
+
+      {#if games.active_game === "party" && games.party.roles?.length}
+        <div class="role-grid">
+          {#each games.party.roles as r (r.name)}
+            <button type="button" class="role-card-full" onclick={() => { revealedRoles = { ...revealedRoles, [r.name]: !revealedRoles[r.name] }; }}>
+              <b>{r.name}</b>
+              {#if r.dm_sent}
+                <small>Роль отправлена в Telegram</small>
+              {:else if revealedRoles[r.name]}
+                <small>{r.role}</small>
+                {#if r.detail}<div class="role-detail">{r.detail}</div>{/if}
+              {:else}
+                <small>Нажмите, чтобы открыть карту</small>
+              {/if}
+            </button>
+          {/each}
+        </div>
+        <div class="nav-sep"></div>
+      {/if}
+
+      <form class="studio-stack" onsubmit={startParty}>
+        <div class="mode-foot">
+          <div class="seg sm" role="group" aria-label="Игра">
+            <button type="button" class:on={partyGame === "mafia"} onclick={() => { partyGame = "mafia"; }}>Мафия</button>
+            <button type="button" class:on={partyGame === "bunker"} onclick={() => { partyGame = "bunker"; }}>Бункер</button>
+          </div>
+          <div class="seg sm" role="group" aria-label="Таймер обсуждения">
+            {#each [60, 90, 120] as sec (sec)}
+              <button type="button" class:on={partyDiscussion === sec} onclick={() => { partyDiscussion = sec; }}>{sec}с</button>
+            {/each}
+          </div>
+        </div>
+
+        <div class="party-list">
+          {#each partyPlayers as pl, idx (idx)}
+            <div class="mode-row">
+              <input type="text" maxlength="24" placeholder="Имя игрока" bind:value={pl.name}>
+              <input type="text" maxlength="24" placeholder="Telegram Chat ID (необяз.)" bind:value={pl.chat_id}>
+              {#if partyPlayers.length > 3}
+                <button type="button" class="ib danger" aria-label="Удалить игрока" onclick={() => { partyPlayers = partyPlayers.filter((_, i) => i !== idx); }}>
+                  {@html icon("x")}
+                </button>
+              {/if}
+            </div>
+          {/each}
+        </div>
+
+        <div class="mode-foot">
+          <button type="button" class="btn sm ghost" onclick={() => { partyPlayers = [...partyPlayers, { name: `Игрок ${partyPlayers.length + 1}`, chat_id: "" }]; }}>
+            {@html icon("plus")} Добавить игрока
+          </button>
+          <button type="submit" class="btn primary" disabled={busy}>
+            {@html icon("play", "solid")} Раздать роли
+          </button>
+        </div>
+      </form>
+    </section>
+  {:else}
+    <section class="card">
+      <h2>{@html icon("gamepad")} Интерактивные голосовые режимы</h2>
       <div class="quick-grid">
         <button type="button" class="scen-btn" class:on={mode === "rpg"} disabled={busy} onclick={() => toggleMode("rpg")}>
           {@html icon("shield")}
-          <span>RPG-спектакль</span>
+          <span>{mode === "rpg" ? "RPG-спектакль · идёт" : "RPG-спектакль"}</span>
         </button>
         <button type="button" class="scen-btn" class:on={mode === "quiz"} disabled={busy} onclick={() => toggleMode("quiz")}>
           {@html icon("cpu")}
-          <span>Викторина</span>
+          <span>{mode === "quiz" ? "Викторина · идёт" : "Викторина"}</span>
         </button>
       </div>
     </section>
-  </div>
-
-  <section class="card">
-    <div class="card-head">
-      <h2>{@html icon("users")} Ведущий компании: Мафия / Бункер</h2>
-      {#if games.active_game === "party"}
-        <div class="actions">
-          <span class="badge acc">{games.party.game === "bunker" ? "Бункер" : "Мафия"} · Раунд {games.party.round} · {games.party.phase}</span>
-          <button type="button" class="btn sm primary" disabled={busy} onclick={nextPartyPhase}>{@html icon("skip")} Следующая фаза</button>
-          <button type="button" class="btn sm ghost danger" onclick={stopGames}>{@html icon("stop", "solid")} Завершить</button>
-        </div>
-      {/if}
-    </div>
-
-    {#if games.active_game === "party" && games.party.game === "bunker" && games.party.scenario}
-      <div class="bunker-banner">
-        <b>Катастрофа:</b> {games.party.scenario}
-      </div>
-    {/if}
-
-    {#if games.active_game === "party" && games.party.roles?.length}
-      <div class="role-grid">
-        {#each games.party.roles as r (r.name)}
-          <button type="button" class="role-card-full" onclick={() => { revealedRoles = { ...revealedRoles, [r.name]: !revealedRoles[r.name] }; }}>
-            <b>{r.name}</b>
-            {#if r.dm_sent}
-              <small>Роль отправлена в Telegram</small>
-            {:else if revealedRoles[r.name]}
-              <small>{r.role}</small>
-              {#if r.detail}<div class="role-detail">{r.detail}</div>{/if}
-            {:else}
-              <small>Нажмите, чтобы открыть карту</small>
-            {/if}
-          </button>
-        {/each}
-      </div>
-      <div class="nav-sep"></div>
-    {/if}
-
-    <form class="studio-stack" onsubmit={startParty}>
-      <div class="mode-foot">
-        <div class="seg sm" role="group" aria-label="Игра">
-          <button type="button" class:on={partyGame === "mafia"} onclick={() => { partyGame = "mafia"; }}>Мафия</button>
-          <button type="button" class:on={partyGame === "bunker"} onclick={() => { partyGame = "bunker"; }}>Бункер</button>
-        </div>
-        <div class="seg sm" role="group" aria-label="Таймер обсуждения">
-          {#each [60, 90, 120] as sec (sec)}
-            <button type="button" class:on={partyDiscussion === sec} onclick={() => { partyDiscussion = sec; }}>{sec}с</button>
-          {/each}
-        </div>
-      </div>
-
-      <div class="party-list">
-        {#each partyPlayers as pl, idx (idx)}
-          <div class="mode-row">
-            <input type="text" maxlength="24" placeholder="Имя игрока" bind:value={pl.name}>
-            <input type="text" maxlength="24" placeholder="Telegram Chat ID (необяз.)" bind:value={pl.chat_id}>
-            {#if partyPlayers.length > 3}
-              <button type="button" class="ib danger" aria-label="Удалить игрока" onclick={() => { partyPlayers = partyPlayers.filter((_, i) => i !== idx); }}>
-                {@html icon("x")}
-              </button>
-            {/if}
-          </div>
-        {/each}
-      </div>
-
-      <div class="mode-foot">
-        <button type="button" class="btn sm ghost" onclick={() => { partyPlayers = [...partyPlayers, { name: `Игрок ${partyPlayers.length + 1}`, chat_id: "" }]; }}>
-          {@html icon("plus")} Добавить игрока
-        </button>
-        <button type="submit" class="btn primary" disabled={busy}>
-          {@html icon("play", "solid")} Раздать роли
-        </button>
-      </div>
-    </form>
-  </section>
+  {/if}
 </div>

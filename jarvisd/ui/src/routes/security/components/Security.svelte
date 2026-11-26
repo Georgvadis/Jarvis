@@ -56,55 +56,53 @@
   <h1>Бэкап и доступ</h1>
 </header>
 
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("lock")}Пароль настроек</h2>
-  </div>
-  <form class="sec-b" onsubmit={changePassword}>
-    <div class="grid g2">
-      <div class="f">
-        <label for="pw-old">Текущий</label>
-        <input type="password" id="pw-old" autocomplete="current-password" bind:value={currentPassword} disabled={changingPassword}>
+<div class="bento-2">
+  <section class="card bento-card">
+    <h2>{@html icon("archive")} Резервная копия</h2>
+    <Backup />
+  </section>
+
+  <section class="card bento-card">
+    <h2>{@html icon("lock")} Пароль и сеть</h2>
+    <form class="studio-stack" onsubmit={changePassword}>
+      <div class="grid g2">
+        <div class="f">
+          <label for="pw-old">Текущий пароль</label>
+          <input type="password" id="pw-old" autocomplete="current-password" bind:value={currentPassword} disabled={changingPassword}>
+        </div>
+        <div class="f">
+          <label for="pw-new">Новый {@html tip("Минимум 6 символов.")}</label>
+          <input type="password" id="pw-new" autocomplete="new-password" bind:value={newPassword} disabled={changingPassword}>
+        </div>
       </div>
-      <div class="f">
-        <label for="pw-new">Новый {@html tip("Минимум 6 символов.")}</label>
-        <input type="password" id="pw-new" autocomplete="new-password" bind:value={newPassword} disabled={changingPassword}>
-      </div>
+      <div><button class="btn sm primary" type="submit" disabled={changingPassword}>{@html icon("save")}Сменить пароль</button></div>
+    </form>
+
+    <div class="nav-sep"></div>
+
+    <div class="studio-stack">
+      <label class="sw">
+        <input type="checkbox" checked={lanOnly} disabled={changingAccess} onchange={changeAccess}>
+        <span class="tr"></span>
+        Только из домашней сети
+        {@html tip("Настройки открываются только с устройств в вашей Wi-Fi сети. После 5 неверных паролей вход временно блокируется.")}
+      </label>
+      {#if confirmLanOpen}
+        <div class="inline-confirm" role="alert">
+          <span>Разрешить вход не только из домашней сети?</span>
+          <button class="btn danger sm" type="button" disabled={changingAccess} onclick={() => applyAccess(false)}>
+            {@html icon("check")}Разрешить
+          </button>
+          <button class="btn ghost sm" type="button" disabled={changingAccess} onclick={() => { confirmLanOpen = false; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {/if}
     </div>
-    <div><button class="btn" type="submit" disabled={changingPassword}>{@html icon("save")}Сменить пароль</button></div>
-  </form>
-</section>
+  </section>
 
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("shield")}Доступ к настройкам</h2>
-  </div>
-  <div class="sec-b">
-    <label class="sw">
-      <input type="checkbox" checked={lanOnly} disabled={changingAccess} onchange={changeAccess}>
-      <span class="tr"></span>
-      Только из домашней сети
-      {@html tip("Настройки открываются только с устройств в вашей Wi-Fi сети. После 5 неверных паролей вход временно блокируется.")}
-    </label>
-    {#if confirmLanOpen}
-      <div class="inline-confirm" role="alert">
-        <span>Разрешить вход в настройки не только из домашней сети?</span>
-        <button class="btn danger sm" type="button" disabled={changingAccess} onclick={() => applyAccess(false)}>
-          {@html icon("check")}Разрешить
-        </button>
-        <button class="btn ghost sm" type="button" disabled={changingAccess} onclick={() => { confirmLanOpen = false; }}>
-          {@html icon("x")}Отмена
-        </button>
-      </div>
-    {/if}
-  </div>
-</section>
-
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("radar")}Служебные входы</h2>
-  </div>
-  <div class="sec-b">
+  <section class="card bento-card bento-full">
+    <h2>{@html icon("radar")} Служебные входы</h2>
     <div class="checks">
       {#each checks as check}
         <div class="check">
@@ -118,12 +116,5 @@
         <p class="note">Проверять нечего</p>
       {/each}
     </div>
-  </div>
-</section>
-
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("archive")}Резервная копия</h2>
-  </div>
-  <div class="sec-b"><Backup /></div>
-</section>
+  </section>
+</div>

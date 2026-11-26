@@ -252,12 +252,30 @@
 
 <svelte:window onkeydown={(event) => { if (event.key === "Escape") cancelEdit(); }} />
 
-<header class="ph ph-row">
-  <div>
+<header class="section-head">
+  <div class="mem-head-left">
     <h1>Знания</h1>
+    {#if data}
+      <div class="mem-inline-stats">
+        <span class="chip">{facts.length} {plural(facts.length, "факт", "факта", "фактов")}</span>
+        <span class="chip">{archiveCount} в архиве</span>
+        {#if chronicle.length}<span class="chip">{chronicle.length} мес.</span>{/if}
+      </div>
+    {/if}
   </div>
   {#if data}
-    <div class="actions">
+    <div class="section-head-right">
+      <div class="seg" role="tablist" aria-label="Разделы знаний">
+        <button type="button" role="tab" aria-selected={tab === "facts"} class:on={tab === "facts"} onclick={() => switchTab("facts")}>
+          {@html icon("brain")}<span>Память</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "notes"} class:on={tab === "notes"} onclick={() => switchTab("notes")}>
+          {@html icon("note")}<span>Заметки</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "archive"} class:on={tab === "archive"} onclick={() => switchTab("archive")}>
+          {@html icon("archive")}<span>Архив</span>
+        </button>
+      </div>
       <label class={["sw", styles.toggle]}>
         <input type="checkbox" checked={!settings.off} disabled={busy} onchange={changeEnabled}>
         <span class="tr"></span>
@@ -266,28 +284,6 @@
     </div>
   {/if}
 </header>
-
-<div class="hub-tabs" role="tablist" aria-label="Разделы знаний">
-  <button type="button" role="tab" aria-selected={tab === "facts"} class="hub-tab" class:on={tab === "facts"} onclick={() => switchTab("facts")}>
-    {@html icon("brain")}
-    <span>Память и поиск</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "notes"} class="hub-tab" class:on={tab === "notes"} onclick={() => switchTab("notes")}>
-    {@html icon("note")}
-    <span>Заметки</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "archive"} class="hub-tab" class:on={tab === "archive"} onclick={() => switchTab("archive")}>
-    {@html icon("archive")}
-    <span>Архив и настройки</span>
-  </button>
-</div>
-
-{#snippet stat(count, label, since = "")}
-  <div class={styles.stat}>
-    <b>{count}</b><span>{label}</span>
-    {#if since}<small>{since}</small>{/if}
-  </div>
-{/snippet}
 
 {#snippet editorActions(small = false)}
   <div class="row">
@@ -312,23 +308,15 @@
       </p>
     {/if}
 
-    <div class={styles.stats}>
-      {@render stat(facts.length, plural(facts.length, "факт", "факта", "фактов"))}
-      {@render stat(archiveCount, plural(archiveCount, "в архиве", "в архиве", "в архиве"),
-        memory.archive_since ? "с " + dateFormat.format(memory.archive_since * 1000) : "")}
-      {@render stat(chronicle.length, plural(chronicle.length, "месяц", "месяца", "месяцев"))}
-      {@render stat(memory.turns || 0, "в чате")}
-    </div>
-
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
-          <h2>{@html icon("sparkles")}Умный поиск</h2>
+          <h2>{@html icon("sparkles")}Умный поиск по памяти и заметкам</h2>
         </div>
       </div>
       <form class={styles.ragForm} onsubmit={(e) => { e.preventDefault(); void runRag(false); }}>
-        <input type="search" maxlength="160" placeholder="Вопрос или тема по памяти и заметкам…" bind:value={ragQuery} disabled={ragBusy}>
-        <button class="btn sm ghost" type="submit" disabled={ragBusy || !ragQuery.trim()}>{@html icon("search")} Найти</button>
+        <input type="search" maxlength="160" placeholder="Задайте вопрос или введите тему…" bind:value={ragQuery} disabled={ragBusy}>
+        <button class="btn sm" type="submit" disabled={ragBusy || !ragQuery.trim()}>{@html icon("search")} Найти</button>
         <button class="btn sm primary" type="button" disabled={ragBusy || !ragQuery.trim()} onclick={() => void runRag(true)}>
           {@html icon("sparkles")} {ragBusy ? "Ищу…" : "ИИ-ответ"}
         </button>
@@ -488,73 +476,66 @@
 
     <Archive bind:this={archiveView} {busy} {run} onforget={loadMemory} />
 
-    {#if !settings.off}
-      <section class={["card", styles.section]}>
-        <div class={styles.heading}>
-          <div>
-            <h2>{@html icon("tune")}Сжатие разговоров</h2>
-          </div>
-        </div>
-        <div class="row">
-          <div class="f half">
-            <label for="mem-prov">Модель {@html tip("«Сам выбирает» берёт сначала бесплатное: подписку ChatGPT, потом Gemini, потом платный ключ OpenAI.")}</label>
-            <select id="mem-prov" value={provider} disabled={busy} onchange={changeProvider}>
-              <option value="">Сам выбирает</option>
-              {#each providers as [id, name] (id)}
-                <option value={id} disabled={!available[id]}>{name}{available[id] ? "" : " — не подключено"}</option>
-              {/each}
-              <option value="none">Не сжимать</option>
-            </select>
-          </div>
-          {#if modelProvider && provider !== "none"}
+    <details class="card mem-admin-drawer">
+      <summary>{@html icon("tune")} Настройки сжатия и сброс памяти</summary>
+      <div class="studio-stack">
+        {#if !settings.off}
+          <div class="row">
             <div class="f half">
-              <label for="mem-model">Версия</label>
-              <select id="mem-model" value={settings.active_model ?? ""} disabled={busy} onchange={changeVersion}>
-                {#each settings.models?.[modelProvider] || [] as model (model)}
-                  <option value={model}>{versionName(model)}</option>
+              <label for="mem-prov">Модель сжатия {@html tip("«Сам выбирает» берёт сначала бесплатное: подписку ChatGPT, потом Gemini, потом платный ключ OpenAI.")}</label>
+              <select id="mem-prov" value={provider} disabled={busy} onchange={changeProvider}>
+                <option value="">Сам выбирает</option>
+                {#each providers as [id, name] (id)}
+                  <option value={id} disabled={!available[id]}>{name}{available[id] ? "" : " — не подключено"}</option>
                 {/each}
+                <option value="none">Не сжимать</option>
               </select>
             </div>
+            {#if modelProvider && provider !== "none"}
+              <div class="f half">
+                <label for="mem-model">Версия</label>
+                <select id="mem-model" value={settings.active_model ?? ""} disabled={busy} onchange={changeVersion}>
+                  {#each settings.models?.[modelProvider] || [] as model (model)}
+                    <option value={model}>{versionName(model)}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+          </div>
+          {#if provider === "none"}
+            <p class="note">Сжатие выключено: поиск работает по архиву.</p>
+          {:else if settings.active}
+            <p class="note">Активно: <b>{providerName(settings.active)}</b> · {versionName(settings.active_model)}.</p>
+          {:else}
+            <p class="err">Нужна текстовая модель в <a class="lnk" href="/connections">Сервисах и ИИ</a>.</p>
           {/if}
-        </div>
-        {#if provider === "none"}
-          <p class="note">Сжатие выключено: поиск работает по архиву.</p>
-        {:else if settings.active}
-          <p class="note">Активно: <b>{providerName(settings.active)}</b> · {versionName(settings.active_model)}.</p>
-        {:else}
-          <p class="err">Нужна текстовая модель в <a class="lnk" href="/connections">Подключениях</a>.</p>
         {/if}
-      </section>
-    {/if}
 
-    <section class={["card", styles.section, styles.danger]}>
-      <div class={styles.heading}>
-        <div>
-          <h2>Сброс памяти</h2>
+        <div class="nav-sep"></div>
+
+        <div class="row">
+          <button class="btn" type="button" disabled={busy || !(memory.turns || memory.summary)}
+            onclick={() => { confirmReset = "chat"; }}>{@html icon("sparkles")}Новый чат</button>
+          <span class="spacer"></span>
+          <button class="btn ghost danger" type="button" disabled={busy || !(archiveCount || facts.length || memory.summary)}
+            onclick={() => { confirmReset = "all"; }}>{@html icon("trash")}Стереть всю память</button>
         </div>
+        {#if confirmReset}
+          <div class="inline-confirm" role="alert">
+            <span>
+              {confirmReset === "all"
+                ? "Стереть всю память Джарвиса?"
+                : "Начать новый чат и сбросить конспект?"}
+            </span>
+            <button class="btn danger sm" type="button" disabled={busy} onclick={() => resetChat(confirmReset === "all")}>
+              {@html icon("check")}{confirmReset === "all" ? "Стереть" : "Сбросить"}
+            </button>
+            <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmReset = ""; }}>
+              {@html icon("x")}Отмена
+            </button>
+          </div>
+        {/if}
       </div>
-      <div class="row">
-        <button class="btn" type="button" disabled={busy || !(memory.turns || memory.summary)}
-          onclick={() => { confirmReset = "chat"; }}>{@html icon("sparkles")}Новый чат</button>
-        <span class="spacer"></span>
-        <button class="btn ghost danger" type="button" disabled={busy || !(archiveCount || facts.length || memory.summary)}
-          onclick={() => { confirmReset = "all"; }}>{@html icon("trash")}Стереть всё</button>
-      </div>
-      {#if confirmReset}
-        <div class="inline-confirm" role="alert">
-          <span>
-            {confirmReset === "all"
-              ? "Стереть всю память Джарвиса?"
-              : "Начать новый чат и сбросить конспект?"}
-          </span>
-          <button class="btn danger sm" type="button" disabled={busy} onclick={() => resetChat(confirmReset === "all")}>
-            {@html icon("check")}{confirmReset === "all" ? "Стереть" : "Сбросить"}
-          </button>
-          <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmReset = ""; }}>
-            {@html icon("x")}Отмена
-          </button>
-        </div>
-      {/if}
-    </section>
+    </details>
   </div>
 {/if}

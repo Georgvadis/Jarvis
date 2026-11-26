@@ -10,6 +10,7 @@
   let loading = $state(true);
   let busy = $state(false);
   let dragOver = $state(false);
+  let showAdd = $state(false);
   let showUrl = $state(false);
   let bookUrl = $state("");
   let bookUrlTitle = $state("");
@@ -22,6 +23,10 @@
 
   let reader = $derived($activity.reader || {});
   let bookSleepS = $derived(Number(reader.sleep_s || 0));
+  let featuredBook = $derived.by(() => {
+    if (reader.running) return books.find((b) => b.id === reader.book_id) || null;
+    return books[0] || null;
+  });
 
   async function loadBooks() {
     loading = true;
@@ -46,6 +51,7 @@
     try {
       const qs = new URLSearchParams({ filename: file.name || "book.txt" }).toString();
       await upload("POST", "/api/books/upload?" + qs, file, { signal });
+      showAdd = false;
       await loadBooks();
       toast("Книга добавлена");
     } catch (error) {
@@ -207,130 +213,150 @@
   }
 </script>
 
-<section class="card">
-  <div class="card-head">
-    <h2>{@html icon("book")} Библиотека книг и ранобэ</h2>
-    <div class="actions">
-      <button type="button" class="btn sm" class:primary={multiVoice} onclick={() => { multiVoice = !multiVoice; }}>
-        {@html icon("users")} Многоголосие
-      </button>
-      <button type="button" class="btn sm ghost" onclick={() => { showUrl = !showUrl; }}>
-        {@html icon("link")} По ссылке
-      </button>
-      {#if books.length}
-        <button type="button" class="btn sm ghost" disabled={busy} onclick={recapBook}>
-          {@html icon("refresh")} Напомнить суть
-        </button>
-      {/if}
-    </div>
-  </div>
-
-  <label
-    class="dropzone"
-    class:over={dragOver}
-    ondragover={(e) => { e.preventDefault(); dragOver = true; }}
-    ondragleave={() => { dragOver = false; }}
-    ondrop={onDrop}
-  >
-    {@html icon("upload")}
-    <b>Перетащите EPUB, FB2, ZIP, PDF или TXT</b>
-    <small>Закладка сохраняется автоматически после каждого абзаца</small>
-    <input type="file" accept=".epub,.fb2,.zip,.txt,.md,.pdf" hidden onchange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void uploadFile(f); }}>
-  </label>
-
-  {#if showUrl}
-    <form class="mode-drawer" onsubmit={submitBookUrl}>
-      <input type="text" maxlength="400" placeholder="Ссылка на главу или текст…" bind:value={bookUrl} disabled={busy}>
-      <div class="mode-row">
-        <input type="text" maxlength="80" placeholder="Название (необяз.)" bind:value={bookUrlTitle} disabled={busy}>
-        <button type="submit" class="btn sm primary" disabled={busy}>{@html icon("plus")} Добавить</button>
-      </div>
-    </form>
-  {/if}
-
-  {#if reader.running}
-    <div class="dj-bar">
-      <div class="dj-info">
-        <b>{@html icon("book")} {reader.title}</b>
-        <small>
-          {reader.chapter_title || `Глава ${(reader.chapter || 0) + 1}`}
-          {#if bookSleepS > 0} · сон через {Math.ceil(bookSleepS / 60)}м{/if}
-        </small>
-      </div>
-      <div class="dj-actions">
-        <button type="button" class="ib" title="Сохранить цитату в CyberNotes" aria-label="Сохранить цитату" disabled={busy} onclick={saveBookQuote}>{@html icon("note")}</button>
-        <button type="button" class="ib" title="Оглавление" aria-label="Оглавление" onclick={() => toggleToc(reader.book_id)}>{@html icon("list")}</button>
-        <button type="button" class="ib" title="Пред. глава" aria-label="Предыдущая глава" onclick={() => navBook(-1)}>{@html icon("prev")}</button>
-        <button type="button" class="ib" title="Пауза" aria-label="Пауза книги" onclick={pauseBook}>{@html icon("pause")}</button>
-        <button type="button" class="ib" title="След. глава" aria-label="Следующая глава" onclick={() => navBook(1)}>{@html icon("skip")}</button>
-      </div>
-    </div>
-    <div class="amb-sleep">
-      <span class="amb-sleep-lbl">{@html icon("moon")} {bookSleepS > 0 ? `Сон книги: ${Math.ceil(bookSleepS / 60)} мин` : "Таймер сна книги"}</span>
-      <div class="amb-sleep-btns">
-        {#each [15, 30, 45] as m (m)}
-          <button type="button" class="btn sm ghost" disabled={busy} onclick={() => setBookSleep(m)}>{m}м</button>
-        {/each}
-        {#if bookSleepS > 0}
-          <button type="button" class="btn sm ghost danger" disabled={busy} onclick={() => setBookSleep(0)}>{@html icon("x")}</button>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
-  {#if recapText}
-    <div class="recap-box">
-      <div class="recap-box-h">
-        <span>Краткий пересказ с закладки</span>
-        <button type="button" class="ib" aria-label="Закрыть пересказ" onclick={() => { recapText = ""; }}>{@html icon("x")}</button>
-      </div>
-      <p>{recapText}</p>
-    </div>
-  {/if}
-
-  {#if loading}
-    <p class="empty">Загружаю библиотеку…</p>
-  {:else if !books.length}
-    <p class="empty">Библиотека пока пуста — добавьте файл или ссылку выше.</p>
-  {:else}
-    <div class="book-grid">
-      {#each books as b (b.id)}
-        {@const active = reader.running && reader.book_id === b.id}
-        <article class="book-card" class:on={active}>
-          <div class="book-card-h">
-            <b>{b.title}</b>
-            <div class="dj-actions">
-              <button type="button" class="ib" class:on={tocBookId === b.id} title="Оглавление и главы" aria-label="Оглавление" disabled={tocLoading} onclick={() => toggleToc(b.id)}>{@html icon("list")}</button>
-              {#if active}
-                <button type="button" class="ib on" title="Пауза" aria-label="Пауза" onclick={pauseBook}>{@html icon("pause")}</button>
-              {:else}
-                <button type="button" class="ib" title="Слушать" aria-label="Слушать книгу" onclick={() => playBook(b.id)}>{@html icon("play", "solid")}</button>
-              {/if}
-              {#if confirmId === b.id}
-                <button type="button" class="ib danger" aria-label="Подтвердить удаление" onclick={() => deleteBook(b.id)}>{@html icon("check")}</button>
-                <button type="button" class="ib" aria-label="Отмена" onclick={() => { confirmId = ""; }}>{@html icon("x")}</button>
-              {:else}
-                <button type="button" class="ib danger" title="Удалить" aria-label="Удалить книгу" onclick={() => { confirmId = b.id; }}>{@html icon("trash")}</button>
-              {/if}
-            </div>
-          </div>
-          <div class="meta">Глава {b.chapter + 1} из {b.chapters_count} · {b.progress_pct}%</div>
-          <progress class="bar" value={b.progress_pct} max="100" aria-label="Прогресс чтения"></progress>
-          {#if tocBookId === b.id && tocData?.chapters?.length}
-            <div class="chap-list">
-              {#each tocData.chapters as ch (ch.index)}
-                <button
-                  type="button"
-                  class="chap-btn"
-                  class:on={b.chapter === ch.index}
-                  disabled={busy}
-                  onclick={() => jumpToChapter(b.id, ch.index)}
-                >{ch.index + 1}. {ch.title}</button>
-              {/each}
-            </div>
+<div class="studio-stack">
+  {#if reader.running || featuredBook}
+    <section class="card book-hero" class:live={reader.running}>
+      <div class="book-hero-top">
+        <span class="book-hero-cover" aria-hidden="true">{@html icon("book")}</span>
+        <div class="book-hero-meta">
+          <span class="hearth-now-kicker">{reader.running ? "Читаю сейчас" : "Продолжить чтение"}</span>
+          <h2>{reader.running ? reader.title : featuredBook.title}</h2>
+          <small>
+            {#if reader.running}
+              {reader.chapter_title || `Глава ${(reader.chapter || 0) + 1}`}
+              {#if bookSleepS > 0} · сон через {Math.ceil(bookSleepS / 60)}м{/if}
+            {:else}
+              Глава {featuredBook.chapter + 1} из {featuredBook.chapters_count} · {featuredBook.progress_pct}%
+            {/if}
+          </small>
+        </div>
+        <div class="book-hero-acts">
+          {#if reader.running}
+            <button type="button" class="ib" title="Цитата в CyberNotes" aria-label="Сохранить цитату" disabled={busy} onclick={saveBookQuote}>{@html icon("note")}</button>
+            <button type="button" class="ib" title="Оглавление" aria-label="Оглавление" onclick={() => toggleToc(reader.book_id)}>{@html icon("list")}</button>
+            <button type="button" class="ib" title="Пред. глава" aria-label="Предыдущая глава" onclick={() => navBook(-1)}>{@html icon("prev")}</button>
+            <button type="button" class="dock-play" title="Пауза" aria-label="Пауза книги" onclick={pauseBook}>{@html icon("pause", "solid")}</button>
+            <button type="button" class="ib" title="След. глава" aria-label="Следующая глава" onclick={() => navBook(1)}>{@html icon("skip")}</button>
+          {:else}
+            <button type="button" class="btn sm ghost" disabled={busy} onclick={recapBook}>{@html icon("refresh")} Суть</button>
+            <button type="button" class="btn primary" disabled={busy} onclick={() => playBook(featuredBook.id)}>
+              {@html icon("play", "solid")} Слушать
+            </button>
           {/if}
-        </article>
-      {/each}
-    </div>
+        </div>
+      </div>
+      {#if featuredBook}
+        <progress class="bar" value={featuredBook.progress_pct} max="100" aria-label="Прогресс чтения"></progress>
+      {/if}
+      {#if reader.running}
+        <div class="amb-sleep">
+          <span class="amb-sleep-lbl">{@html icon("moon")} {bookSleepS > 0 ? `Сон книги: ${Math.ceil(bookSleepS / 60)} мин` : "Таймер сна книги"}</span>
+          <div class="amb-sleep-btns">
+            {#each [15, 30, 45] as m (m)}
+              <button type="button" class="btn sm ghost" disabled={busy} onclick={() => setBookSleep(m)}>{m}м</button>
+            {/each}
+            {#if bookSleepS > 0}
+              <button type="button" class="btn sm ghost danger" disabled={busy} onclick={() => setBookSleep(0)}>{@html icon("x")}</button>
+            {/if}
+          </div>
+        </div>
+      {/if}
+    </section>
   {/if}
-</section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>{@html icon("book")} Книжная полка {#if books.length}<span class="badge">{books.length}</span>{/if}</h2>
+      <div class="actions">
+        <button type="button" class="btn sm" class:primary={multiVoice} onclick={() => { multiVoice = !multiVoice; }}>
+          {@html icon("users")} Многоголосие
+        </button>
+        <button type="button" class="btn sm" class:primary={showAdd} onclick={() => { showUrl = false; showAdd = !showAdd; }}>
+          {@html icon(showAdd ? "x" : "plus")} Файл
+        </button>
+        <button type="button" class="btn sm ghost" class:on={showUrl} onclick={() => { showAdd = false; showUrl = !showUrl; }}>
+          {@html icon("link")} По ссылке
+        </button>
+      </div>
+    </div>
+
+    {#if showAdd || (!loading && !books.length)}
+      <label
+        class="dropzone"
+        class:over={dragOver}
+        ondragover={(e) => { e.preventDefault(); dragOver = true; }}
+        ondragleave={() => { dragOver = false; }}
+        ondrop={onDrop}
+      >
+        {@html icon("upload")}
+        <b>Перетащите EPUB, FB2, ZIP, PDF или TXT</b>
+        <small>Закладка сохраняется автоматически</small>
+        <input type="file" accept=".epub,.fb2,.zip,.txt,.md,.pdf" hidden onchange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (f) void uploadFile(f); }}>
+      </label>
+    {/if}
+
+    {#if showUrl}
+      <form class="mode-drawer" onsubmit={submitBookUrl}>
+        <input type="text" maxlength="400" placeholder="Ссылка на главу или текст…" bind:value={bookUrl} disabled={busy}>
+        <div class="mode-row">
+          <input type="text" maxlength="80" placeholder="Название (необяз.)" bind:value={bookUrlTitle} disabled={busy}>
+          <button type="submit" class="btn sm primary" disabled={busy}>{@html icon("plus")} Добавить</button>
+        </div>
+      </form>
+    {/if}
+
+    {#if recapText}
+      <div class="recap-box">
+        <div class="recap-box-h">
+          <span>Краткий пересказ с закладки</span>
+          <button type="button" class="ib" aria-label="Закрыть пересказ" onclick={() => { recapText = ""; }}>{@html icon("x")}</button>
+        </div>
+        <p>{recapText}</p>
+      </div>
+    {/if}
+
+    {#if loading}
+      <p class="empty">Загружаю библиотеку…</p>
+    {:else if books.length}
+      <div class="book-grid">
+        {#each books as b (b.id)}
+          {@const active = reader.running && reader.book_id === b.id}
+          <article class="book-card" class:on={active}>
+            <div class="book-card-h">
+              <b>{b.title}</b>
+              <div class="dj-actions">
+                <button type="button" class="ib" class:on={tocBookId === b.id} title="Оглавление" aria-label="Оглавление" disabled={tocLoading} onclick={() => toggleToc(b.id)}>{@html icon("list")}</button>
+                {#if active}
+                  <button type="button" class="ib on" title="Пауза" aria-label="Пауза" onclick={pauseBook}>{@html icon("pause")}</button>
+                {:else}
+                  <button type="button" class="ib" title="Слушать" aria-label="Слушать книгу" onclick={() => playBook(b.id)}>{@html icon("play", "solid")}</button>
+                {/if}
+                {#if confirmId === b.id}
+                  <button type="button" class="ib danger" aria-label="Подтвердить удаление" onclick={() => deleteBook(b.id)}>{@html icon("check")}</button>
+                  <button type="button" class="ib" aria-label="Отмена" onclick={() => { confirmId = ""; }}>{@html icon("x")}</button>
+                {:else}
+                  <button type="button" class="ib danger" title="Удалить" aria-label="Удалить книгу" onclick={() => { confirmId = b.id; }}>{@html icon("trash")}</button>
+                {/if}
+              </div>
+            </div>
+            <div class="meta">Глава {b.chapter + 1} из {b.chapters_count} · {b.progress_pct}%</div>
+            <progress class="bar" value={b.progress_pct} max="100" aria-label="Прогресс чтения"></progress>
+            {#if tocBookId === b.id && tocData?.chapters?.length}
+              <div class="chap-list">
+                {#each tocData.chapters as ch (ch.index)}
+                  <button
+                    type="button"
+                    class="chap-btn"
+                    class:on={b.chapter === ch.index}
+                    disabled={busy}
+                    onclick={() => jumpToChapter(b.id, ch.index)}
+                  >{ch.index + 1}. {ch.title}</button>
+                {/each}
+              </div>
+            {/if}
+          </article>
+        {/each}
+      </div>
+    {/if}
+  </section>
+</div>

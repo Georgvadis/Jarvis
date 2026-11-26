@@ -757,11 +757,6 @@
     </div>
   </div>
 {/snippet}
-{#if tab === "integrations"}
-  {@render settingSection("HTTP-уведомления",
-    "",
-    notifyFields, "broadcast")}
-{/if}
 
 {#snippet pcFields()}
   <div class="grid g2">
@@ -820,11 +815,6 @@
   {#if pcStatus}<p class="note">{pcStatus}</p>{/if}
   {#if pcScreenText}<p class="note">{pcScreenText}</p>{/if}
 {/snippet}
-{#if tab === "integrations"}
-  {@render settingSection("ПК-компаньон",
-    "Управление и экран ПК",
-    pcFields, "monitor")}
-{/if}
 
 {#snippet presenceFields()}
   <div class="grid g2">
@@ -876,11 +866,6 @@
     {/if}
   </div>
 {/snippet}
-{#if tab === "integrations"}
-  {@render settingSection("Присутствие",
-    "По IP телефона в Wi-Fi",
-    presenceFields, "radar")}
-{/if}
 
 {#snippet cybernotesFields()}
   {@render toggle("Голосовые заметки CyberNotes", "cybernotes_enabled", settings.cybernotes_enabled !== false,
@@ -890,11 +875,6 @@
     {notesInfo.available ? `Подключено · заметок: ${notesInfo.total_notes}` : "Каталог CyberNotes недоступен"}
   </p>
 {/snippet}
-{#if tab === "integrations"}
-  {@render settingSection("CyberNotes",
-    "",
-    cybernotesFields, "note")}
-{/if}
 
 {#snippet ollamaFields()}
   {@render toggle("Локальный фолбэк Ollama", "local_llm_fallback", settings.local_llm_fallback !== false,
@@ -915,11 +895,6 @@
     </div>
   </div>
 {/snippet}
-{#if tab === "integrations"}
-  {@render settingSection("Локальный ИИ (Ollama)",
-    "",
-    ollamaFields, "cpu")}
-{/if}
 
 {#snippet briefingFields()}
   <label class="sw">
@@ -952,7 +927,34 @@
   </div>
 {/snippet}
 {#if tab === "integrations"}
-  {@render settingSection("Персональный брифинг",
-    "",
-    briefingFields, "sparkles")}
+  <div class="bento-2">
+    <section class="card bento-card bento-full">
+      <h2>{@html icon("monitor")} ПК-компаньон</h2>
+      <div class="studio-stack">{@render pcFields()}</div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("radar")} Присутствие дома</h2>
+      <div class="studio-stack">{@render presenceFields()}</div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("sparkles")} Персональный брифинг</h2>
+      <div class="studio-stack">{@render briefingFields()}</div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("cpu")} Локальный ИИ (Ollama)</h2>
+      <div class="studio-stack">{@render ollamaFields()}</div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("note")} CyberNotes и уведомления</h2>
+      <div class="studio-stack">
+        {@render cybernotesFields()}
+        <div class="nav-sep"></div>
+        {@render notifyFields()}
+      </div>
+    </section>
+  </div>
 {/if}

@@ -23,6 +23,7 @@
   let folder = $state("Голосовые заметки");
   let tagsInput = $state("");
   let content = $state("");
+  let showComposer = $state(false);
 
   let openNote = $state(null);
   let modalLoading = $state(false);
@@ -130,6 +131,7 @@
       title = "";
       tagsInput = "";
       content = "";
+      showComposer = false;
       toast("Заметка сохранена в CyberNotes");
       await loadList();
     } catch (error) {
@@ -260,48 +262,54 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="studio-grid">
-  <section class="card">
-    <h2>{@html icon("plus")} Новая заметка CyberNotes</h2>
-    <form class="studio-stack" onsubmit={saveNote}>
-      <div class="f">
-        <label for="note-title">Заголовок (необяз.)</label>
-        <input id="note-title" type="text" maxlength="100" placeholder="Короткий заголовок" bind:value={title} disabled={busy}>
-      </div>
-      <div class="grid g2">
-        <div class="f">
-          <label for="note-folder">Папка</label>
-          <input id="note-folder" type="text" maxlength="80" list="note-folders" placeholder="Голосовые заметки" bind:value={folder} disabled={busy}>
-          <datalist id="note-folders">
-            <option value="Голосовые заметки"></option>
-            {#each folders as f (f)}<option value={f}></option>{/each}
-          </datalist>
-        </div>
-        <div class="f">
-          <label for="note-tags">Теги через запятую</label>
-          <input id="note-tags" type="text" maxlength="120" placeholder="идея, дом, покупка" bind:value={tagsInput} disabled={busy}>
-        </div>
-      </div>
-      <div class="f">
-        <label for="note-body">Текст (Markdown)</label>
-        <textarea id="note-body" rows="5" maxlength="12000" placeholder="Что нужно записать…" bind:value={content} disabled={busy}></textarea>
-      </div>
-      <div class="mode-foot">
-        <span class="meta">Всего в базе: {total}</span>
-        <button type="submit" class="btn primary" disabled={busy || !content.trim()}>
-          {@html icon("save")} Сохранить
-        </button>
-      </div>
-    </form>
-  </section>
-
+<div class="studio-stack">
   <section class="card">
     <div class="card-head">
-      <h2>{@html icon("note")} База знаний</h2>
-      <button type="button" class="btn sm ghost" disabled={loading || ragBusy} onclick={() => { query = ""; selectedFolder = ""; selectedTag = ""; ragAnswer = ""; void loadList(); }}>
-        {@html icon("refresh")} Обновить
-      </button>
+      <h2>{@html icon("note")} База знаний CyberNotes {#if total}<span class="badge">{total}</span>{/if}</h2>
+      <div class="actions">
+        <button type="button" class="btn sm" class:primary={!showComposer} onclick={() => { showComposer = !showComposer; }}>
+          {@html icon(showComposer ? "x" : "plus")} {showComposer ? "Скрыть" : "Новая заметка"}
+        </button>
+        <button type="button" class="btn sm ghost" disabled={loading || ragBusy} onclick={() => { query = ""; selectedFolder = ""; selectedTag = ""; ragAnswer = ""; void loadList(); }}>
+          {@html icon("refresh")} Обновить
+        </button>
+      </div>
     </div>
+
+    {#if showComposer}
+      <form class="mode-drawer studio-stack note-composer" onsubmit={saveNote}>
+        <div class="grid g2">
+          <div class="f">
+            <label for="note-title">Заголовок (необяз.)</label>
+            <input id="note-title" type="text" maxlength="100" placeholder="Короткий заголовок" bind:value={title} disabled={busy}>
+          </div>
+          <div class="grid g2">
+            <div class="f">
+              <label for="note-folder">Папка</label>
+              <input id="note-folder" type="text" maxlength="80" list="note-folders" placeholder="Голосовые заметки" bind:value={folder} disabled={busy}>
+              <datalist id="note-folders">
+                <option value="Голосовые заметки"></option>
+                {#each folders as f (f)}<option value={f}></option>{/each}
+              </datalist>
+            </div>
+            <div class="f">
+              <label for="note-tags">Теги</label>
+              <input id="note-tags" type="text" maxlength="120" placeholder="идея, дом" bind:value={tagsInput} disabled={busy}>
+            </div>
+          </div>
+        </div>
+        <div class="f">
+          <label for="note-body">Текст (Markdown)</label>
+          <textarea id="note-body" rows="4" maxlength="12000" placeholder="Что нужно записать…" bind:value={content} disabled={busy}></textarea>
+        </div>
+        <div class="mode-foot">
+          <span class="meta">Сохранится в CyberNotes (.md)</span>
+          <button type="submit" class="btn primary" disabled={busy || !content.trim()}>
+            {@html icon("save")} Сохранить
+          </button>
+        </div>
+      </form>
+    {/if}
 
     <form class="mode-row" onsubmit={search}>
       <input type="text" maxlength="120" placeholder="Поиск по заметкам или вопрос ИИ…" bind:value={query}>
@@ -311,7 +319,7 @@
           {#each folders as f (f)}<option value={f}>{f}</option>{/each}
         </select>
       {/if}
-      <button type="submit" class="btn sm ghost" disabled={loading || ragBusy}>{@html icon("search")} Найти</button>
+      <button type="submit" class="btn sm" disabled={loading || ragBusy}>{@html icon("search")} Найти</button>
       <button type="button" class="btn sm primary" disabled={loading || ragBusy || !query.trim()} onclick={() => void askRag()}>
         {@html icon("sparkles")} {ragBusy ? "Думаю…" : "ИИ-ответ"}
       </button>
@@ -348,7 +356,7 @@
     {:else if !visibleNotes.length}
       <p class="empty">{query.trim() || selectedFolder || selectedTag ? "Ничего не найдено." : "Заметок пока нет."}</p>
     {:else}
-      <div class="notes-grid">
+      <div class="notes-grid notes-grid-wide">
         {#each visibleNotes as item (item.path)}
           <article class="note-card">
             <div class="note-card-head">
@@ -356,28 +364,9 @@
                 <b>{item.title}</b>
               </button>
               <div class="note-acts">
-                <button
-                  type="button"
-                  class="ib"
-                  title="Открыть / редактировать"
-                  aria-label="Открыть заметку"
-                  onclick={() => void openNoteModal(item.path)}
-                >{@html icon("edit")}</button>
-                <button
-                  type="button"
-                  class="ib"
-                  title="Копировать"
-                  aria-label="Копировать заметку"
-                  onclick={() => void copyTextSafe(item.snippet || item.title)}
-                >{@html icon("copy")}</button>
-                <button
-                  type="button"
-                  class="ib"
-                  disabled={speakingPath === item.path}
-                  title="Озвучить на колонке"
-                  aria-label="Озвучить на колонке"
-                  onclick={() => void speakText(item.path, item.snippet || item.title)}
-                >{@html icon("voice")}</button>
+                <button type="button" class="ib" title="Открыть / редактировать" aria-label="Открыть заметку" onclick={() => void openNoteModal(item.path)}>{@html icon("edit")}</button>
+                <button type="button" class="ib" title="Копировать" aria-label="Копировать заметку" onclick={() => void copyTextSafe(item.snippet || item.title)}>{@html icon("copy")}</button>
+                <button type="button" class="ib" disabled={speakingPath === item.path} title="Озвучить на колонке" aria-label="Озвучить на колонке" onclick={() => void speakText(item.path, item.snippet || item.title)}>{@html icon("voice")}</button>
               </div>
             </div>
             <small>
