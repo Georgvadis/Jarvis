@@ -3,6 +3,7 @@
   import { api, icon, toast } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
   import { S, reload } from "#state/panelState.js";
+  import { musicData } from "#state/player.js";
 
   const presets = [
     "Ночной Токио",
@@ -81,7 +82,9 @@
     try {
       const res = await api("POST", `/api/dj/${action}`, {});
       await refreshActivity();
+      void musicData();
       if (res?.message) toast(res.message);
+      else if (action === "next") toast("Переключаю трек…");
     } catch (error) {
       toast(error.message, true);
     } finally {

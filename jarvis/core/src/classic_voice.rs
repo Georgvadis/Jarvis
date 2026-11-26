@@ -35,7 +35,9 @@ impl Classic {
                 _=actor.stop.notified()=>break,
                 Some(text)=messages.recv()=>{
                     tasks.abort_all();let generation=actor.generation.fetch_add(1,Ordering::SeqCst)+1;
-                    let me=actor.clone();let context=context.clone();tasks.spawn(async move{me.speak(&context,&text,generation,false).await});
+                    let me=actor.clone();let context=context.clone();
+                    actor.dialog.working(1);
+                    tasks.spawn(async move{me.speak(&context,&text,generation,false).await});
                 },
                 result=tasks.join_next(),if !tasks.is_empty()=>{
                     actor.dialog.working(-1);
@@ -379,10 +381,18 @@ impl Classic {
                             if let Some(h) = next_fut.take() { h.abort(); }
                             return Err(e);
                         }
+                        if i + 1 < sentences.len() {
+                            // Небольшая естественная пауза между предложениями (120 мс при 24 кГц)
+                            let pause = vec![0i16; 2880];
+                            let _ = self.send_pcm_samples(&pause, generation).await;
+                        }
                     }
                 }
             }
         }
+        // Мягкий хвост тишины (240 мс при 24 кГц), чтобы ALSA не съедала последний слог
+        let tail = vec![0i16; 5760];
+        let _ = self.send_pcm_samples(&tail, generation).await;
         Ok(())
     }
 }

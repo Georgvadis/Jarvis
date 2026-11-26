@@ -1778,7 +1778,7 @@ impl Engine {
         let out = sess.take_audio().ok_or("нет звука")?;
         let (mut started, mut heard) = (false, false);
         let mut quiet_since = Instant::now();
-        while quiet_since.elapsed() < Duration::from_millis(1200) || !heard {
+        while sess.dialog().is_working() || quiet_since.elapsed() < Duration::from_millis(1200) || !heard {
             if self.speech_epoch.load(Ordering::SeqCst) != epoch {
                 // «Стоп» из настроек или позвали Алису
                 if started {
@@ -1793,10 +1793,16 @@ impl Engine {
                 return Err("голос не успел прозвучать".into());
             }
             match out.recv_timeout(Duration::from_millis(100)) {
-                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Timeout) => {
+                    // Пока TTS ещё синтезирует следующие предложения — не начинаем отсчёт тишины
+                    if sess.dialog().is_working() {
+                        quiet_since = Instant::now();
+                    }
+                    continue;
+                }
                 Err(RecvTimeoutError::Disconnected) => {
                     if started {
-                        self.player.finish(Duration::from_secs(3));
+                        self.player.finish(Duration::from_secs(12));
                     }
                     return if heard { Ok(()) } else { Err("голос не прозвучал".into()) };
                 }
@@ -1821,7 +1827,7 @@ impl Engine {
                 }
             }
         }
-        self.player.finish(Duration::from_secs(3));
+        self.player.finish(Duration::from_secs(12));
         Ok(())
     }
 

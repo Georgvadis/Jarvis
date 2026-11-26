@@ -1,7 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { api, icon, toast } from "#helpers/core.js";
-  import { runActivityNext, stopActivityItem } from "#state/activity.js";
+  import { activity, refreshActivity, runActivityNext, stopActivityItem } from "#state/activity.js";
   import { artOf, musicAct, musicData, setArt, setVolume, subscribeMusic, subscribeVolume } from "#state/player.js";
 
   let { orb, liveItems = [] } = $props();
@@ -20,6 +20,7 @@
   let playing = $derived(Boolean(state?.playing && !state?.paused));
   let image = $derived(active ? artOf(track, false, state) : "");
   let isTalking = $derived(orb.state === "listening" || orb.state === "thinking" || orb.state === "speaking");
+  let djActive = $derived(Boolean($activity.dj?.active));
   let topActivity = $derived(!active && liveItems.length ? liveItems[0] : null);
 
   const steps = Array.from({ length: 10 }, (_, i) => i + 1);
@@ -45,7 +46,15 @@
     if (pending) return;
     pending = action;
     try {
-      await musicAct(action, event.currentTarget, { disableControl: false });
+      if (action === "next" && djActive && !yandex && !state?.next?.length) {
+        if (state) state = { ...state, loading: true, pos: 0 };
+        await api("POST", "/api/dj/next", {});
+        void refreshActivity();
+      } else {
+        await musicAct(action, event.currentTarget, { disableControl: false });
+      }
+    } catch (error) {
+      toast(error.message, true);
     } finally {
       pending = "";
     }
@@ -81,7 +90,13 @@
       </div>
       <div class="dock-info">
         <b title={track.Title || "…"}>{track.Title || "…"}</b>
-        <small>{track.Author ? `${track.Author} · ${source}` : source}{state?.paused ? " · пауза" : ""}</small>
+        <small>
+          {#if state?.loading}
+            Переключаю…
+          {:else}
+            {track.Author ? `${track.Author} · ${source}` : source}{state?.paused ? " · пауза" : ""}
+          {/if}
+        </small>
       </div>
     </a>
 
@@ -97,7 +112,7 @@
         {@html icon(playing ? "pause" : "play", "solid")}
       </button>
       <button type="button" class="ib" aria-label="Следующий"
-        disabled={pending === "next" || (!yandex && !state?.next?.length)}
+        disabled={pending === "next" || (!yandex && !djActive && !state?.next?.length)}
         onclick={(e) => control(e, "next")}>
         {@html icon("skip", "solid")}
       </button>

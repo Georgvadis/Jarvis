@@ -32,10 +32,15 @@
   let active = $derived(!!(state?.playing || state?.paused));
   let yandex = $derived(state?.source === "yandex");
   let source = $derived(yandex ? "Яндекс Музыка" : "YouTube");
-  let playback = $derived(active ? (state.paused ? "paused" : "playing") : state?.loading ? "loading" : "idle");
+  let playback = $derived(active ? (state.loading ? "loading" : state.paused ? "paused" : "playing") : state?.loading ? "loading" : "idle");
   let title = $derived(active ? track.Title || "…" : playback === "loading" ? "Ищу и включаю…" : "Ничего не играет");
   let artist = $derived(active ? track.Author || source : "Скажите «Джарвис, включи с ютуба …» или попросите Алису");
-  let kicker = $derived(active ? source + (state.paused ? " · пауза" : "") : playback === "loading" ? "YouTube · загрузка" : "Тишина");
+  let kicker = $derived(
+    active
+      ? source + (state.loading ? " · переключаю…" : state.paused ? " · пауза" : "")
+      : playback === "loading" ? "YouTube · загрузка" : "Тишина"
+  );
+  let djActive = $derived(Boolean($activity.dj?.active));
   let image = $derived(active ? artOf(track, true, state) : "");
   let fallback = $derived(active ? artOf(track, false, state) : "");
   let link = $derived(active ? musicLink(state) : "");
@@ -70,7 +75,15 @@
     if (pending) return;
     pending = true;
     try {
-      await musicAct(action, event.currentTarget, { disableControl: false });
+      if (action === "next" && djActive && !yandex && !state?.next?.length) {
+        if (state) state = { ...state, loading: true, pos: 0 };
+        await api("POST", "/api/dj/next", {});
+        void refreshActivity();
+      } else {
+        await musicAct(action, event.currentTarget, { disableControl: false });
+      }
+    } catch (error) {
+      toast(error.message, true);
     } finally {
       pending = false;
     }
@@ -212,7 +225,7 @@
         <button class="cbtn big" id="pl-toggle" type="button" disabled={!active || pending}
           aria-label={playback === "playing" ? "Пауза" : "Продолжить"}
           onclick={(event) => control(event, "toggle")}>{@html icon(playback === "playing" ? "pause" : "play", "solid")}</button>
-        <button class="cbtn" id="pl-next" type="button" disabled={!active || pending || (!yandex && !state?.next?.length)}
+        <button class="cbtn" id="pl-next" type="button" disabled={!active || pending || (!yandex && !djActive && !state?.next?.length)}
           aria-label="Следующий" onclick={(event) => control(event, "next")}>{@html icon("skip", "solid")}</button>
         <button class="cbtn" class:on={!yandex && !!state?.repeat} id="pl-repeat" type="button"
           disabled={!active || pending || yandex}

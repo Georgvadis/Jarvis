@@ -1085,7 +1085,7 @@ pub async fn dj_start(State(app): State<App>, axum::Json(value): axum::Json<serd
 }
 
 pub async fn dj_next(State(app): State<App>) -> Response {
-    app.dj.next();
+    app.dj.next_with(&app.engine);
     reply(StatusCode::OK, app.dj.status())
 }
 

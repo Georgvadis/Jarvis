@@ -130,16 +130,74 @@ export function musicAct(a, b, { disableControl = true } = {}) {
   if (a === "prev" && M.source !== "yandex") {
     const previous = M.history?.[1];
     if (previous) {
-      return music({
+      return optimisticMusic({
+        ...M,
+        track: previous,
+        pos: 0,
+        playing: true,
+        paused: false,
+        loading: true,
+      }, {
         action: "id",
         query: previous.ID,
         title: previous.Title || "",
         author: previous.Author || "",
-      }, control);
+      }, control, true);
     }
     return;
   }
-  return music({ action: a === "toggle" ? (M.paused ? "resume" : "pause") : a }, control);
+  if (a === "toggle") {
+    const wantResume = !!M.paused;
+    return optimisticMusic({
+      ...M,
+      playing: true,
+      paused: !wantResume,
+    }, { action: wantResume ? "resume" : "pause" }, control);
+  }
+  if (a === "stop") {
+    return optimisticMusic({
+      ...M,
+      playing: false,
+      paused: false,
+      loading: false,
+    }, { action: "stop" }, control);
+  }
+  if (a === "next") {
+    const upcoming = M.source !== "yandex" ? M.next?.[0] : null;
+    return optimisticMusic({
+      ...M,
+      track: upcoming || M.track,
+      next: upcoming ? M.next.slice(1) : M.next,
+      pos: 0,
+      playing: true,
+      paused: false,
+      loading: true,
+    }, { action: "next" }, control, true);
+  }
+  if (a === "prev") {
+    return optimisticMusic({
+      ...M,
+      pos: 0,
+      loading: true,
+    }, { action: "prev" }, control, true);
+  }
+  return music({ action: a }, control);
+}
+
+async function optimisticMusic(optimistic, body, btn, followUp = false) {
+  const before = M;
+  M = optimistic;
+  mAt = Date.now();
+  renderMusic();
+  const ok = await music(body, btn);
+  if (!ok && M === optimistic) {
+    M = before;
+    renderMusic();
+  } else if (ok && followUp) {
+    clearTimeout(bufferingTimer);
+    bufferingTimer = setTimeout(() => { bufferingTimer = 0; void musicData(); }, 550);
+  }
+  return ok;
 }
 
 // перекатывающиеся цифры: сменившаяся уезжает вверх, новая въезжает снизу (назад — наоборот)

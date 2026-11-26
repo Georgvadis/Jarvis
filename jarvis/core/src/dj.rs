@@ -161,6 +161,15 @@ impl AiDj {
         self.wake.notify_waiters();
     }
 
+    pub fn next_with(&self, engine: &Engine) {
+        let m = engine.music.clone();
+        let h = engine.host.clone();
+        tokio::spawn(async move {
+            let _ = m.call(&h, "stop", Value::Null).await;
+        });
+        self.wake.notify_waiters();
+    }
+
     pub fn stop(&self, engine: Option<&Engine>) {
         let was_active = {
             let mut g = self.st.lock().unwrap();
@@ -366,15 +375,23 @@ impl AiDj {
                 (g.played.len(), g.station.clone(), g.mood.clone())
             };
 
+            // Останавливаем предыдущий трек перед подводкой, чтобы голос и музыка не накладывались
+            if engine.music.state().playing {
+                let _ = engine.music.call(&engine.host, "stop", Value::Null).await;
+                tokio::time::sleep(Duration::from_millis(120)).await;
+            }
+
             // Короткая живая подводка радиоведущего перед треком
             let s = engine.store.get();
             let p = s.active_profile();
             let base = s.prompt_text(&p.prompt);
             let dj_sys = format!(
                 "{base}\nТы ночной радио-DJ на станции «{cur_station}» (вайб: {cur_mood}). \
-                Скажи короткую, стильную подводку к следующему треку: «{query}» — строго 1–2 живых предложения по-русски без Markdown. {}",
+                Скажи короткую, тёплую подводку к следующему треку: «{query}». \
+                Строго 1–2 плавных предложения по-русски без Markdown, скобок и спецсимволов. \
+                Иностранные имена артистов и названия треков пиши по-русски кириллицей так, как они звучат на слух, чтобы диктор произнёс каждое слово чисто. {}",
                 if count == 1 {
-                    "Открой эфир приветствием и [sfx:chime]."
+                    "Коротко поприветствуй слушателя и представь первый трек."
                 } else {
                     "Плавно представь следующую композицию."
                 }
@@ -390,7 +407,7 @@ impl AiDj {
                 Some(&engine.gemini_pool),
             )
             .await
-            .unwrap_or_else(|_| format!("На волне {cur_station} — {query}."));
+            .unwrap_or_else(|_| format!("На волне {cur_station} звучит следующий трек."));
 
             if !self.is_current(generation) {
                 break;
@@ -398,12 +415,18 @@ impl AiDj {
             let clean_intro = crate::sfx::strip_tags(&intro);
             engine.journal.note("AI-DJ", &query, &clean_intro);
             let e_say = engine.clone();
-            let speak_str = intro.clone();
+            let speak_str = clean_intro.clone();
             let _ = tokio::task::spawn_blocking(move || {
-                let _ = e_say.say_aloud(&speak_str, Duration::from_secs(25));
+                let _ = e_say.say_aloud(&speak_str, Duration::from_secs(45));
             })
             .await;
 
+            if !self.is_current(generation) {
+                break;
+            }
+
+            // Небольшая пауза после голоса диджея, чтобы YouTube не срезал хвост последнего слова
+            tokio::time::sleep(Duration::from_millis(250)).await;
             if !self.is_current(generation) {
                 break;
             }

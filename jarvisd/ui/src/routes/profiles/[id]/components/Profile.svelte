@@ -142,13 +142,32 @@
       <p class="sub">{isNew ? "Профиль ассистента" : active ? "Активный" : "Не активен"}</p>
     </div>
   </div>
-  <div class="seg asst-sub-seg" role="tablist" aria-label="Разделы профиля">
-    <button type="button" role="tab" aria-selected={ptab === "brain"} class:on={ptab === "brain"} onclick={() => { ptab = "brain"; }}>
-      {@html icon("cpu")} Основное и мозг
-    </button>
-    <button type="button" role="tab" aria-selected={ptab === "voice"} class:on={ptab === "voice"} onclick={() => { ptab = "voice"; }}>
-      {@html icon("voice")} Голос и подсветка
-    </button>
+  <div class="section-head-right">
+    {#if !isNew && !active}
+      <button class="btn sm" type="button" id="p-activate" disabled={Boolean(working)} onclick={activate}
+        data-tip="Этот ассистент будет отвечать на «Джарвис»">{@html icon("check")}Сделать активным</button>
+      {#if confirmDelete}
+        <div class="inline-confirm" role="alert">
+          <span>Удалить «{profile.name}»?</span>
+          <button class="btn danger sm" type="button" id="p-del-confirm" disabled={Boolean(working)} onclick={remove}>
+            {@html icon("check")}Удалить
+          </button>
+          <button class="btn ghost sm" type="button" disabled={Boolean(working)} onclick={() => { confirmDelete = false; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {:else}
+        <button class="btn sm ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={() => { confirmDelete = true; }}>{@html icon("trash")}Удалить</button>
+      {/if}
+    {/if}
+    <div class="seg asst-sub-seg" role="tablist" aria-label="Разделы профиля">
+      <button type="button" role="tab" aria-selected={ptab === "brain"} class:on={ptab === "brain"} onclick={() => { ptab = "brain"; }}>
+        {@html icon("cpu")} Основное и мозг
+      </button>
+      <button type="button" role="tab" aria-selected={ptab === "voice"} class:on={ptab === "voice"} onclick={() => { ptab = "voice"; }}>
+        {@html icon("voice")} Голос и подсветка
+      </button>
+    </div>
   </div>
 </header>
 
@@ -169,24 +188,13 @@
     globallyEnabled={S.settings.led?.enabled !== false} onedit={editLighting} />
 </div>
 
-<div class="savebar">
-  <button class="btn primary" type="button" id="p-save" disabled={Boolean(working)} onclick={save}>{@html icon(isNew ? "plus" : "save")}{isNew ? "Создать" : "Сохранить"}</button>
-  {#if !isNew && !active}
-    <button class="btn" type="button" id="p-activate" disabled={Boolean(working)} onclick={activate}
-      data-tip="Этот ассистент будет отвечать на «Джарвис»">{@html icon("check")}Сделать активным</button>
-    {#if confirmDelete}
-      <div class="inline-confirm" role="alert">
-        <span>Удалить «{profile.name}»?</span>
-        <button class="btn danger sm" type="button" id="p-del-confirm" disabled={Boolean(working)} onclick={remove}>
-          {@html icon("check")}Удалить
-        </button>
-        <button class="btn ghost sm" type="button" disabled={Boolean(working)} onclick={() => { confirmDelete = false; }}>
-          {@html icon("x")}Отмена
-        </button>
-      </div>
-    {:else}
-      <button class="btn ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={() => { confirmDelete = true; }}>{@html icon("trash")}Удалить</button>
+{#if dirty || isNew}
+  <div class="savebar savebar-pill" role="region" aria-label="Сохранение изменений">
+    {#if dirty && !isNew}
+      <span class="dirty" id="dirty">Есть несохранённые изменения</span>
     {/if}
-  {/if}
-  <span class="dirty" class:hidden={!dirty} id="dirty">есть несохранённые изменения</span>
-</div>
+    <button class="btn sm primary" type="button" id="p-save" disabled={Boolean(working)} onclick={save}>
+      {@html icon(isNew ? "plus" : "save")}{isNew ? "Создать" : "Сохранить"}
+    </button>
+  </div>
+{/if}
