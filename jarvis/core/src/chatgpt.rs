@@ -560,6 +560,9 @@ pub async fn ask_codex_with_history_detail_stream(
             let close_dialog = music_turn.should_close(&answer);
             return Ok(BrainReply { text: answer, close_dialog });
         }
+        if !answer.is_empty() && let Some(tx) = &on_delta {
+            let _ = tx.send("\n".to_string());
+        }
         let Some(tools) = tools else { return Err("модель попросила инструмент, которого нет".into()) };
         if calls.len()>32{return Err("Слишком много вызовов инструментов".into());}
         let full_output=r["output"].as_array();

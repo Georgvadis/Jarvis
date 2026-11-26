@@ -178,6 +178,21 @@ impl Dialog {
         self.journal.update(st.turn, |t| t.answer = a);
     }
 
+    /// Полная замена текущего текста ответа модели (для потокового вывода без дублей).
+    pub fn set_bot(&self, full: &str) {
+        let mut st = self.st.lock().unwrap();
+        st.last_activity = Some(Instant::now());
+        if st.turn == 0 {
+            self.next_turn(&mut st);
+        }
+        if st.turn_bot_t0.is_none() {
+            st.turn_bot_t0 = Some(Instant::now());
+        }
+        st.turn_bot = full.to_owned();
+        let a = st.turn_bot.trim().to_string();
+        self.journal.update(st.turn, |t| t.answer = a);
+    }
+
     pub fn set_timings(&self, stt_ms: Option<u64>, llm_ms: Option<u64>, tts_ms: Option<u64>) {
         let turn = self.st.lock().unwrap().turn;
         if turn == 0 {

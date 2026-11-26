@@ -239,7 +239,7 @@ impl Classic {
             };
             self.dialog.set_timings(None, Some(t_llm0.elapsed().as_millis() as u64), None);
             close_after = active_mode == SpecialMode::Normal && reply.close_dialog && !crate::music::wants_keep_talking(text);
-            let display_reply = crate::sfx::strip_tags(&reply.text);
+            let display_reply = strip_web_citations(&crate::sfx::strip_tags(&reply.text));
             if self.generation.load(Ordering::SeqCst)==generation{
                 if active_mode == SpecialMode::Normal {
                     let mut h=context.history.lock().unwrap();
@@ -253,7 +253,7 @@ impl Classic {
             reply.text
         };
         if self.generation.load(Ordering::SeqCst)!=generation{return Ok(());}
-        self.dialog.on_bot(&crate::sfx::strip_tags(&answer));
+        self.dialog.set_bot(&strip_web_citations(&crate::sfx::strip_tags(&answer)));
         if close_after {
             self.dialog.finish_turn("");
             self.dialog.request_close();
@@ -373,7 +373,13 @@ impl Classic {
                 if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
                     return Ok(spoken);
                 }
-                self.dialog.on_bot(&crate::sfx::strip_tags(&full));
+                let shown = strip_web_citations(&crate::sfx::strip_tags(&full));
+                if !shown.is_empty() {
+                    self.dialog.set_bot(&shown);
+                }
+                if !has_speakable_chunk(&chunk) {
+                    continue;
+                }
                 self.speak_inner(context, &chunk, generation, whisper, false).await?;
                 spoken += 1;
                 let pause = vec![0i16; 2880]; // 120 мс между предложениями
@@ -383,9 +389,12 @@ impl Classic {
         if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
             return Ok(spoken);
         }
+        let shown = strip_web_citations(&crate::sfx::strip_tags(&full));
+        if !shown.is_empty() {
+            self.dialog.set_bot(&shown);
+        }
         let rest = buf.trim();
-        if !rest.is_empty() {
-            self.dialog.on_bot(&crate::sfx::strip_tags(&full));
+        if !rest.is_empty() && has_speakable_chunk(rest) {
             self.speak_inner(context, rest, generation, whisper, false).await?;
             spoken += 1;
         }
@@ -433,6 +442,7 @@ impl Classic {
                 }
                 crate::sfx::Segment::Speech { text: seg_text, emotion, speaker } => {
                     let cleaned = clean_for_tts(&seg_text);
+                    if !cleaned.chars().any(char::is_alphanumeric) { continue; }
                     let sentences = split_sentences(&cleaned);
                     if sentences.is_empty() { continue; }
 
@@ -643,11 +653,186 @@ fn time_stretch_pcm(samples: &[i16], speed: f64) -> Vec<i16> {
         })
         .collect()
 }
-/// Очистка ответа от Markdown, ссылок, кода и эмодзи перед отправкой в TTS.
+/// Проверяет, похожа ли строка на домен или URL (например `ghibli.jp`, `ru.wikipedia.org`, `https://...`).
+fn looks_like_domain_or_url(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() || t.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let low = t.to_ascii_lowercase();
+    if low.starts_with("http://") || low.starts_with("https://") || low.starts_with("www.") {
+        return true;
+    }
+    let host = t.split(['/', '?', '#']).next().unwrap_or(t);
+    if !host.contains('.') {
+        return false;
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() < 2 || parts.iter().any(|p| p.is_empty()) {
+        return false;
+    }
+    let tld = parts.last().copied().unwrap_or("");
+    let tld_low = tld.to_lowercase();
+    let valid_cyrillic_tld = matches!(tld_low.as_str(), "рф" | "бел" | "укр" | "сайт" | "онлайн");
+    if host.is_ascii() {
+        let valid_tld = (2..=10).contains(&tld.len()) && tld.bytes().all(|b| b.is_ascii_alphabetic());
+        let valid_labels = parts.iter().all(|p| {
+            p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        });
+        let has_lower = host.bytes().any(|b| b.is_ascii_lowercase());
+        valid_tld && valid_labels && has_lower
+    } else {
+        valid_cyrillic_tld
+            && parts.iter().all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '-'))
+    }
+}
+
+/// Проверяет, состоит ли содержимое `(...)` исключительно из ссылок-источников (например `([ghibli.jp](https://...))`).
+fn is_citation_group(inner: &str) -> bool {
+    let mut found_link = false;
+    let mut i = 0;
+    let bytes = inner.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            if let Some(close_b) = inner[i + 1..].find(']') {
+                let mid = i + 1 + close_b;
+                if bytes.get(mid + 1) == Some(&b'(') {
+                    if let Some(close_p) = inner[mid + 2..].find(')') {
+                        let url = inner[mid + 2..mid + 2 + close_p].trim();
+                        if url.starts_with("http://") || url.starts_with("https://") {
+                            found_link = true;
+                            i = mid + 2 + close_p + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        if inner[i..].starts_with("http://") || inner[i..].starts_with("https://") {
+            found_link = true;
+            while i < bytes.len() && !inner[i..].chars().next().unwrap().is_whitespace() && bytes[i] != b',' && bytes[i] != b';' {
+                i += inner[i..].chars().next().unwrap().len_utf8();
+            }
+            continue;
+        }
+        let ch = inner[i..].chars().next().unwrap();
+        if matches!(ch, ' ' | '\t' | '\n' | '\r' | ',' | ';' | '/' | '|' | '•' | '·' | '-' | '–' | '—') {
+            i += ch.len_utf8();
+            continue;
+        }
+        return false;
+    }
+    found_link
+}
+
+/// Удаляет веб-цитаты OpenAI вроде `([ghibli.jp](https://...))` и маркеры `【4:0†source】`,
+/// чтобы они не портили чат и не зачитывались вслух.
+fn strip_web_citations(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Маркеры цитирования OpenAI вида 【4:0†source】
+        if input[i..].starts_with('【') {
+            if let Some(end_off) = input[i..].find('】') {
+                let after = i + end_off + '】'.len_utf8();
+                let next_ch = input[after..].chars().next();
+                if out.ends_with(' ') && next_ch.is_none_or(|c| c.is_whitespace() || matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '…' | ')' | '»')) {
+                    out.pop();
+                }
+                i = after;
+                continue;
+            }
+        }
+        // Группы ссылок-источников в скобках: ([ghibli.jp](https://...)) или ([a.ru](https://...), [b.ru](https://...))
+        if bytes[i] == b'(' {
+            let mut depth = 0usize;
+            let mut j = i;
+            let mut matched_close: Option<usize> = None;
+            while j < bytes.len() {
+                if bytes[j] == b'(' {
+                    depth += 1;
+                    j += 1;
+                } else if bytes[j] == b')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        matched_close = Some(j);
+                        break;
+                    }
+                    j += 1;
+                } else {
+                    j += input[j..].chars().next().unwrap().len_utf8();
+                }
+            }
+            if let Some(close_idx) = matched_close {
+                let inner = &input[i + 1..close_idx];
+                if is_citation_group(inner) {
+                    let after = close_idx + 1;
+                    let next_ch = input[after..].chars().next();
+                    if out.ends_with(' ') && next_ch.is_none_or(|c| c.is_whitespace() || matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '…' | ')' | '»')) {
+                        out.pop();
+                    }
+                    i = after;
+                    continue;
+                }
+            }
+        }
+        // Markdown-ссылки [label](http...) без внешних скобок
+        if bytes[i] == b'[' {
+            if let Some(close_b) = input[i + 1..].find(']') {
+                let mid = i + 1 + close_b;
+                if bytes.get(mid + 1) == Some(&b'(') {
+                    if let Some(close_p) = input[mid + 2..].find(')') {
+                        let label = &input[i + 1..mid];
+                        let url = input[mid + 2..mid + 2 + close_p].trim();
+                        if url.starts_with("http://") || url.starts_with("https://") {
+                            let after = mid + 2 + close_p + 1;
+                            if looks_like_domain_or_url(label) {
+                                let next_ch = input[after..].chars().next();
+                                if out.ends_with(' ') && next_ch.is_none_or(|c| c.is_whitespace() || matches!(c, '.' | ',' | '!' | '?' | ';' | ':' | '…' | ')' | '»')) {
+                                    out.pop();
+                                }
+                            } else {
+                                // Обычную текстовую ссылку оставляем целиком, чтобы (url) не съелось отдельно
+                                out.push_str(&input[i..after]);
+                            }
+                            i = after;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out.trim().to_string()
+}
+
+/// Есть ли в фрагменте реальный произносимый текст или SFX/сцена (а не только цитата/пунктуация).
+fn has_speakable_chunk(chunk: &str) -> bool {
+    for seg in crate::sfx::parse_segments(chunk) {
+        match seg {
+            crate::sfx::Segment::Scene(_) | crate::sfx::Segment::Sfx(_) => return true,
+            crate::sfx::Segment::Speech { text, .. } => {
+                if clean_for_tts(&text).chars().any(char::is_alphanumeric) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Очистка ответа от Markdown, ссылок, цитат, кода и эмодзи перед отправкой в TTS.
 fn clean_for_tts(input: &str) -> String {
+    // 0. Убираем веб-цитаты OpenAI ([ghibli.jp](https://...)) и маркеры 【...】
+    let cited = strip_web_citations(input);
+
     // 1. Убираем fenced code blocks ```...```
-    let mut no_code = String::with_capacity(input.len());
-    let mut rest = input;
+    let mut no_code = String::with_capacity(cited.len());
+    let mut rest = cited.as_str();
     while let Some(start) = rest.find("```") {
         no_code.push_str(&rest[..start]);
         let after = &rest[start + 3..];
@@ -660,7 +845,7 @@ fn clean_for_tts(input: &str) -> String {
     }
     no_code.push_str(rest);
 
-    // 2. Превращаем markdown-ссылки [текст](url) -> текст
+    // 2. Превращаем markdown-ссылки [текст](url) -> текст (а доменные ссылки вроде [ghibli.jp](...) удаляем)
     let mut no_links = String::with_capacity(no_code.len());
     let bytes = no_code.as_bytes();
     let mut i = 0;
@@ -670,7 +855,10 @@ fn clean_for_tts(input: &str) -> String {
                 let mid = i + 1 + close_b;
                 if no_code.as_bytes().get(mid + 1) == Some(&b'(') {
                     if let Some(close_p) = no_code[mid + 2..].find(')') {
-                        no_links.push_str(&no_code[i + 1..mid]);
+                        let label = no_code[i + 1..mid].trim();
+                        if !label.is_empty() && !looks_like_domain_or_url(label) {
+                            no_links.push_str(label);
+                        }
                         i = mid + 2 + close_p + 1;
                         continue;
                     }
@@ -682,7 +870,7 @@ fn clean_for_tts(input: &str) -> String {
         i += ch.len_utf8();
     }
 
-    // 3. Убираем голые URL (http://... / https://...) и markdown-разметку по строкам
+    // 3. Убираем голые URL/домены и markdown-разметку по строкам
     let mut lines_out = Vec::new();
     for raw_line in no_links.lines() {
         let mut line = raw_line.trim();
@@ -693,8 +881,11 @@ fn clean_for_tts(input: &str) -> String {
         }
         let mut words = Vec::new();
         for w in line.split_whitespace() {
-            let wl = w.trim_matches(|c: char| matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '"' | '\''));
-            if wl.starts_with("http://") || wl.starts_with("https://") || wl.starts_with("www.") {
+            let wl = w.trim_matches(|c: char| matches!(c, '(' | ')' | '<' | '>' | '[' | ']' | '"' | '\'' | ',' | '.' | ';' | ':'));
+            if wl.is_empty() && w.chars().all(|c| matches!(c, '(' | ')' | '[' | ']')) {
+                continue;
+            }
+            if looks_like_domain_or_url(wl) {
                 continue;
             }
             words.push(w);
@@ -704,7 +895,7 @@ fn clean_for_tts(input: &str) -> String {
             lines_out.push(joined);
         }
     }
-    let joined = lines_out.join("\n");
+    let joined = lines_out.join("\n").replace("()", "");
 
     // 4. Убираем символы форматирования и эмодзи/пиктограммы
     let mut out = String::with_capacity(joined.len());
@@ -732,7 +923,12 @@ fn clean_for_tts(input: &str) -> String {
             prev_space = false;
         }
     }
-    out.trim().to_string()
+    let trimmed = out.trim().to_string();
+    if !trimmed.chars().any(char::is_alphanumeric) {
+        String::new()
+    } else {
+        trimmed
+    }
 }
 
 fn tts_cache_key(provider: &str, voice: &str, model: &str, emotion: &str, text: &str) -> String {
@@ -799,10 +995,12 @@ fn pop_ready_sentence(buf: &mut String) -> Option<String> {
                     || prefix.ends_with(" ул.")
                     || prefix.ends_with(" г.")
             );
-            // Не обрываем незакрытый тег [emotion] или [sfx:...]
+            // Не обрываем незакрытый тег [emotion]/[sfx:...] и незакрытую скобку (цитату/ссылку)
             let open_br = prefix.matches('[').count();
             let close_br = prefix.matches(']').count();
-            if !is_abbrev && open_br == close_br {
+            let open_par = prefix.matches('(').count();
+            let close_par = prefix.matches(')').count();
+            if !is_abbrev && open_br == close_br && open_par == close_par {
                 cut_at = Some(end);
                 break;
             }
@@ -810,7 +1008,9 @@ fn pop_ready_sentence(buf: &mut String) -> Option<String> {
         if char_count >= 260 && matches!(c, ',' | ';' | '—') && next_ws {
             let end = idx + c.len_utf8();
             let prefix = buf[..end].trim();
-            if prefix.matches('[').count() == prefix.matches(']').count() {
+            if prefix.matches('[').count() == prefix.matches(']').count()
+                && prefix.matches('(').count() == prefix.matches(')').count()
+            {
                 cut_at = Some(end);
                 break;
             }
@@ -923,6 +1123,43 @@ fn wav(pcm:&[i16])->Vec<u8>{
         let s24=vec![123i16;2400];assert_eq!(resample_pcm(&s24,24000,24000),s24);
         let s48:Vec<i16>=(0..4800).map(|i|(i*5) as i16).collect();
         let r48=resample_pcm(&s48,48000,24000);assert_eq!(r48.len(),2400);assert_eq!(r48[10],100);
+    }
+    #[test]
+    fn strips_web_citations_and_prevents_stream_gibberish() {
+        let raw = "Может, «Ведьмину службу доставки» Миядзаки? Уютное аниме для тихого вечера. ([ghibli.jp](https://www.ghibli.jp/works/majo/?utm_source=openai))";
+        let expected = "Может, «Ведьмину службу доставки» Миядзаки? Уютное аниме для тихого вечера.";
+        assert_eq!(strip_web_citations(raw), expected);
+        assert_eq!(clean_for_tts(raw), expected);
+        assert_eq!(clean_for_tts("([ghibli.jp](https://www.ghibli.jp/works/majo/?utm_source=openai))"), "");
+        assert!(!has_speakable_chunk("([ghibli.jp](https://www.ghibli.jp/works/majo/?utm_source=openai))"));
+        assert_eq!(
+            clean_for_tts("Посмотри [эту статью](https://example.com/a) ([site1.ru](https://site1.ru), [site2.org](https://site2.org))."),
+            "Посмотри эту статью."
+        );
+        // Потоковая нарезка не отдаёт цитату в озвучку и не режет внутри скобок
+        let mut buf = String::from(raw);
+        let mut spoken = Vec::new();
+        while let Some(chunk) = pop_ready_sentence(&mut buf) {
+            if has_speakable_chunk(&chunk) {
+                spoken.push(clean_for_tts(&chunk));
+            }
+        }
+        if !buf.trim().is_empty() && has_speakable_chunk(buf.trim()) {
+            spoken.push(clean_for_tts(buf.trim()));
+        }
+        assert_eq!(spoken, vec![
+            "Может, «Ведьмину службу доставки» Миядзаки?",
+            "Уютное аниме для тихого вечера.",
+        ]);
+        // Dialog::set_bot не дублирует ответ при многократном обновлении
+        let journal = Arc::new(Journal::default());
+        let dialog = Dialog::new(journal.clone(), "classic", "gpt");
+        dialog.on_user("Посоветуй аниме");
+        dialog.set_bot("Может, «Ведьмину службу доставки» Миядзаки? Уют");
+        dialog.set_bot(expected);
+        dialog.set_bot(expected);
+        let items = journal.items(5);
+        assert_eq!(items.last().unwrap().answer, expected);
     }
     #[cfg(feature="lua")]
     #[tokio::test]
