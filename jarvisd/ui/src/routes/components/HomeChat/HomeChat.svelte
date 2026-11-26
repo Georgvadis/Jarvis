@@ -1,8 +1,9 @@
 <script>
   import { onMount } from "svelte";
   import { api, icon, ring, toast } from "#helpers/core.js";
-  import { avatar, journal, refreshRoute, reload, S, speakerState } from "#state/panelState.js";
   import { profilePath } from "#helpers/paths.js";
+  import { activity, refreshActivity } from "#state/activity.js";
+  import { avatar, journal, refreshRoute, reload, S, speakerState } from "#state/panelState.js";
   import { chatMessages } from "./messages.js";
   import Message from "./Message/Message.svelte";
 
@@ -14,30 +15,32 @@
   let speak = $state(readVoicePreference());
   let directTts = $state(false);
   let sending = $state(false);
-  let showDebate = $state(false);
-  let debateTopic = $state("");
-  let debateRounds = $state(2);
+  let chipBusy = $state("");
+  let confirmClear = $state(false);
   const speakerActions = $state({ talk: false, stop: false });
   let feed = $state();
+  let sayInput = $state();
   let animate = $state(false);
   let stickToBottom = true;
   let pollTimer;
+  let confirmTimer;
 
   let rows = $derived(chatMessages(snapshot.turns, snapshot.phase));
   let status = $derived(snapshot.talking ? "говорит и слушает…"
     : snapshot.state.title.replace(/^Жду/, "ждёт").replace(/^Микрофон/, "микрофон"));
   let typing = $derived(draft.trim() !== "");
+  let focusRunning = $derived(Boolean($activity.focus?.running));
 
   onMount(() => {
     animate = true;
     return () => {
       controller.abort();
       clearTimeout(pollTimer);
+      clearTimeout(confirmTimer);
     };
   });
 
   $effect(() => {
-    // После обновления строк прокручиваем ленту, если пользователь уже был внизу.
     if (rows.length) followFeed();
   });
 
@@ -80,7 +83,7 @@
   function toggleVoice() {
     speak = !speak;
     try { localStorage.setItem("jarvis.speak", speak ? "1" : "0"); }
-    catch { /* Настройка всё равно действует до ухода со страницы. */ }
+    catch { /* ignore */ }
   }
 
   function onScroll(event) {
@@ -119,6 +122,7 @@
     try {
       await api("POST", "/api/" + action, undefined, { signal });
       if (action === "talk") toast("Слушаю…");
+      if (action === "stop") void refreshActivity();
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
     } finally {
@@ -126,7 +130,15 @@
     }
   }
 
+  function askClearFeed() {
+    confirmClear = true;
+    clearTimeout(confirmTimer);
+    confirmTimer = setTimeout(() => { confirmClear = false; }, 4000);
+  }
+
   async function clearFeed() {
+    confirmClear = false;
+    clearTimeout(confirmTimer);
     try {
       await api("POST", "/api/journal/clear", undefined, { signal });
       void poll();
@@ -136,19 +148,53 @@
     }
   }
 
-  async function submitDebate(event) {
-    event.preventDefault();
-    const topic = debateTopic.trim() || "Что лучше — кофе или чай?";
+  async function chipScreen() {
+    if (chipBusy) return;
+    chipBusy = "screen";
     try {
-      await api("POST", "/api/debate", { topic, rounds: debateRounds }, { signal });
-      if (signal.aborted) return;
-      showDebate = false;
-      debateTopic = "";
-      toast("Мини-подкаст запущен!");
-      setTimeout(() => void poll(), 1000);
+      await api("POST", "/api/pc/screen", { question: "Кратко опиши, что сейчас на экране." }, { signal });
+      stickToBottom = true;
+      void poll();
+      toast("Экран проанализирован");
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
+    } finally {
+      chipBusy = "";
     }
+  }
+
+  async function chipFocus() {
+    if (chipBusy) return;
+    chipBusy = "focus";
+    try {
+      const res = await api("POST", "/api/focus", { minutes: focusRunning ? 0 : 25 }, { signal });
+      await refreshActivity();
+      toast(res.running ? "Фокус 25 мин запущен" : "Фокус остановлен");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      chipBusy = "";
+    }
+  }
+
+  async function chipRecap() {
+    if (chipBusy) return;
+    chipBusy = "recap";
+    try {
+      const res = await api("POST", "/api/books/recap", {}, { signal });
+      stickToBottom = true;
+      void poll();
+      toast(res.text || "Пересказ готов");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      chipBusy = "";
+    }
+  }
+
+  function chipNote() {
+    draft = "Запиши заметку: ";
+    sayInput?.focus();
   }
 </script>
 
@@ -164,33 +210,27 @@
     </span>
   </div>
   {#if snapshot.profiles.length > 1 && snapshot.profile}
-    <select class="tg-switch" value={snapshot.profile.id} aria-label="Выбрать активного ассистента" onchange={switchProfile}>
+    <select class="tg-switch mobile-only" value={snapshot.profile.id} aria-label="Выбрать активного ассистента" onchange={switchProfile}>
       {#each snapshot.profiles as p (p.id)}
         <option value={p.id}>{p.name}</option>
       {/each}
     </select>
   {/if}
-  <button class="ib lg" class:on={showDebate} type="button" onclick={() => { showDebate = !showDebate; }} title="Мини-подкаст / спор двух ассистентов" aria-label="Запустить спор двух ассистентов">{@html icon("sparkles")}</button>
   {#if rows.length}
-    <button class="ib lg" type="button" onclick={clearFeed} title="Очистить ленту" aria-label="Очистить ленту чата">{@html icon("trash")}</button>
+    {#if confirmClear}
+      <div class="tg-confirm" role="group" aria-label="Очистить переписку">
+        <span>Очистить?</span>
+        <button class="ib danger" type="button" onclick={clearFeed} aria-label="Подтвердить очистку">{@html icon("check")}</button>
+        <button class="ib" type="button" onclick={() => { confirmClear = false; }} aria-label="Отменить">{@html icon("x")}</button>
+      </div>
+    {:else}
+      <button class="ib lg" type="button" onclick={askClearFeed} title="Очистить ленту" aria-label="Очистить ленту чата">{@html icon("trash")}</button>
+    {/if}
   {/if}
   {#if snapshot.profile}
     <a class="ib lg" href={profilePath(snapshot.profile.id)} aria-label="Настроить ассистента">{@html icon("tune")}</a>
   {/if}
 </header>
-
-{#if showDebate}
-  <form class="debate-bar" onsubmit={submitDebate}>
-    <input type="text" maxlength="300" placeholder="Тема мини-подкаста / спора…" bind:value={debateTopic}>
-    <select aria-label="Раунды" bind:value={debateRounds}>
-      <option value={2}>2р</option>
-      <option value={3}>3р</option>
-      <option value={4}>4р</option>
-    </select>
-    <button class="btn sm primary" type="submit">{@html icon("play", "solid")}Старт</button>
-    <button class="ib" type="button" onclick={() => { showDebate = false; }} aria-label="Закрыть">{@html icon("x")}</button>
-  </form>
-{/if}
 
 <div class="tg-body" id="feed" bind:this={feed} onscroll={onScroll}>
   {#each rows as row (row.key)}
@@ -198,14 +238,33 @@
   {:else}
     <div class="tg-empty">
       <b>Здесь будет переписка</b>
-      <span>Скажите «{snapshot.wakeWord}, какая погода?» — вопрос и ответ появятся тут</span>
+      <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
     </div>
   {/each}
 </div>
 
-<form class="tg-f" id="say-form" onsubmit={send}>
-  <input type="text" id="say" maxlength="600" bind:value={draft} autocomplete="off" aria-label={directTts ? "Озвучить текст на колонке" : "Сообщение ассистенту"}
-    placeholder={directTts ? "Озвучить текст на колонке напрямую…" : snapshot.talking ? "Идёт разговор — можно и написать" : "Сообщение"}>
+<div class="chat-chips" aria-label="Быстрые команды">
+  <button type="button" class="chat-chip" disabled={chipBusy === "screen"} onclick={chipScreen}>
+    {@html icon("monitor")} Экран ПК
+  </button>
+  <button type="button" class="chat-chip" class:on={focusRunning} disabled={chipBusy === "focus"} onclick={chipFocus}>
+    {@html icon("bolt")} {focusRunning ? "Стоп фокус" : "Фокус 25м"}
+  </button>
+  <button type="button" class="chat-chip" disabled={chipBusy === "recap"} onclick={chipRecap}>
+    {@html icon("book")} Суть книги
+  </button>
+  <button type="button" class="chat-chip" onclick={chipNote}>
+    {@html icon("note")} Заметка
+  </button>
+</div>
+
+<form class="tg-f" class:direct={directTts} id="say-form" onsubmit={send}>
+  {#if directTts}
+    <span class="tg-direct-tag">TTS</span>
+  {/if}
+  <input type="text" id="say" maxlength="600" bind:this={sayInput} bind:value={draft} autocomplete="off"
+    aria-label={directTts ? "Озвучить текст на колонке" : "Сообщение ассистенту"}
+    placeholder={directTts ? "Текст прозвучит голосом колонки без ИИ…" : snapshot.talking ? "Идёт разговор — можно и написать" : "Сообщение"}>
   <button class="ib lg" class:on={directTts} id="say-direct" type="button" aria-pressed={directTts} onclick={() => { directTts = !directTts; }}
     data-tip={directTts ? "Режим TTS: колонка скажет именно этот текст без ИИ" : "Переключить на прямую озвучку текста (TTS) без ИИ"}
     aria-label="Озвучить текст напрямую">{@html icon("broadcast")}</button>

@@ -359,6 +359,7 @@ async fn run(f: Flags, store: settings::Store) {
     tools.memory = Some(memory.clone());
     tools.leds = Some(leds.clone());
     tools.ambient = Some(ambient.clone());
+    tools.focus = Some(focus.clone());
     tools.modes = Some(modes.clone());
     tools.games = Some(games.clone());
     tools.reader = Some(reader.clone());

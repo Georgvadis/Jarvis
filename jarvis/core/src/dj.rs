@@ -129,6 +129,7 @@ impl AiDj {
         if engine.host.provider("youtube").is_err() {
             return Err("Для AI-DJ включите модуль YouTube на странице «Подключения»".into());
         }
+        engine.tools.stop_for(&engine, "dj");
         if let Some(amb) = &engine.tools.ambient {
             amb.stop();
         }

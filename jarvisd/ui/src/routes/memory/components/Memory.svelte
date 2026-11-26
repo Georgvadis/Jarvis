@@ -25,6 +25,7 @@
   let draft = $state("");
   let newFact = $state("");
   let factQuery = $state("");
+  let confirmMonth = $state("");
   let memory = $derived(data?.memory || {});
   let settings = $derived(data?.settings || {});
   let facts = $derived((memory.profile || "").split("\n").map((line) => line.trim())
@@ -118,7 +119,7 @@
 
   function deleteMonth(event, month) {
     event.preventDefault();
-    if (!confirm("Удалить этот месяц из летописи? Джарвис забудет, о чём тогда говорили.")) return;
+    confirmMonth = "";
     save("/api/memory/month", { month, text: "" }, "Месяц удалён");
   }
 
@@ -342,8 +343,15 @@
                   <b>{item.label}</b><small>{item.turns} {plural(item.turns, "реплика", "реплики", "реплик")}</small>
                   <button class={["ib", styles.push]} type="button" aria-label="Изменить" disabled={busy}
                     onclick={(event) => { event.preventDefault(); edit("month", item.text, item.month); }}>{@html icon("edit")}</button>
-                  <button class="ib danger" type="button" aria-label="Удалить" disabled={busy}
-                    onclick={(event) => deleteMonth(event, item.month)}>{@html icon("trash")}</button>
+                  {#if confirmMonth === item.month}
+                    <button class="ib danger" type="button" aria-label="Подтвердить удаление" disabled={busy}
+                      onclick={(event) => deleteMonth(event, item.month)}>{@html icon("check")}</button>
+                    <button class="ib" type="button" aria-label="Отмена" disabled={busy}
+                      onclick={(event) => { event.preventDefault(); confirmMonth = ""; }}>{@html icon("x")}</button>
+                  {:else}
+                    <button class="ib danger" type="button" aria-label="Удалить" disabled={busy}
+                      onclick={(event) => { event.preventDefault(); confirmMonth = item.month; }}>{@html icon("trash")}</button>
+                  {/if}
                 </summary>
                 <div class={styles.text}>{item.text}</div>
               </details>

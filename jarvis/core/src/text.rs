@@ -19,9 +19,7 @@ impl Engine {
         };
         let command = command.as_str();
         if fastcmd::is_stop(command) {
-            if let Some(modes) = &self.tools.modes {
-                modes.reset(self.tools.ambient.as_deref());
-            }
+            self.tools.stop_all_activities(Some(&self), true);
             let e = self.clone();
             let all = !self.talking() && fastcmd::is_stop_all(command);
             let _ = tokio::task::spawn_blocking(move || {

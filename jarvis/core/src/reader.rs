@@ -73,6 +73,7 @@ impl BookReader {
         book_id: Option<String>,
         multi_voice: Option<bool>,
     ) -> Result<Value, String> {
+        engine.tools.stop_for(&engine, "reader");
         let srv = crate::tools::local_voice_url(&engine.host);
         let chosen_id = if let Some(id) = book_id.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
             id

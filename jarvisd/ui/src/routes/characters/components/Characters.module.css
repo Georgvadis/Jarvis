@@ -95,7 +95,7 @@
   justify-content: center;
   gap: 8px;
   padding: 20px;
-  border: 2px dashed rgb(255 255 255 / .1);
+  border: 2px dashed var(--line2);
   border-radius: 24px;
   background: transparent;
   color: var(--fg2);
@@ -131,8 +131,8 @@
   overscroll-behavior: contain;
   border: 1px solid var(--soft-line);
   border-radius: 26px;
-  background: #1c1c24;
-  box-shadow: 0 30px 80px -20px rgb(0 0 0 / .8);
+  background: var(--modal-bg);
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / .45);
   color: var(--fg);
 }
 

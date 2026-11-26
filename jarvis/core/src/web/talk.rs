@@ -201,15 +201,34 @@ pub async fn talk(State(app): State<App>) -> Response {
 }
 
 pub async fn stop(State(app): State<App>) -> Response {
-    app.reader.stop();
-    app.dj.stop(Some(&app.engine));
-    app.games.stop_all(Some(&app.engine));
-    app.modes.reset(Some(&app.ambient));
-    app.focus.stop();
-    app.ambient.stop();
+    app.engine.tools.stop_all_activities(Some(&app.engine), true);
     let e = app.engine.clone();
     let _ = tokio::task::spawn_blocking(move || e.stop("кнопка в настройках")).await;
     ok()
+}
+
+pub async fn activity(State(app): State<App>) -> Response {
+    reply(
+        StatusCode::OK,
+        json!({
+            "focus": app.focus.status(),
+            "modes": app.modes.status(),
+            "games": app.games.status(),
+            "dj": app.dj.status(),
+            "reader": app.reader.status(),
+            "ambient": app.ambient.status(),
+            "debate_active": crate::debate::is_active(),
+            "presence": app.presence.status(&app.store),
+        }),
+    )
+}
+
+pub async fn scenario_run(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let id = value["id"].as_str().unwrap_or("");
+    match crate::tools::run_scenario(app.engine.clone(), id) {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
 }
 
 pub async fn modes_get(State(app): State<App>) -> Response {
@@ -224,6 +243,7 @@ pub async fn modes_set(State(app): State<App>, axum::Json(value): axum::Json<ser
             reply(StatusCode::OK, app.modes.status())
         }
         "bedtime" => {
+            app.engine.tools.stop_for(&app.engine, "modes");
             let topic = value["topic"]
                 .as_str()
                 .map(str::trim)
@@ -237,6 +257,7 @@ pub async fn modes_set(State(app): State<App>, axum::Json(value): axum::Json<ser
             reply(StatusCode::OK, json!({"mode": "bedtime", "ok": true}))
         }
         "rpg" | "quiz" | "translator" => {
+            app.engine.tools.stop_for(&app.engine, "modes");
             let target = match mode.as_str() {
                 "rpg" => crate::modes::SpecialMode::Rpg,
                 "quiz" => crate::modes::SpecialMode::Quiz,
@@ -718,6 +739,13 @@ pub async fn games_melody(State(app): State<App>, axum::Json(value): axum::Json<
     }
 }
 
+pub async fn games_melody_skip(State(app): State<App>) -> Response {
+    match app.games.skip_melody(&app.engine).await {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
 pub async fn games_detective(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let theme = value["theme"].as_str().unwrap_or("").to_string();
     match app.games.start_detective(app.engine.clone(), theme).await {
@@ -841,4 +869,55 @@ pub async fn notes_status(State(app): State<App>) -> Response {
         }
         _ => reply(StatusCode::OK, json!({"ok": false, "available": false, "total_notes": 0})),
     }
+}
+
+pub async fn notes_list(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let limit = query.get("limit").and_then(|s| s.parse::<u32>().ok()).unwrap_or(20).clamp(1, 100);
+    let url = format!("{}/notes/list?limit={limit}", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось загрузить заметки CyberNotes").await
+}
+
+pub async fn notes_search(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let q = query.get("q").map(String::as_str).unwrap_or("");
+    let limit = query.get("limit").and_then(|s| s.parse::<u32>().ok()).unwrap_or(15).clamp(1, 20);
+    let url = format!("{}/notes/search", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .get(&url)
+        .query(&[("q", q), ("limit", &limit.to_string())])
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось поискать заметки CyberNotes").await
+}
+
+pub async fn notes_save(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let content = value["content"].as_str().unwrap_or("").trim();
+    if content.is_empty() || content.len() > 20000 {
+        return super::bad("Текст заметки должен быть от 1 до 20000 байт");
+    }
+    let title = value["title"].as_str().unwrap_or("").trim();
+    let folder = value["folder"].as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("Голосовые заметки");
+    let tags: Vec<String> = value["tags"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).map(str::to_string).collect())
+        .unwrap_or_default();
+    let url = format!("{}/notes/save", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .post(&url)
+        .json(&json!({"title": title, "content": content, "folder": folder, "tags": tags}))
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось сохранить заметку в CyberNotes").await
 }

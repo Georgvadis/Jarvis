@@ -1,16 +1,10 @@
 <script>
-  import { onMount } from "svelte";
   import { api, icon, jelly, toast } from "#helpers/core.js";
+  import { activity, refreshActivity } from "#state/activity.js";
 
   const controller = new AbortController();
   const { signal } = controller;
-  let active = $state("");
-  let sleepS = $state(0);
-  let volume = $state(70);
-  let showAdd = $state(false);
-  let newName = $state("");
-  let newUrl = $state("");
-  let presets = $state.raw([
+  const fallbackPresets = [
     { id: "rain", name: "Дождь", kind: "ambient", custom: false },
     { id: "fireplace", name: "Камин", kind: "ambient", custom: false },
     { id: "ocean", name: "Океан", kind: "ambient", custom: false },
@@ -18,52 +12,36 @@
     { id: "lofi", name: "Lo-Fi Radio", kind: "radio", custom: false },
     { id: "jazz", name: "Jazz Radio", kind: "radio", custom: false },
     { id: "chill", name: "Space Chill", kind: "radio", custom: false },
-  ]);
+  ];
+
+  let showAdd = $state(false);
+  let newName = $state("");
+  let newUrl = $state("");
   let busy = $state(false);
-  let timer;
   let volSlider;
-  let lastVol = 70;
+  let draggingVol = false;
+  let localVol = $state(70);
 
-  onMount(() => {
-    void load();
-    timer = setInterval(() => {
-      if (sleepS > 0) sleepS = Math.max(0, sleepS - 1);
-    }, 1000);
-    return () => {
-      clearInterval(timer);
-      controller.abort();
-    };
-  });
+  let amb = $derived($activity.ambient || {});
+  let active = $derived(amb.active || "");
+  let sleepS = $derived(Number(amb.sleep_s || 0));
+  let presets = $derived(amb.presets?.length ? amb.presets : fallbackPresets);
+  let displayVol = $derived(draggingVol ? localVol : (typeof amb.volume === "number" ? amb.volume : localVol));
 
-  function applyStatus(data) {
-    active = data.active || "";
-    sleepS = Number(data.sleep_s || 0);
-    if (typeof data.volume === "number") {
-      volume = data.volume;
-      if (volume !== lastVol) {
-        lastVol = volume;
-        volSlider?.set(volume, true);
-      }
+  $effect(() => {
+    if (!draggingVol && typeof amb.volume === "number" && volSlider) {
+      volSlider.set(amb.volume, true);
     }
-    if (Array.isArray(data.presets) && data.presets.length) presets = data.presets;
-  }
-
-  async function load() {
-    try {
-      const data = await api("GET", "/api/ambient", undefined, { signal });
-      if (!signal.aborted) applyStatus(data);
-    } catch { /* ignore */ }
-  }
+  });
 
   async function toggle(id) {
     if (busy) return;
     busy = true;
     const next = active === id ? "" : id;
     try {
-      const data = await api("POST", "/api/ambient", { id: next }, { signal });
-      if (signal.aborted) return;
-      applyStatus(data);
-      if (!active) toast("Фон и радио выключены");
+      await api("POST", "/api/ambient", { id: next }, { signal });
+      await refreshActivity();
+      if (!next) toast("Фон и радио выключены");
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
     } finally {
@@ -75,9 +53,8 @@
     if (busy) return;
     busy = true;
     try {
-      const data = await api("POST", "/api/ambient", { sleep_min: mins }, { signal });
-      if (signal.aborted) return;
-      applyStatus(data);
+      await api("POST", "/api/ambient", { sleep_min: mins }, { signal });
+      await refreshActivity();
       toast(mins ? `Таймер сна: ${mins} мин` : "Таймер сна отменён");
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
@@ -88,8 +65,8 @@
 
   async function saveVolume(val) {
     try {
-      const data = await api("POST", "/api/ambient", { volume: val }, { signal });
-      if (!signal.aborted) applyStatus(data);
+      await api("POST", "/api/ambient", { volume: val }, { signal });
+      await refreshActivity();
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
     }
@@ -97,18 +74,18 @@
 
   function mountVol(node) {
     volSlider = jelly(node, {
-      label: "Громкость фона и радио", min: 5, max: 100, step: 5, format: (v) => `${v}%`, value: volume,
+      label: "Громкость фона и радио", min: 5, max: 100, step: 5, format: (v) => `${v}%`, value: displayVol,
       onInput: (v) => {
-        lastVol = v;
-        volume = v;
+        draggingVol = true;
+        localVol = v;
       },
       onChange: (v) => {
-        lastVol = v;
-        volume = v;
+        draggingVol = false;
+        localVol = v;
         void saveVolume(v);
       },
     });
-    return { destroy: () => { volSlider.destroy(); volSlider = undefined; } };
+    return { destroy: () => { volSlider?.destroy(); volSlider = undefined; controller.abort(); } };
   }
 
   async function addStation(event) {
@@ -119,9 +96,8 @@
     if (!name || !url) return toast("Укажите название и URL потока", true);
     busy = true;
     try {
-      const data = await api("POST", "/api/ambient/stations", { name, url }, { signal });
-      if (signal.aborted) return;
-      applyStatus(data);
+      await api("POST", "/api/ambient/stations", { name, url }, { signal });
+      await refreshActivity();
       newName = "";
       newUrl = "";
       showAdd = false;
@@ -137,9 +113,8 @@
     if (busy) return;
     busy = true;
     try {
-      const data = await api("DELETE", "/api/ambient/stations/" + encodeURIComponent(id), undefined, { signal });
-      if (signal.aborted) return;
-      applyStatus(data);
+      await api("DELETE", "/api/ambient/stations/" + encodeURIComponent(id), undefined, { signal });
+      await refreshActivity();
       toast("Станция удалена");
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
@@ -149,8 +124,7 @@
   }
 
   function formatSleep(sec) {
-    const m = Math.ceil(sec / 60);
-    return `${m} мин`;
+    return `${Math.ceil(sec / 60)} мин`;
   }
 </script>
 
@@ -193,8 +167,8 @@
     {/each}
   </div>
   <div class="amb-vol">
-    <span class="lbl">Громкость <b class="val">{volume}%</b></span>
-    <div use:mountVol role="slider" aria-label="Громкость фона и радио" aria-valuemin="5" aria-valuemax="100" aria-valuenow={volume}></div>
+    <span class="lbl">Громкость <b class="val">{displayVol}%</b></span>
+    <div use:mountVol role="slider" aria-label="Громкость фона и радио" aria-valuemin="5" aria-valuemax="100" aria-valuenow={displayVol}></div>
   </div>
   {#if active}
     <div class="amb-sleep">

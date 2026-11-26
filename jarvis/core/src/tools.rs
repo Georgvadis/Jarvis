@@ -43,6 +43,8 @@ pub struct Tools {
     pub leds: Option<Arc<crate::led::Leds>>,
     /// Фоновые звуки и интернет-радио.
     pub ambient: Option<Arc<crate::ambient::Ambient>>,
+    /// Фокус-таймер (Помодоро).
+    pub focus: Option<Arc<crate::focus::Focus>>,
     /// Запуск мини-подкаста / спора двух ассистентов.
     pub on_debate: Option<Arc<dyn Fn(String) + Send + Sync>>,
     /// Фокус-режим (Помодоро) голосом.
@@ -87,6 +89,7 @@ impl Tools {
             memory: None,
             leds: None,
             ambient: None,
+            focus: None,
             on_debate: None,
             on_focus: None,
             modes: None,
@@ -98,6 +101,74 @@ impl Tools {
 
     pub fn engine(&self) -> Option<Arc<crate::engine::Engine>> {
         self.engine.get().and_then(|w| w.upgrade())
+    }
+
+    /// Арбитр аудио-источников: перед запуском нового режима останавливает конфликтующие.
+    pub fn stop_for(&self, eng: &crate::engine::Engine, keep: &str) {
+        if keep != "reader"
+            && let Some(r) = &self.reader
+        {
+            r.stop();
+        }
+        if keep != "dj"
+            && let Some(d) = &self.dj
+        {
+            d.stop(Some(eng));
+        }
+        if keep != "games"
+            && let Some(g) = &self.games
+        {
+            g.stop_all(Some(eng));
+        }
+        if keep != "debate" {
+            crate::debate::stop();
+        }
+        if keep != "modes"
+            && keep != "games"
+            && let Some(m) = &self.modes
+        {
+            m.reset(None);
+        }
+        if (keep == "reader" || keep == "debate") && eng.host.provider("youtube").is_ok() {
+            let m = eng.music.clone();
+            let h = eng.host.clone();
+            tokio::spawn(async move {
+                let _ = m.call(&h, "stop", Value::Null).await;
+            });
+        }
+    }
+
+    /// Централизованная остановка всех интерактивных активностей.
+    pub fn stop_all_activities(
+        &self,
+        eng: Option<&crate::engine::Engine>,
+        include_ambient_and_focus: bool,
+    ) {
+        if let Some(r) = &self.reader {
+            r.stop();
+        }
+        if let Some(d) = &self.dj {
+            d.stop(eng);
+        }
+        if let Some(g) = &self.games {
+            g.stop_all(eng);
+        }
+        crate::debate::stop();
+        if let Some(m) = &self.modes {
+            m.reset(if include_ambient_and_focus {
+                self.ambient.as_deref()
+            } else {
+                None
+            });
+        }
+        if include_ambient_and_focus {
+            if let Some(f) = &self.focus {
+                f.stop();
+            }
+            if let Some(a) = &self.ambient {
+                a.stop();
+            }
+        }
     }
     pub async fn cancel_loading_music(&self) {
         if let Some(cancel) = &self.music_cancel {
@@ -164,8 +235,14 @@ impl Tools {
         }
     }
 
-    /// Мгновенные встроенные команды YaJarvis (Фокус, Фон/Радио, Читалка, Игры, AI-DJ, Спор) без обращения к Алисе и облаку.
+    /// Мгновенные встроенные команды YaJarvis (Фокус, Фон/Радио, Читалка, Игры, AI-DJ, Спор, Сценарии) без обращения к Алисе и облаку.
     pub fn fast_local(&self, text: &str) -> Option<String> {
+        if let Some(scenario_id) = parse_scenario_command(text)
+            && let Some(eng) = self.engine()
+            && let Ok(ans) = run_scenario(eng, scenario_id)
+        {
+            return Some(ans);
+        }
         if let Some(on_focus) = &self.on_focus
             && let Some(ans) = on_focus(text)
         {
@@ -242,6 +319,12 @@ impl Tools {
     pub async fn fast(&self, text: &str) -> Option<String> {
         if let Some(ans) = self.fast_local(text) {
             return Some(ans);
+        }
+        if is_book_recap_command(text)
+            && let Some(reader) = &self.reader
+            && let Some(eng) = self.engine()
+        {
+            return Some(reader.recap(eng).await.unwrap_or_else(|e| e));
         }
         if !self.has_token() || !self.use_ch("yandex") {
             return None;
@@ -884,6 +967,102 @@ pub async fn search_cybernotes(host: &Host, query: &str) -> Result<String, Strin
     Ok(format!("Найдено в CyberNotes:\n{}", lines.join("\n")))
 }
 
+pub fn parse_scenario_command(text: &str) -> Option<&'static str> {
+    let low = text.trim().to_lowercase();
+    if ["режим работы", "сценарий работы", "рабочий режим"].iter().any(|p| low.contains(p)) {
+        return Some("work");
+    }
+    if ["вечерний режим", "режим вечера", "сценарий вечера"].iter().any(|p| low.contains(p)) {
+        return Some("evening");
+    }
+    if ["режим сна", "сценарий сна", "ночной сценарий"].iter().any(|p| low.contains(p)) {
+        return Some("sleep");
+    }
+    if ["утренний режим", "режим утра", "сценарий утра"].iter().any(|p| low.contains(p)) {
+        return Some("morning");
+    }
+    None
+}
+
+pub fn is_book_recap_command(text: &str) -> bool {
+    let low = text.trim().to_lowercase();
+    [
+        "на чём остановились",
+        "на чем остановились",
+        "перескажи книгу",
+        "напомни книгу",
+        "что было в книге",
+        "суть книги",
+    ]
+    .iter()
+    .any(|p| low.contains(p))
+}
+
+pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<String, String> {
+    match id.trim().to_lowercase().as_str() {
+        "work" => {
+            engine.tools.stop_for(&engine, "focus");
+            std::thread::spawn(|| {
+                let _ = crate::speakervol::set_alice_volume(4);
+            });
+            if let Some(amb) = &engine.tools.ambient {
+                let _ = amb.set_volume(35);
+                if amb.start("lofi").is_err() {
+                    let _ = amb.start("rain");
+                }
+            }
+            if let Some(focus) = &engine.tools.focus {
+                focus.start(engine.clone(), 25);
+            }
+            engine.journal.note("сценарий", "Режим работы", "Фокус 25м + Lo-Fi");
+            Ok("Режим работы: фокус 25 минут и Lo-Fi фон.".into())
+        }
+        "evening" => {
+            engine.tools.stop_for(&engine, "dj");
+            std::thread::spawn(|| {
+                let _ = crate::speakervol::set_alice_volume(5);
+            });
+            if engine.host.provider("youtube").is_ok()
+                && let Some(dj) = &engine.tools.dj
+            {
+                let _ = dj.start(engine.clone(), "ночной Токио чилл синтвейв".into());
+            } else if let Some(amb) = &engine.tools.ambient
+                && amb.start("jazz").is_err()
+            {
+                let _ = amb.start("fireplace");
+            }
+            engine.journal.note("сценарий", "Вечерний режим", "Атмосферный вайб");
+            Ok("Вечерний режим запущен.".into())
+        }
+        "sleep" => {
+            engine.tools.stop_all_activities(Some(&engine), true);
+            std::thread::spawn(|| {
+                let _ = crate::speakervol::set_alice_volume(2);
+            });
+            if let Some(amb) = &engine.tools.ambient {
+                let _ = amb.set_volume(35);
+                let _ = amb.start("ocean");
+                amb.set_sleep(20);
+            }
+            engine.journal.note("сценарий", "Режим сна", "Океан 20 мин");
+            Ok("Режим сна: тихий океан и таймер на 20 минут.".into())
+        }
+        "morning" => {
+            engine.tools.stop_all_activities(Some(&engine), true);
+            std::thread::spawn(|| {
+                let _ = crate::speakervol::set_alice_volume(5);
+            });
+            if let Some(amb) = &engine.tools.ambient {
+                let _ = amb.set_volume(40);
+                let _ = amb.start("jazz");
+            }
+            engine.journal.note("сценарий", "Утренний режим", "Джаз + громкость 5");
+            Ok("Доброе утро! Утренний режим включён.".into())
+        }
+        _ => Err("Неизвестный сценарий".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -912,5 +1091,22 @@ mod tests {
         });
         assert!(device_matches_command("выключи свет на кухне", &ha_light));
         assert!(!device_matches_command("включи кондиционер", &ha_light));
+    }
+
+    #[test]
+    fn parse_scenario_command_matches() {
+        assert_eq!(parse_scenario_command("Джарвис, включи режим работы"), Some("work"));
+        assert_eq!(parse_scenario_command("вечерний режим пожалуйста"), Some("evening"));
+        assert_eq!(parse_scenario_command("запусти сценарий сна"), Some("sleep"));
+        assert_eq!(parse_scenario_command("утренний режим"), Some("morning"));
+        assert_eq!(parse_scenario_command("какая погода"), None);
+    }
+
+    #[test]
+    fn book_recap_command_matches() {
+        assert!(is_book_recap_command("на чём остановились в книге?"));
+        assert!(is_book_recap_command("перескажи книгу пожалуйста"));
+        assert!(is_book_recap_command("напомни книгу"));
+        assert!(!is_book_recap_command("включи музыку"));
     }
 }

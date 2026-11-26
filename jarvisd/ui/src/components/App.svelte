@@ -8,6 +8,8 @@
   import { setPanel } from "#state/panelContext.js";
   import { S, access, readJournal, readOrb, readSidebar, reload, routeRequests, showGate, speaker } from "#state/panelState.js";
   import { musicData, refreshVolume } from "#state/player.js";
+  import { resetActivityPolling, startActivityPolling } from "#state/activity.js";
+  import { initTheme } from "#state/theme.js";
   import { closeWizard, wizardRequest, wizOpen } from "#state/wizard.js";
 
   let { children } = $props();
@@ -33,11 +35,13 @@
   afterNavigate(() => setDirty(false));
 
   onMount(() => {
+    initTheme();
     const legacyPath = location.pathname === "/" ? legacyHashPath(location.hash) : "";
     if (legacyPath) void goto(legacyPath, { replaceState: true });
     const unsubscribeRoutes = routeRequests.subscribe(() => setDirty(false));
     const unsubscribeAccess = access.subscribe(({ status }) => {
       stopPolling();
+      resetActivityPolling();
       if (status !== "active") {
         setDirty(false);
         closeWizard();
@@ -48,12 +52,14 @@
       if (!S.settings.onboarded) wizOpen(0);
       interval = setInterval(poll, 2000);
       void poll();
+      startActivityPolling();
     });
 
     void start().catch(() => {});
     return () => {
       lifetime.abort();
       stopPolling();
+      resetActivityPolling();
       unsubscribeRoutes();
       unsubscribeAccess();
       closeWizard();

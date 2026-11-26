@@ -9,12 +9,13 @@ use serde_json::json;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
 
 static DEBATE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static DEBATE_GEN: AtomicU64 = AtomicU64::new(0);
 
 pub struct DebateParams {
     pub topic: String,
@@ -45,6 +46,20 @@ impl DebateParams {
 
 pub fn is_active() -> bool {
     DEBATE_ACTIVE.load(Ordering::Relaxed)
+}
+
+pub fn stop() {
+    DEBATE_GEN.fetch_add(1, Ordering::SeqCst);
+    DEBATE_ACTIVE.store(false, Ordering::SeqCst);
+}
+
+struct ActiveGuard(u64);
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        if DEBATE_GEN.load(Ordering::SeqCst) == self.0 {
+            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
 }
 
 pub fn spawn_debate(engine: Arc<Engine>, params: DebateParams) {
@@ -150,13 +165,9 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
     {
         return Err("Спор уже идёт".into());
     }
-    struct ActiveGuard;
-    impl Drop for ActiveGuard {
-        fn drop(&mut self) {
-            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
-        }
-    }
-    let _active_guard = ActiveGuard;
+    let my_gen = DEBATE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let _active_guard = ActiveGuard(my_gen);
+    engine.tools.stop_for(&engine, "debate");
 
     let s = engine.store.get();
     let (p1, p2) = resolve_duo(
@@ -191,7 +202,7 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
     let epoch = engine.speech_epoch_now();
 
     for idx in 0..total_turns {
-        if engine.speech_epoch_now() != epoch {
+        if engine.speech_epoch_now() != epoch || DEBATE_GEN.load(Ordering::Relaxed) != my_gen {
             break;
         }
         let is_first_speaker = idx % 2 == 0;
@@ -240,7 +251,10 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
         )
         .await?;
         let reply = reply.trim().to_string();
-        if reply.is_empty() || engine.speech_epoch_now() != epoch {
+        if reply.is_empty()
+            || engine.speech_epoch_now() != epoch
+            || DEBATE_GEN.load(Ordering::Relaxed) != my_gen
+        {
             break;
         }
 
@@ -272,13 +286,9 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
     {
         return Err("Подкаст или спор уже запущен".into());
     }
-    struct ActiveGuard;
-    impl Drop for ActiveGuard {
-        fn drop(&mut self) {
-            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
-        }
-    }
-    let _active_guard = ActiveGuard;
+    let my_gen = DEBATE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    let _active_guard = ActiveGuard(my_gen);
+    engine.tools.stop_for(&engine, "debate");
 
     let mut source_title = params.title.trim().to_string();
     let mut source_text = params.text.trim().to_string();
@@ -339,7 +349,7 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
     let mut dialogue: Vec<(String, String)> = Vec::new();
 
     for idx in 0..turns {
-        if engine.speech_epoch_now() != epoch {
+        if engine.speech_epoch_now() != epoch || DEBATE_GEN.load(Ordering::Relaxed) != my_gen {
             break;
         }
         let is_first = idx % 2 == 0;
@@ -380,7 +390,10 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
         )
         .await?;
         let reply = reply.trim().to_string();
-        if reply.is_empty() || engine.speech_epoch_now() != epoch {
+        if reply.is_empty()
+            || engine.speech_epoch_now() != epoch
+            || DEBATE_GEN.load(Ordering::Relaxed) != my_gen
+        {
             break;
         }
 

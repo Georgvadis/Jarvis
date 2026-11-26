@@ -22,10 +22,10 @@
   gap: 8px;
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid rgb(255 255 255 / .07);
+  border: 1px solid var(--line);
   border-radius: 12px;
   color: var(--fg2);
-  background: rgb(0 0 0 / .25);
+  background: var(--bg0);
 }
 
 .search:focus-within {

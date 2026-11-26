@@ -115,21 +115,22 @@ impl GameManager {
 
     pub fn stop_all(&self, engine: Option<&Engine>) {
         self.timer_gen.fetch_add(1, Ordering::SeqCst);
-        {
+        let was_active = {
             let mut m = self.melody.lock().unwrap();
+            let mut d = self.detective.lock().unwrap();
+            let mut p = self.party.lock().unwrap();
+            let was = m.active || d.active || p.active;
             m.active = false;
             m.awaiting_answer = false;
             m.round_gen = m.round_gen.wrapping_add(1);
-        }
-        {
-            let mut d = self.detective.lock().unwrap();
             d.active = false;
             d.history.clear();
-        }
-        {
-            let mut p = self.party.lock().unwrap();
             p.active = false;
             p.roles.clear();
+            was
+        };
+        if !was_active {
+            return;
         }
         self.modes.reset(Some(&self.ambient));
         if let Some(eng) = engine {
@@ -187,6 +188,7 @@ impl GameManager {
         if engine.host.provider("youtube").is_err() {
             return Err("Для игры «Угадай мелодию» нужен включённый модуль YouTube".into());
         }
+        engine.tools.stop_for(&engine, "games");
         self.stop_all(None);
         self.ambient.stop();
 
@@ -346,6 +348,7 @@ impl GameManager {
     }
 
     pub async fn start_detective(self: &Arc<Self>, engine: Arc<Engine>, theme: String) -> Result<Value, String> {
+        engine.tools.stop_for(&engine, "games");
         self.stop_all(None);
         let _ = self.ambient.start("jazz");
 
@@ -391,6 +394,7 @@ impl GameManager {
         if players.len() < 3 || players.len() > 16 {
             return Err("Нужно от 3 до 16 игроков".into());
         }
+        engine.tools.stop_for(&engine, "games");
         self.stop_all(None);
         let game = if game == "bunker" { "bunker" } else { "mafia" }.to_string();
         let disc_s = discussion_s.clamp(30, 300);
@@ -555,6 +559,27 @@ impl GameManager {
         None
     }
 
+    pub async fn skip_melody(self: &Arc<Self>, engine: &Arc<Engine>) -> Result<Value, String> {
+        let next_gen = {
+            let mut m = self.melody.lock().unwrap();
+            if !m.active {
+                return Err("Игра «Угадай мелодию» не запущена".into());
+            }
+            m.round += 1;
+            m.awaiting_answer = false;
+            m.round_gen = m.round_gen.wrapping_add(1);
+            m.round_gen
+        };
+        engine.leds.set_clock_digits(None, false);
+        let _ = engine.music.call(&engine.host, "stop", Value::Null).await;
+        let me = self.clone();
+        let eng = engine.clone();
+        tokio::spawn(async move {
+            me.play_melody_round(eng, next_gen).await;
+        });
+        Ok(self.status())
+    }
+
     async fn handle_melody_turn(self: &Arc<Self>, engine: &Arc<Engine>, user_text: &str) -> String {
         let (track, round_gen, total) = {
             let mut m = self.melody.lock().unwrap();
@@ -568,11 +593,13 @@ impl GameManager {
             (m.tracks[m.round].clone(), m.round_gen, m.tracks.len())
         };
         let low = user_text.trim().to_lowercase();
-        let mut matched = !low.is_empty()
+        let skipped = is_melody_skip(&low);
+        let mut matched = !skipped
+            && !low.is_empty()
             && (track.aliases.iter().any(|a| !a.is_empty() && low.contains(a))
                 || track.display.to_lowercase().split(|c: char| !c.is_alphanumeric()).any(|w| w.chars().count() >= 4 && low.contains(w)));
 
-        if !matched && low.chars().count() >= 2 && !low.contains("не знаю") && !low.contains("сдаюсь") && !low.contains("дальше") {
+        if !skipped && !matched && low.chars().count() >= 2 {
             let s = engine.store.get();
             let p = s.active_profile();
             let check = crate::llm::ask_with_pool(
@@ -601,16 +628,19 @@ impl GameManager {
             m.score
         };
 
-        let reply = if matched {
+        let reply = if skipped {
+            format!("[sfx:buzz] Пропускаем! Это была «{}». Счёт: {score} из {total}.", track.display)
+        } else if matched {
             format!("[sfx:fanfare] [happy] Верно! Это «{}». Счёт: {score} из {total}.", track.display)
         } else {
             format!("[sfx:buzz] [sad] Мимо! Это была «{}». Счёт: {score} из {total}.", track.display)
         };
 
+        let pause_s = if skipped { 4 } else { 5 };
         let me = self.clone();
         let eng = engine.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(pause_s)).await;
             me.play_melody_round(eng, round_gen).await;
         });
         reply
@@ -630,6 +660,18 @@ impl GameManager {
                 d.history.clone(),
             )
         };
+
+        if low.contains("подозреваем") || low.contains("список") || low.contains("кто в деле") || low.contains("напомни дело") {
+            let list = suspects
+                .iter()
+                .map(|s| format!("{} ({})", s.name, s.role))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!(
+                "Дело «{title}». Подозреваемые: {list}. Улик найдено: {clues_shown} из {}.",
+                clues.len()
+            );
+        }
 
         if low.contains("обвиня") || low.contains("убийца") || low.contains("виновен") || low.contains("арест") {
             let guessed = suspects.iter().position(|s| {
@@ -1051,6 +1093,13 @@ async fn send_tg_dm(host: &Host, proxy: &Proxy, chat_id: &str, text: &str) -> Re
     Ok(())
 }
 
+pub(crate) fn is_melody_skip(low: &str) -> bool {
+    let low = low.trim();
+    ["дальше", "пропустить", "пропуск", "не знаю", "сдаюсь", "пас", "следующая", "следующий"]
+        .iter()
+        .any(|p| low == *p || low.contains(p))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1069,5 +1118,28 @@ mod tests {
         let (sc_b, bunker) = deal_bunker_roles(&players);
         assert!(!sc_b.is_empty());
         assert_eq!(bunker.len(), 6);
+    }
+
+    #[test]
+    fn stop_all_noop_when_idle_keeps_ambient() {
+        let dir = std::env::temp_dir().join(format!("jarvis-gm-{}", crate::settings::rand_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = crate::settings::Store::open(dir.join("settings.json")).unwrap();
+        let host = Host::new(dir.clone(), crate::plugins::Hooks::default());
+        let ambient = Ambient::new(host, store);
+        let modes = ModeManager::new();
+        let gm = GameManager::new(modes.clone(), ambient);
+        modes.set_mode(crate::modes::SpecialMode::Translator("английский".into()), None);
+        gm.stop_all(None);
+        assert_eq!(modes.current(), crate::modes::SpecialMode::Translator("английский".into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn melody_skip_phrases_detected() {
+        assert!(is_melody_skip("не знаю, дальше"));
+        assert!(is_melody_skip("пропустить"));
+        assert!(is_melody_skip("сдаюсь"));
+        assert!(!is_melody_skip("король и шут лесник"));
     }
 }

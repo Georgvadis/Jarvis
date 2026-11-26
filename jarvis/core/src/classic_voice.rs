@@ -96,9 +96,7 @@ impl Classic {
             else { crate::fastcmd::command_for_phrase(text, &context.phrase) };
         let command = command.as_str();
         if crate::fastcmd::is_stop(command){
-            if let Some(modes) = &context.tools.modes {
-                modes.reset(context.tools.ambient.as_deref());
-            }
+            context.tools.stop_all_activities(context.tools.engine().as_deref(), true);
             self.dialog.annotate("стоп","");self.dialog.finish_turn("");self.close();return Ok(());
         }
         if let Some(modes) = &context.tools.modes
