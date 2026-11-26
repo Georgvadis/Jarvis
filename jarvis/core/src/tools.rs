@@ -552,7 +552,7 @@ impl Tools {
         }
         if self.music.is_some() && self.host.provider("youtube").is_ok() {
             let who = if self.use_ch("yandexmusic") {
-                "YouTube Music — ОСНОВНОЙ музыкальный сервис по умолчанию. Любую просьбу «включи музыку», трек, песню, исполнителя, лайки, плейлист или «на YouTube / YouTube Music» ВСЕГДА включай через play_music. В Яндекс Музыку (alice_command) отправляй ТОЛЬКО если хозяин явно упомянул «Яндекс», «Яндекс Музыка», «Алиса» или «Моя волна»."
+                "YouTube Music — ОСНОВНОЙ музыкальный сервис по умолчанию. Любую просьбу «включи музыку», трек, песню, исполнителя, лайки, плейлист или «на YouTube / YouTube Music» ВСЕГДА включай через play_music. В Яндекс Музыку (play_yandex_music) отправляй ТОЛЬКО если хозяин явно упомянул «Яндекс», «Яндекс Музыка» или «Моя волна»."
             } else {
                 "Яндекс Музыка выключена в настройках: любую музыку, песню или радио включай только этим инструментом сразу."
             };
@@ -566,10 +566,25 @@ impl Tools {
         }
         if self.music_ctl.is_some() && self.host.provider("youtube").is_ok() {
             defs.push(json!({"type": "function", "name": "music_control",
-                "description": "Управлять тем, что сейчас играет в YouTube Music / YouTube: пауза, продолжить, перемотка вперёд/назад, с начала, следующий трек, похожее (радио), повтор (на репит), добавить текущую песню в избранное/лайки («мне понравилась песня», «добавь в избранное» -> команда «поставь лайк»), убрать из избранного («убери лайк»), выключить, что играет.",
+                "description": "Управлять тем, что сейчас играет в YouTube Music / YouTube (или Яндекс Музыке): пауза, продолжить, перемотка вперёд/назад, с начала, следующий трек, похожее (радио), повтор (на репит), добавить текущую песню в избранное/лайки («мне понравилась песня», «добавь в избранное» -> команда «поставь лайк»), убрать из избранного («убери лайк»), выключить, что играет.",
                 "parameters": {"type": "object", "properties": {
                     "command": {"type": "string", "description": "команда по-русски: «пауза», «продолжи», «перемотай вперёд на 2 минуты», «назад на 30 секунд», «сначала», «следующее», «включи похожее», «включи повтор», «выключи повтор», «поставь лайк», «убери лайк», «выключи музыку», «что играет»"}},
                     "required": ["command"]}}));
+        }
+        if self.use_ch("yandexmusic") {
+            defs.push(json!({
+                "type": "function",
+                "name": "play_yandex_music",
+                "description": "Тихо включить музыку в штатной Яндекс Музыке на колонке (без голоса Алисы). Вызывай ТОЛЬКО когда хозяин явно попросил «Яндекс Музыку», «на Яндексе» или «Мою волну». Для обычных просьб включить музыку по умолчанию используй play_music (YouTube Music).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "что включить в Яндекс Музыке: «Моя волна», настроение, исполнитель, трек или плейлист"},
+                        "keep_talking": {"type": "boolean", "description": "true — если кроме включения музыки нужно продолжить разговор"}
+                    },
+                    "required": ["query"]
+                }
+            }));
         }
         if self.use_ch("alice") {
             let mut alice_tool = def("alice_command");
@@ -915,6 +930,24 @@ impl Tools {
                 Err(e) => e,
             };
         }
+        if name == "play_yandex_music" {
+            if !self.use_ch("yandexmusic") {
+                return "Яндекс Музыка выключена в настройках.".into();
+            }
+            let q = field("query");
+            if q.is_empty() {
+                return "Скажи, что включить в Яндекс Музыке.".into();
+            }
+            if let Some(eng) = self.engine() {
+                let _ = eng.music.call(&self.host, "stop", Value::Null).await;
+            }
+            let cmd = format_yandex_music_cmd(&q);
+            return match tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
+                Ok(Ok(())) => format!("Включил в Яндекс Музыке: {q}."),
+                Ok(Err(e)) => format!("Не получилось включить Яндекс Музыку: {e}"),
+                Err(e) => format!("Ошибка запуска Яндекс Музыки: {e}"),
+            };
+        }
         if name == "play_music"
             && let Some(m) = &self.music
         {
@@ -922,15 +955,35 @@ impl Tools {
             if q.is_empty() {
                 return "Не понял, что включить.".into();
             }
-            if fastcmd::yandex_music_request(&q) && self.use_ch("alice") {
-                return "Хозяин явно попросил Яндекс Музыку / Алису — вызови alice_command вместо play_music.".into();
+            if fastcmd::yandex_music_request(&q) {
+                if self.use_ch("yandexmusic") {
+                    if let Some(eng) = self.engine() {
+                        let _ = eng.music.call(&self.host, "stop", Value::Null).await;
+                    }
+                    let cmd = format_yandex_music_cmd(&q);
+                    return match tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
+                        Ok(Ok(())) => format!("Включил в Яндекс Музыке: {q}."),
+                        Ok(Err(e)) => format!("Не получилось включить Яндекс Музыку: {e}"),
+                        Err(e) => format!("Ошибка запуска Яндекс Музыки: {e}"),
+                    };
+                }
+                if self.use_ch("alice") {
+                    return "Хозяин явно попросил Яндекс Музыку / Алису — вызови alice_command вместо play_music.".into();
+                }
             }
             if a.get("queue").and_then(Value::as_bool) == Some(true)
                 && let Some(mq) = &self.music_queue
             {
                 return mq(q).await;
             }
-            return m(q).await;
+            let res = m(q.clone()).await;
+            if res.starts_with("Не получилось:") && self.use_ch("yandexmusic") {
+                let cmd = format_yandex_music_cmd(&q);
+                if let Ok(Ok(())) = tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
+                    return format!("В YouTube Music не нашлось, поэтому включил в Яндекс Музыке: {q}.");
+                }
+            }
+            return res;
         }
         if name == "switch_assistant" {
             let action = field("action");
@@ -2163,6 +2216,20 @@ pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<Stri
             }
             Err("Неизвестный сценарий".into())
         }
+    }
+}
+
+fn format_yandex_music_cmd(query: &str) -> String {
+    let q = query.trim();
+    let low = q.to_lowercase().replace('ё', "е");
+    if low.starts_with("включи ") || low.starts_with("поставь ") || low.starts_with("запусти ") {
+        q.to_string()
+    } else if low.contains("моя волна") || low.contains("мою волну") {
+        format!("включи {q}")
+    } else if low.contains("яндекс") {
+        format!("включи {q}")
+    } else {
+        format!("включи в яндекс музыке {q}")
     }
 }
 

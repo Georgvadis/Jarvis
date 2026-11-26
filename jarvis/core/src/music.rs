@@ -916,10 +916,12 @@ pub fn volume_loop(music: Arc<Music>, host: Arc<Host>, duck: impl Fn() -> bool +
 
 pub fn played_music_title(tool_name: &str, result: &str) -> Option<String> {
     match tool_name {
-        "play_music" => {
+        "play_music" | "play_yandex_music" => {
             if let Some(rest) = result
                 .strip_prefix("Включил с YouTube:")
                 .or_else(|| result.strip_prefix("Включил в YouTube Music:"))
+                .or_else(|| result.strip_prefix("Включил в Яндекс Музыке:"))
+                .or_else(|| result.strip_prefix("В YouTube Music не нашлось, поэтому включил в Яндекс Музыке:"))
                 .or_else(|| result.strip_prefix("Включил понравившиеся с YouTube:"))
                 .or_else(|| result.strip_prefix("Включил плейлист с YouTube:"))
             {
@@ -992,7 +994,7 @@ impl MusicTurnTracker {
     }
 
     pub fn observe_tool(&mut self, name: &str, args: &str, result: &str) {
-        if name == "play_music" || name == "music_control" {
+        if name == "play_music" || name == "play_yandex_music" || name == "music_control" {
             if let Ok(v) = serde_json::from_str::<Value>(args)
                 && v.get("keep_talking").and_then(Value::as_bool) == Some(true)
             {
