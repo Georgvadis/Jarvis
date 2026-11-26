@@ -1442,9 +1442,9 @@ impl Engine {
                     }
                 }
             }
-            if x.dialog().idle(idle) {
+            if !self.player.has_queued() && x.dialog().idle(idle) {
                 log::info!("разговор: тишина {idle:.0} с — окончен");
-                self.player.finish(Duration::from_secs(3));
+                self.player.finish(Duration::from_secs(12));
                 x.dialog().finish_turn("");
                 close(&sess);
                 return None;
@@ -1559,7 +1559,7 @@ impl Engine {
             return;
         }
         log::info!("Джарвис: ответ «{}»", crate::plugins::clip(text, 200));
-        if let Err(e) = self.say_aloud_opts(text, Duration::from_secs(60), None, whisper) {
+        if let Err(e) = self.say_aloud_opts(text, Duration::from_secs(120), None, whisper) {
             log::info!("озвучка: {e}");
             if e != INTERRUPTED {
                 self.earcon(true);
@@ -1634,7 +1634,7 @@ impl Engine {
     fn say_hook(&self) -> impl Fn(String) + '_ {
         move |answer: String| {
             log::info!("Джарвис: ответ «{}»", crate::plugins::clip(&answer, 200));
-            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(60)) {
+            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(120)) {
                 log::info!("озвучка: {e}");
                 if e != INTERRUPTED {
                     self.earcon(true);
@@ -1802,7 +1802,7 @@ impl Engine {
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     if started {
-                        self.player.finish(Duration::from_secs(12));
+                        self.player.finish_cancelable(Duration::from_secs(90), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
                     }
                     return if heard { Ok(()) } else { Err("голос не прозвучал".into()) };
                 }
@@ -1816,8 +1816,10 @@ impl Engine {
                         let _ = self.player.write(&vec![0; sess.rate() / 4]);
                         started = true;
                     }
-                    if self.player.write(&pcm).is_err() && !self.player.playing() {
-                        return Err(INTERRUPTED.into()); // плеер забрали — нас перебили
+                    if self.player.write_wait(&pcm, || self.speech_epoch.load(Ordering::SeqCst) != epoch).is_err() {
+                        if !self.player.playing() || self.speech_epoch.load(Ordering::SeqCst) != epoch {
+                            return Err(INTERRUPTED.into()); // плеер забрали — нас перебили
+                        }
                     }
                     self.leds.level(peak(&pcm) / 9000.0);
                     if loud_at(&pcm, 180) {
@@ -1827,7 +1829,7 @@ impl Engine {
                 }
             }
         }
-        self.player.finish(Duration::from_secs(12));
+        self.player.finish_cancelable(Duration::from_secs(90), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
         Ok(())
     }
 

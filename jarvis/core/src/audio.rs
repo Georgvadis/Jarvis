@@ -8,7 +8,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread,
@@ -138,6 +138,7 @@ const PLAY_GAIN: f64 = 6.5;
 struct Playing {
     child: Child,
     queue: Option<SyncSender<Vec<u8>>>,
+    queued: Arc<AtomicUsize>,
     pump: Option<thread::JoinHandle<()>>,
     lim: Limiter,
     up: Option<Upsampler>,
@@ -166,6 +167,15 @@ impl Player {
         self.cur.lock().unwrap().is_some()
     }
 
+    /// Есть ли ещё недоигранные куски в очереди на динамик.
+    pub fn has_queued(&self) -> bool {
+        self.cur
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.queued.load(Ordering::Relaxed) > 0)
+    }
+
     /// Открыть плеер; rate — частота PCM (моно s16le).
     pub fn start(&self, rate: usize) -> std::io::Result<()> {
         self.stop(true);
@@ -177,9 +187,11 @@ impl Player {
             .stderr(Stdio::piped())
             .spawn()?;
         let stdin = child.stdin.take().unwrap();
-        let (tx, rx) = sync_channel::<Vec<u8>>(512);
-        let pump = thread::Builder::new().name("aplay-pump".into()).stack_size(128 * 1024).spawn(move || pump(stdin, rx))?;
-        *self.cur.lock().unwrap() = Some(Playing { child, queue: Some(tx), pump: Some(pump), lim: Limiter::new(rate), up, boost: 1.0, shaped: Vec::new(), up_buf: Vec::new() });
+        let (tx, rx) = sync_channel::<Vec<u8>>(2048);
+        let queued = Arc::new(AtomicUsize::new(0));
+        let q_pump = queued.clone();
+        let pump = thread::Builder::new().name("aplay-pump".into()).stack_size(128 * 1024).spawn(move || pump(stdin, rx, q_pump))?;
+        *self.cur.lock().unwrap() = Some(Playing { child, queue: Some(tx), queued, pump: Some(pump), lim: Limiter::new(rate), up, boost: 1.0, shaped: Vec::new(), up_buf: Vec::new() });
         Ok(())
     }
 
@@ -190,8 +202,7 @@ impl Player {
         }
     }
 
-    /// Кусок PCM; не блокирует (если aplay завис, ответ теряется, а не встаёт всё).
-    pub fn write(&self, pcm: &[i16]) -> Result<(), &'static str> {
+    fn prepare_bytes(&self, pcm: &[i16]) -> Result<(Vec<u8>, SyncSender<Vec<u8>>, Arc<AtomicUsize>), &'static str> {
         let mut g = (self.volume)() as f64 / 50.0 * PLAY_GAIN; // 50% — прежний максимум, 100% — вдвое громче
         g *= (self.trim)();
         let mut cur = self.cur.lock().unwrap();
@@ -215,19 +226,68 @@ impl Player {
         for &s in src {
             b.extend_from_slice(&s.to_le_bytes());
         }
-        let q = p.queue.as_ref().ok_or("плеер закрыт")?;
-        q.try_send(b).map_err(|_| "плеер не успевает")
+        let q = p.queue.as_ref().ok_or("плеер закрыт")?.clone();
+        let queued = p.queued.clone();
+        Ok((b, q, queued))
+    }
+
+    /// Кусок PCM; не блокирует (если aplay завис, ответ теряется, а не встаёт всё).
+    pub fn write(&self, pcm: &[i16]) -> Result<(), &'static str> {
+        let (b, q, queued) = self.prepare_bytes(pcm)?;
+        match q.try_send(b) {
+            Ok(()) => {
+                queued.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(_) => Err("плеер не успевает"),
+        }
+    }
+
+    /// Кусок PCM с мягким ожиданием освобождения очереди, чтобы длинные тексты никогда не обрезались.
+    pub fn write_wait(&self, pcm: &[i16], abort: impl Fn() -> bool) -> Result<(), &'static str> {
+        let (mut pending, q, queued) = self.prepare_bytes(pcm)?;
+        loop {
+            if abort() {
+                return Err("прервано");
+            }
+            match q.try_send(pending) {
+                Ok(()) => {
+                    queued.fetch_add(1, Ordering::Relaxed);
+                    return Ok(());
+                }
+                Err(TrySendError::Full(b)) => {
+                    pending = b;
+                    thread::sleep(Duration::from_millis(15));
+                }
+                Err(TrySendError::Disconnected(_)) => return Err("плеер закрыт"),
+            }
+        }
     }
 
     /// Доиграть то, что уже отдано, и закрыть.
     pub fn finish(&self, timeout: Duration) {
+        self.finish_cancelable(timeout, || false);
+    }
+
+    /// Доиграть буфер до конца, но мгновенно прерваться, если пришёл «Стоп» или перебили.
+    pub fn finish_cancelable(&self, timeout: Duration, abort: impl Fn() -> bool) {
         let Some(mut p) = self.cur.lock().unwrap().take() else { return };
         p.queue.take(); // закрыть очередь: насос допишет и закроет stdin
         let t0 = Instant::now();
         if let Some(h) = p.pump.take() {
             while !h.is_finished() && t0.elapsed() < timeout {
+                if abort() {
+                    interrupt(&p.child);
+                    wait_child(&mut p.child, Duration::from_secs(2));
+                    return;
+                }
                 thread::sleep(Duration::from_millis(20));
             }
+        }
+        if abort() {
+            interrupt(&p.child);
+            wait_child(&mut p.child, Duration::from_secs(2));
+            return;
         }
         wait_child(&mut p.child, timeout.saturating_sub(t0.elapsed()).max(Duration::from_millis(200)));
     }
@@ -243,10 +303,12 @@ impl Player {
     }
 }
 
-fn pump(mut stdin: ChildStdin, rx: Receiver<Vec<u8>>) {
+fn pump(mut stdin: ChildStdin, rx: Receiver<Vec<u8>>, queued: Arc<AtomicUsize>) {
     use std::io::Write;
     for b in rx {
-        if let Err(e) = stdin.write_all(&b) {
+        let res = stdin.write_all(&b);
+        queued.fetch_sub(1, Ordering::Relaxed);
+        if let Err(e) = res {
             log::warn!("динамик (aplay): ошибка записи ({e})");
             return; // плеер умер — остаток выбрасываем (rx закроется вместе с потоком)
         }

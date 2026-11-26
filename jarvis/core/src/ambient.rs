@@ -333,19 +333,47 @@ impl Ambient {
         };
 
         if preset_kind == "ambient" {
-            std::thread::Builder::new()
-                .name(format!("ambient-{preset_id}"))
-                .spawn(move || {
-                    log::info!("фон/радио: запущено «{preset_name}»");
-                    run_procedural(&preset_id, tx, &stop_bg, &duck_bg, &sleep_bg, &store_bg);
-                    stop_bg.store(true, Ordering::SeqCst);
-                    cleanup(&active_bg, &sleep_bg, &stop_bg);
-                })
-                .map_err(|e| e.to_string())?;
+            tokio::spawn(async move {
+                log::info!("фон/радио: запущено «{preset_name}»");
+                let hi_fi_url = format!("{server_url}/ambient/{preset_id}");
+                let ok = run_pcm48_stream_async(
+                    &hi_fi_url,
+                    tx.clone(),
+                    &stop_bg,
+                    &notify_bg,
+                    &duck_bg,
+                    &sleep_bg,
+                    &store_bg,
+                    false,
+                )
+                .await;
+                if !ok && !stop_bg.load(Ordering::Relaxed) && !sleep_expired(&sleep_bg) {
+                    log::info!("фон: сервер недоступен для «{preset_name}», включаю офлайн-синтез");
+                    let stop_f = stop_bg.clone();
+                    let duck_f = duck_bg.clone();
+                    let sleep_f = sleep_bg.clone();
+                    let store_f = store_bg.clone();
+                    let pid = preset_id.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        run_procedural(&pid, tx, &stop_f, &duck_f, &sleep_f, &store_f);
+                    })
+                    .await;
+                }
+                stop_bg.store(true, Ordering::SeqCst);
+                cleanup(&active_bg, &sleep_bg, &stop_bg);
+            });
         } else {
             tokio::spawn(async move {
                 log::info!("фон/радио: запущено «{preset_name}»");
-                run_radio_async(&server_url, &preset_url, tx, &stop_bg, &notify_bg, &duck_bg, &sleep_bg, &store_bg).await;
+                let encoded: String = preset_url
+                    .bytes()
+                    .map(|b| match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                        _ => format!("%{:02X}", b),
+                    })
+                    .collect();
+                let url = format!("{server_url}/stream?url={encoded}&rate=48000");
+                let _ = run_pcm48_stream_async(&url, tx, &stop_bg, &notify_bg, &duck_bg, &sleep_bg, &store_bg, true).await;
                 stop_bg.store(true, Ordering::SeqCst);
                 cleanup(&active_bg, &sleep_bg, &stop_bg);
             });
@@ -591,67 +619,68 @@ async fn wait_or_stop(dur: Duration, stop: &AtomicBool, notify: &Notify, sleep_u
     !stop.load(Ordering::Relaxed) && !sleep_expired(sleep_until)
 }
 
+/// Принимает нативный 48 кГц mono s16le поток (студийный эмбиент или радио) и плавно регулирует громкость/ducking.
+/// Возвращает true, если удалось подключиться и проиграть поток (false — сервер недоступен, можно перейти на фолбэк).
 #[allow(clippy::too_many_arguments)]
-async fn run_radio_async(
-    server_url: &str,
-    stream_url: &str,
+async fn run_pcm48_stream_async(
+    url: &str,
     tx: SyncSender<Vec<u8>>,
     stop: &AtomicBool,
     notify: &Notify,
     duck: &AtomicBool,
     sleep_until: &Mutex<Option<Instant>>,
     store: &Store,
-) {
-    let encoded: String = stream_url
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
-            _ => format!("%{:02X}", b),
-        })
-        .collect();
-    let url = format!("{server_url}/stream?url={encoded}");
-    let client = match reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build() {
+    retry_initial: bool,
+) -> bool {
+    let client = match reqwest::Client::builder().connect_timeout(Duration::from_secs(6)).build() {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut gain = (store.with(|s| s.ambient_volume).clamp(5, 100) as f32) / 100.0;
     let mut backoff_s = 2u64;
+    let mut ever_connected = false;
 
     while !stop.load(Ordering::Relaxed) && !sleep_expired(sleep_until) {
         let resp_res = tokio::select! {
-            _ = notify.notified() => return,
-            r = client.get(&url).send() => r,
+            _ = notify.notified() => return ever_connected,
+            r = client.get(url).send() => r,
         };
         let mut resp = match resp_res {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
-                log::warn!("радио: сервер вернул {}, повтор через {backoff_s}с", r.status());
+                log::warn!("фон/радио: сервер вернул {}", r.status());
+                if !ever_connected && !retry_initial {
+                    return false;
+                }
                 if !wait_or_stop(Duration::from_secs(backoff_s), stop, notify, sleep_until).await {
-                    return;
+                    return ever_connected;
                 }
                 backoff_s = (backoff_s * 2).min(8);
                 continue;
             }
             Err(e) => {
-                log::warn!("радио: ошибка подключения: {e}, повтор через {backoff_s}с");
+                log::warn!("фон/радио: ошибка подключения: {e}");
+                if !ever_connected && !retry_initial {
+                    return false;
+                }
                 if !wait_or_stop(Duration::from_secs(backoff_s), stop, notify, sleep_until).await {
-                    return;
+                    return ever_connected;
                 }
                 backoff_s = (backoff_s * 2).min(8);
                 continue;
             }
         };
 
+        ever_connected = true;
         let connected_at = Instant::now();
-        let mut prev: i16 = 0;
         let mut carry: Option<u8> = None;
 
         while !stop.load(Ordering::Relaxed) && !sleep_expired(sleep_until) {
             let vol = (store.with(|s| s.ambient_volume).clamp(5, 100) as f32) / 100.0;
             let target_gain = if duck.load(Ordering::Relaxed) { (vol * 0.18).min(0.14) } else { vol };
             let chunk_res = tokio::select! {
-                _ = notify.notified() => return,
+                _ = notify.notified() => return true,
                 c = resp.chunk() => c,
             };
             match chunk_res {
@@ -667,32 +696,28 @@ async fn run_radio_async(
                     if bytes.len() % 2 == 1 {
                         carry = bytes.pop();
                     }
-                    let mut scaled = Vec::with_capacity(bytes.len() * 2);
+                    let mut scaled = Vec::with_capacity(bytes.len());
                     for pair in bytes.chunks_exact(2) {
-                        gain += (target_gain - gain) * 0.002;
-                        let s = i16::from_le_bytes([pair[0], pair[1]]);
-                        let mid = ((prev as i32 + s as i32) / 2) as f32 * gain;
-                        let cur = (s as f32) * gain;
-                        scaled.extend_from_slice(&(mid.clamp(-30000.0, 30000.0) as i16).to_le_bytes());
-                        scaled.extend_from_slice(&(cur.clamp(-30000.0, 30000.0) as i16).to_le_bytes());
-                        prev = s;
+                        gain += (target_gain - gain) * 0.001;
+                        let s = i16::from_le_bytes([pair[0], pair[1]]) as f32 * gain;
+                        scaled.extend_from_slice(&(s.clamp(-32000.0, 32000.0) as i16).to_le_bytes());
                     }
                     if !scaled.is_empty() {
                         let mut pending = scaled;
                         loop {
                             if stop.load(Ordering::Relaxed) || sleep_expired(sleep_until) {
-                                return;
+                                return true;
                             }
                             match tx.try_send(pending) {
                                 Ok(()) => break,
                                 Err(TrySendError::Full(b)) => {
                                     pending = b;
                                     tokio::select! {
-                                        _ = notify.notified() => return,
+                                        _ = notify.notified() => return true,
                                         _ = tokio::time::sleep(Duration::from_millis(15)) => {}
                                     }
                                 }
-                                Err(TrySendError::Disconnected(_)) => return,
+                                Err(TrySendError::Disconnected(_)) => return true,
                             }
                         }
                     }
@@ -701,12 +726,13 @@ async fn run_radio_async(
             }
         }
         if stop.load(Ordering::Relaxed) || sleep_expired(sleep_until) {
-            return;
+            return true;
         }
-        log::info!("радио: поток оборвался, переподключение через {backoff_s}с…");
+        log::info!("фон/радио: поток оборвался, переподключение через {backoff_s}с…");
         if !wait_or_stop(Duration::from_secs(backoff_s), stop, notify, sleep_until).await {
-            return;
+            return true;
         }
         backoff_s = (backoff_s * 2).min(8);
     }
+    ever_connected
 }

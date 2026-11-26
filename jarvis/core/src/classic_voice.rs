@@ -685,11 +685,13 @@ fn split_sentences(text: &str) -> Vec<String> {
     if !tail.is_empty() {
         raw.push(tail);
     }
-    // Merge very short fragments (< 35 chars) so we don't fire tiny TTS requests
+    // Merge very short fragments (< 35 chars) both forward and backward so short tails like «Спокойной ночи.» aren't isolated
     let mut out: Vec<String> = Vec::new();
     for s in raw {
         if let Some(last) = out.last_mut() {
-            if last.chars().count() < 35 {
+            let last_len = last.chars().count();
+            let s_len = s.chars().count();
+            if last_len < 35 || (s_len < 35 && last_len + 1 + s_len <= 240) {
                 last.push(' ');
                 last.push_str(&s);
                 continue;
