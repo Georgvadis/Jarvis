@@ -26,15 +26,27 @@ impl Classic {
     pub fn open_with(rt:&tokio::runtime::Handle,host:Arc<Host>,tools:Arc<Tools>,journal:Arc<Journal>,settings:Settings,profile:Profile,instructions:String,phrase:String,gemini_pool:Option<Arc<crate::gemini_pool::GeminiPool>>,proxy:Option<Arc<crate::vpn::Proxy>>)->Arc<Self>{
         let (out,audio)=sync_channel(512);let (frames,mut input)=mpsc::channel(64);let (say,mut messages)=mpsc::channel(8);
         let model={let m=profile.effective_llm_model();let e=profile.effective_llm_engine();if !m.is_empty(){m}else if !e.is_empty(){e}else{&profile.backend_model}};
-        // Подтягиваем последние 6 реплик за 30 минут из журнала, чтобы при новом обращении
-        // ассистент помнил недавний контекст и не повторял те же рекомендации.
+        // Подтягиваем последние 6 реплик из постоянной памяти (переживает перезагрузку колонки),
+        // а если память выключена или пуста — из оперативного журнала за 30 минут.
         let mut initial_history: Vec<crate::llm::Turn> = Vec::new();
-        for t in journal.history().into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev() {
-            let u = t.text.trim();
-            let a = t.answer.trim();
-            if !u.is_empty() && !a.is_empty() && t.error.is_empty() {
-                initial_history.push(crate::llm::Turn { role: "user", content: u.to_owned() });
-                initial_history.push(crate::llm::Turn { role: "assistant", content: a.to_owned() });
+        if let Some(mem) = &tools.memory {
+            for t in mem.recent_turns(6) {
+                let u = t.user.trim();
+                let a = t.bot.trim();
+                if !u.is_empty() && !a.is_empty() {
+                    initial_history.push(crate::llm::Turn { role: "user", content: u.to_owned() });
+                    initial_history.push(crate::llm::Turn { role: "assistant", content: a.to_owned() });
+                }
+            }
+        }
+        if initial_history.is_empty() {
+            for t in journal.history().into_iter().rev().take(6).collect::<Vec<_>>().into_iter().rev() {
+                let u = t.text.trim();
+                let a = t.answer.trim();
+                if !u.is_empty() && !a.is_empty() && t.error.is_empty() {
+                    initial_history.push(crate::llm::Turn { role: "user", content: u.to_owned() });
+                    initial_history.push(crate::llm::Turn { role: "assistant", content: a.to_owned() });
+                }
             }
         }
         let me=Arc::new(Self{dialog:Dialog::new(journal,"классический",model),frames,say,out:Mutex::new(Some(out)),audio:Mutex::new(Some(audio)),closed:AtomicBool::new(false),generation:AtomicU64::new(0),interrupted:AtomicBool::new(false),stop:tokio::sync::Notify::new(),last_failure:Mutex::new(None)});

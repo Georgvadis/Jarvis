@@ -819,6 +819,22 @@ impl Memory {
         transcript(tail(st.from_n(st.d.from), chars), &now, true)
     }
 
+    /// Последние `limit` полноценных пар реплик (переживают перезагрузку колонки).
+    pub fn recent_turns(&self, limit: usize) -> Vec<ChatTurn> {
+        if !self.enabled() || limit == 0 {
+            return Vec::new();
+        }
+        let st = self.st.lock().unwrap();
+        let filtered: Vec<ChatTurn> = st
+            .from_n(st.d.from)
+            .iter()
+            .filter(|t| !t.user.trim().is_empty() && !t.bot.trim().is_empty())
+            .cloned()
+            .collect();
+        let start = filtered.len().saturating_sub(limit);
+        filtered[start..].to_vec()
+    }
+
     /// Память для начала звонка: досье, конспект и последние реплики дословно, всего около chars букв.
     pub fn context(&self, chars: usize) -> String {
         if !self.enabled() {

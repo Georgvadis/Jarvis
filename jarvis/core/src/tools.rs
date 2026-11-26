@@ -456,6 +456,21 @@ impl Tools {
         {
             live_parts.push(format!("фоновый звук «{lbl}»"));
         }
+        if let Some(eng) = self.engine() {
+            let ms = eng.music.state();
+            if ms.playing || ms.paused {
+                let t = ms.cur["title"].as_str().unwrap_or("").trim();
+                let a = ms.cur["author"].as_str().unwrap_or("").trim();
+                if !t.is_empty() {
+                    let st_word = if ms.paused { "на паузе" } else { "сейчас играет" };
+                    if a.is_empty() {
+                        live_parts.push(format!("{st_word}: «{t}»"));
+                    } else {
+                        live_parts.push(format!("{st_word}: «{t}» — {a}"));
+                    }
+                }
+            }
+        }
         if let Some(dj) = &self.dj
             && dj.is_active()
         {
@@ -501,6 +516,9 @@ impl Tools {
                 }
             }
         }
+        if let Some(summary) = lists_brief_summary(&self.host.data_dir) {
+            live_parts.push(summary);
+        }
         if !live_parts.is_empty() {
             b += &format!(" Сейчас на колонке: {}.", live_parts.join("; "));
         }
@@ -534,23 +552,23 @@ impl Tools {
         }
         if self.music.is_some() && self.host.provider("youtube").is_ok() {
             let who = if self.use_ch("yandexmusic") {
-                "YouTube / YouTube Music — ОСНОВНОЙ музыкальный сервис по умолчанию. Любую просьбу «включи музыку», трек, песню, исполнителя, лайки, плейлист или «на YouTube / YouTube Music» ВСЕГДА включай через play_music (если просят просто «включи музыку» — подбери музыку сам или включи понравившиеся). В Яндекс Музыку (alice_command) отправляй ТОЛЬКО если хозяин явно упомянул «Яндекс», «Яндекс Музыка», «Алиса» или «Моя волна»."
+                "YouTube Music — ОСНОВНОЙ музыкальный сервис по умолчанию. Любую просьбу «включи музыку», трек, песню, исполнителя, лайки, плейлист или «на YouTube / YouTube Music» ВСЕГДА включай через play_music. В Яндекс Музыку (alice_command) отправляй ТОЛЬКО если хозяин явно упомянул «Яндекс», «Яндекс Музыка», «Алиса» или «Моя волна»."
             } else {
-                "Яндекс Музыка выключена в настройках: любую музыку, песню или радио включай только этим инструментом, сразу, запрос придумай сам, если не назвали."
+                "Яндекс Музыка выключена в настройках: любую музыку, песню или радио включай только этим инструментом сразу."
             };
             defs.push(json!({"type": "function", "name": "play_music",
-                "description": format!("Найти по всему YouTube / YouTube Music и включить звук видео, музыки, плейлиста или лайков аккаунта на колонке: любой ролик, трек, кавер, ремикс, концерт, подкаст, песню, сохранённый/публичный плейлист или понравившиеся треки. {who} Если сказали только «включи на YouTube трек», сначала спроси название или исполнителя. Подбирай сам, когда об этом попросили. Не обещай «сейчас поищу» без вызова."),
+                "description": format!("Найти официальную песню в YouTube Music (или видео/подкаст на YouTube) и включить на колонке. {who} ВАЖНО: для музыки передавай либо конкретный трек «Исполнитель - Название» (если просят популярное/бодрое/по настроению — смело выбери реальный классный хит и каждый раз разный, либо вызови start_ai_dj), либо «мои лайки вперемешку» для любимых, либо «плейлист <название>». Для «поставь следующим треком» передавай queue=true."),
                 "parameters": {"type": "object", "properties": {
-                    "query": {"type": "string", "description": "что искать или включить: исполнитель и название, «мои лайки» / «понравившиеся», или «плейлист <название>»"},
-                    "queue": {"type": "boolean", "description": "true — не включать сразу, а добавить в очередь после того, что играет («добавь в очередь», «потом включи»)"},
+                    "query": {"type": "string", "description": "исполнитель и название трека (лучше всего), «мои лайки» / «понравившиеся», «плейлист <название>» или тема подкаста"},
+                    "queue": {"type": "boolean", "description": "true — не включать сразу, а добавить следующим треком в очередь («поставь следующим», «добавь в очередь»)"},
                     "keep_talking": {"type": "boolean", "description": "true — если кроме включения музыки хозяин попросил ещё о чём-то (ответить на вопрос, рассказать, не отключаться)"}},
                     "required": ["query"]}}));
         }
         if self.music_ctl.is_some() && self.host.provider("youtube").is_ok() {
             defs.push(json!({"type": "function", "name": "music_control",
-                "description": "Управлять тем, что сейчас играет с YouTube: пауза, продолжить, перемотка вперёд/назад, с начала, следующее видео, похожее (радио), повтор (на репит), поставь лайк, убери лайк, выключить, что играет.",
+                "description": "Управлять тем, что сейчас играет в YouTube Music / YouTube: пауза, продолжить, перемотка вперёд/назад, с начала, следующий трек, похожее (радио), повтор (на репит), добавить текущую песню в избранное/лайки («мне понравилась песня», «добавь в избранное» -> команда «поставь лайк»), убрать из избранного («убери лайк»), выключить, что играет.",
                 "parameters": {"type": "object", "properties": {
-                    "command": {"type": "string", "description": "команда по-русски, например «пауза», «продолжи», «перемотай вперёд на 2 минуты», «назад на 30 секунд», «сначала», «следующее», «включи похожее», «включи повтор», «выключи повтор», «поставь лайк», «убери лайк», «выключи музыку», «что играет»"}},
+                    "command": {"type": "string", "description": "команда по-русски: «пауза», «продолжи», «перемотай вперёд на 2 минуты», «назад на 30 секунд», «сначала», «следующее», «включи похожее», «включи повтор», «выключи повтор», «поставь лайк», «убери лайк», «выключи музыку», «что играет»"}},
                     "required": ["command"]}}));
         }
         if self.use_ch("alice") {
@@ -861,6 +879,21 @@ impl Tools {
             "description": "Остановить сразу всё, что сейчас играет или запущено на колонке: музыку, камин/фоновый шум/радио, аудиокнигу, AI-DJ, фокус-сессию, подкаст/спор и активный игровой режим.",
             "parameters": {"type": "object", "properties": {}}
         }));
+        defs.push(json!({
+            "type": "function",
+            "name": "manage_list",
+            "description": "Умный список покупок и список дел (чеклист) на колонке: добавить пункты, прочитать список, отметить выполненным / вычеркнуть или очистить список. Если просят скинуть список в Telegram — сначала прочитай его этим инструментом, затем отправь через send_telegram.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "list": {"type": "string", "description": "shopping (покупки, по умолчанию для продуктов/магазина), todo (дела/задачи) или своё название списка"},
+                    "action": {"type": "string", "enum": ["add", "list", "done", "remove", "clear"], "description": "add — добавить пункты; list — прочитать список; done/remove — вычеркнуть пункт; clear — очистить весь список"},
+                    "items": {"type": "array", "items": {"type": "string"}, "description": "список пунктов для add или done/remove"},
+                    "item": {"type": "string", "description": "один пункт (если не передан массив items)"}
+                },
+                "required": ["action"]
+            }
+        }));
         defs
     }
 
@@ -946,6 +979,15 @@ impl Tools {
             let c = field("command");
             if c.is_empty() {
                 return "Не понял команду для музыки.".into();
+            }
+            let cl = c.to_lowercase();
+            let is_like = (cl.contains("лайк") || cl.contains("избранн") || cl.contains("понравил") || cl.contains("любим"))
+                && !cl.contains("убер") && !cl.contains("удал") && !cl.contains("сним") && !cl.contains("не нрав");
+            if is_like
+                && let (Some(dj), Some(eng)) = (&self.dj, self.engine())
+                && dj.is_active()
+            {
+                let _ = dj.like(&eng).await;
             }
             return m(c).await;
         }
@@ -1625,6 +1667,26 @@ impl Tools {
             }
             return "Всё остановила — полная тишина.".into();
         }
+        if name == "manage_list" {
+            let act = field("action").to_lowercase();
+            let list_key = normalize_list_key(&field("list"));
+            let mut items: Vec<String> = a
+                .get("items")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_str)
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let single = field("item");
+            if !single.is_empty() && !items.iter().any(|x| x.eq_ignore_ascii_case(&single)) {
+                items.push(single);
+            }
+            return handle_manage_list(&self.host.data_dir, &list_key, &act, &items);
+        }
         if name != "smart_home" {
             if let Some(res) = self.host.call_tool(name, args).await {
                 log::info!("инструмент плагина {name} → {}", crate::plugins::clip(&res, 200));
@@ -2101,6 +2163,139 @@ pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<Stri
             }
             Err("Неизвестный сценарий".into())
         }
+    }
+}
+
+fn normalize_list_key(raw: &str) -> String {
+    let low = raw.trim().to_lowercase().replace('ё', "е");
+    if low.is_empty()
+        || low.contains("покуп")
+        || low.contains("продукт")
+        || low.contains("магазин")
+        || low == "shopping"
+    {
+        "shopping".into()
+    } else if low.contains("дел") || low.contains("задач") || low == "todo" || low == "tasks" {
+        "todo".into()
+    } else {
+        low.chars().take(40).collect()
+    }
+}
+
+fn list_display_name(key: &str) -> &str {
+    match key {
+        "shopping" => "список покупок",
+        "todo" => "список дел",
+        other => other,
+    }
+}
+
+fn load_lists(data_dir: &std::path::Path) -> std::collections::BTreeMap<String, Vec<String>> {
+    let path = data_dir.join("lists.json");
+    std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_lists(data_dir: &std::path::Path, map: &std::collections::BTreeMap<String, Vec<String>>) {
+    let path = data_dir.join("lists.json");
+    if let Ok(bytes) = serde_json::to_vec_pretty(map) {
+        let _ = jarvis_station::atomic(&path, &bytes);
+    }
+}
+
+fn lists_brief_summary(data_dir: &std::path::Path) -> Option<String> {
+    let map = load_lists(data_dir);
+    let mut parts = Vec::new();
+    for (k, v) in &map {
+        if !v.is_empty() {
+            parts.push(format!("{}: {}", list_display_name(k), v.len()));
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
+fn handle_manage_list(data_dir: &std::path::Path, list_key: &str, action: &str, items: &[String]) -> String {
+    let mut map = load_lists(data_dir);
+    let label = list_display_name(list_key);
+    match action {
+        "add" => {
+            if items.is_empty() {
+                return format!("Скажи, что добавить в {label}.");
+            }
+            let entry = map.entry(list_key.to_string()).or_default();
+            let mut added = Vec::new();
+            for raw in items {
+                let clean = raw.trim().chars().take(120).collect::<String>();
+                if clean.is_empty() {
+                    continue;
+                }
+                let low = clean.to_lowercase();
+                if !entry.iter().any(|x| x.to_lowercase() == low) {
+                    entry.push(clean.clone());
+                    added.push(clean);
+                }
+            }
+            save_lists(data_dir, &map);
+            if added.is_empty() {
+                format!("Это уже есть в списке ({label}).")
+            } else {
+                format!("Добавила в {label}: {}.", added.join(", "))
+            }
+        }
+        "list" => {
+            let cur = map.get(list_key).cloned().unwrap_or_default();
+            if cur.is_empty() {
+                format!("Список ({label}) сейчас пуст.")
+            } else {
+                format!("В списке ({label}): {}.", cur.join(", "))
+            }
+        }
+        "done" | "remove" => {
+            if items.is_empty() {
+                return format!("Скажи, какой пункт убрать из списка ({label}).");
+            }
+            let Some(entry) = map.get_mut(list_key) else {
+                return format!("Список ({label}) уже пуст.");
+            };
+            let mut removed = Vec::new();
+            for q in items {
+                let ql = q.trim().to_lowercase();
+                if ql.is_empty() {
+                    continue;
+                }
+                if matches!(ql.as_str(), "all" | "все" | "всё") {
+                    removed.extend(entry.drain(..));
+                    break;
+                }
+                if let Some(pos) = entry
+                    .iter()
+                    .position(|x| x.to_lowercase() == ql || x.to_lowercase().contains(&ql) || ql.contains(&x.to_lowercase()))
+                {
+                    removed.push(entry.remove(pos));
+                }
+            }
+            if entry.is_empty() {
+                map.remove(list_key);
+            }
+            save_lists(data_dir, &map);
+            if removed.is_empty() {
+                format!("Не нашла такой пункт в списке ({label}).")
+            } else {
+                format!("Вычеркнула из списка ({label}): {}.", removed.join(", "))
+            }
+        }
+        "clear" => {
+            map.remove(list_key);
+            save_lists(data_dir, &map);
+            format!("Очистила {label}.")
+        }
+        _ => "Неизвестное действие со списком.".into(),
     }
 }
 

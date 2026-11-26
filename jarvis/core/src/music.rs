@@ -259,6 +259,87 @@ impl Music {
         if !queue && !propose {
             self.pause_alice_if_playing().await;
         }
+        // Для музыкальных запросов (не подкастов/интервью/видео) сначала ищем официальные треки
+        // напрямую в YouTube Music (фильтр «Песни»), отсекая часовые спам-подборки и миксы.
+        if !propose && !is_spoken_video_query(query) {
+            let songs = search_ytmusic_songs(query).await;
+            if !songs.is_empty() {
+                let generic = is_generic_music_query(query);
+                let pick_idx = if generic {
+                    let pool = songs.len().min(8);
+                    let seed = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.subsec_nanos() as usize + d.as_secs() as usize)
+                        .unwrap_or(0);
+                    seed % pool
+                } else {
+                    0
+                };
+                let picked = &songs[pick_idx];
+                let display = if picked.author.is_empty() {
+                    picked.title.clone()
+                } else {
+                    format!("{} — {}", picked.author, picked.title)
+                };
+                if queue {
+                    let res = self
+                        .call(
+                            host,
+                            "enqueue",
+                            json!({
+                                "query": display,
+                                "title": picked.title,
+                                "author": picked.author
+                            }),
+                        )
+                        .await;
+                    if let Ok(v) = res {
+                        let t = title(&v);
+                        let shown = if t.is_empty() { display } else { t.to_string() };
+                        return format!("Добавил в очередь: {shown}.");
+                    }
+                } else {
+                    let res = self
+                        .call(
+                            host,
+                            "play_id",
+                            json!({
+                                "id": picked.id,
+                                "title": picked.title,
+                                "author": picked.author
+                            }),
+                        )
+                        .await;
+                    if let Ok(v) = res {
+                        // Для общих запросов вроде «популярная музыка» подкидываем ещё 2 чистых трека в очередь
+                        if generic && songs.len() > 1 {
+                            let mut added = 0usize;
+                            for (idx, extra) in songs.iter().enumerate() {
+                                if idx == pick_idx || added >= 2 {
+                                    continue;
+                                }
+                                let q_str = if extra.author.is_empty() {
+                                    extra.title.clone()
+                                } else {
+                                    format!("{} — {}", extra.author, extra.title)
+                                };
+                                let _ = self
+                                    .call(
+                                        host,
+                                        "enqueue",
+                                        json!({"query": q_str, "title": extra.title, "author": extra.author}),
+                                    )
+                                    .await;
+                                added += 1;
+                            }
+                        }
+                        let t = title(&v);
+                        let shown = if t.is_empty() { display } else { t.to_string() };
+                        return format!("Включил в YouTube Music: {shown}.");
+                    }
+                }
+            }
+        }
         let result = self
             .call(
                 host,
@@ -374,9 +455,16 @@ impl Music {
         if op == "status" {
             return Some(self.state().status);
         }
-        Some(match self.call(host, op, args).await {
+        let cur_title = title(&self.state().cur).to_string();
+        Some(match self.call(host, op, args.clone()).await {
             Err(e) => format!("Не получилось: {e}"),
             Ok(Value::String(s)) if op == "related" => s,
+            Ok(_) if op == "like" && args["liked"].as_bool() == Some(true) && !cur_title.is_empty() => {
+                format!("Добавил «{cur_title}» в избранное.")
+            }
+            Ok(_) if op == "like" && args["liked"].as_bool() == Some(false) && !cur_title.is_empty() => {
+                format!("Убрал «{cur_title}» из избранного.")
+            }
             Ok(_) => answer.into(),
         })
     }
@@ -692,25 +780,51 @@ pub fn command(text: &str) -> Option<(&'static str, Value, &'static str)> {
         return Some(("related", json!({"expected":""}), ""));
     }
     if starts(&[
-        "поставь лайк",
-        "лайкни",
-        "нравится этот трек",
-        "добавь в лайки",
-        "добавь в понравившиеся",
-    ]) || t == "лайк"
-    {
-        return Some(("like", json!({"liked": true}), "Поставил лайк."));
-    }
-    if starts(&[
         "убери лайк",
         "сними лайк",
         "удали лайк",
         "убери из лайков",
         "убери из понравившихся",
+        "убери из избранного",
+        "убери из любимых",
         "удали из лайков",
         "удали из понравившихся",
+        "удали из избранного",
+        "удали из любимых",
+        "не нравится этот трек",
+        "не нравится эта песня",
     ]) {
         return Some(("like", json!({"liked": false}), "Убрал лайк."));
+    }
+    if starts(&[
+        "поставь лайк",
+        "лайкни",
+        "нравится этот трек",
+        "нравится эта песня",
+        "мне нравится",
+        "мне понравил",
+        "понравил",
+        "классный трек",
+        "классная песня",
+        "крутой трек",
+        "крутая песня",
+        "отличная песня",
+        "отличный трек",
+        "добавь в лайки",
+        "добавь в понравившиеся",
+        "добавь в избранное",
+        "добавь в любимые",
+        "в избранное",
+        "в любимые",
+        "сохрани трек",
+        "сохрани песню",
+        "запомни трек",
+        "запомни песню",
+    ]) || t == "лайк"
+        || (t.contains("понравил") && (t.contains("песн") || t.contains("трек") || t.contains("музык")))
+        || (t.contains("избранн") && (t.contains("добав") || t.contains("сохран") || t.contains("песн") || t.contains("трек")))
+    {
+        return Some(("like", json!({"liked": true}), "Поставил лайк."));
     }
     None
 }
@@ -805,6 +919,7 @@ pub fn played_music_title(tool_name: &str, result: &str) -> Option<String> {
         "play_music" => {
             if let Some(rest) = result
                 .strip_prefix("Включил с YouTube:")
+                .or_else(|| result.strip_prefix("Включил в YouTube Music:"))
                 .or_else(|| result.strip_prefix("Включил понравившиеся с YouTube:"))
                 .or_else(|| result.strip_prefix("Включил плейлист с YouTube:"))
             {
@@ -903,6 +1018,236 @@ impl MusicTurnTracker {
             answer,
         )
     }
+}
+
+#[derive(Clone, Debug)]
+struct YtMusicTrack {
+    id: String,
+    title: String,
+    author: String,
+    duration_s: u32,
+}
+
+fn is_spoken_video_query(query: &str) -> bool {
+    let q = query.to_lowercase().replace('ё', "е");
+    [
+        "подкаст",
+        "интервью",
+        "лекци",
+        "аудиокниг",
+        "стендап",
+        "standup",
+        "новости",
+        "обзор",
+        "ролик",
+        "видео",
+        "стрим",
+        "трейлер",
+        "документал",
+        "сказк",
+        "выпуск",
+        "шоу ",
+        "podcast",
+        "interview",
+        "lecture",
+    ]
+    .iter()
+    .any(|w| q.contains(w))
+}
+
+fn is_generic_music_query(query: &str) -> bool {
+    let q = query.trim().to_lowercase().replace('ё', "е");
+    if q.is_empty() {
+        return true;
+    }
+    [
+        "популярн",
+        "новинк",
+        "хит",
+        "чарт",
+        "топ ",
+        "динамичн",
+        "бодр",
+        "весел",
+        "грустн",
+        "спокойн",
+        "расслаб",
+        "танцевальн",
+        "клубн",
+        "фонов",
+        "классн",
+        "хорош",
+        "крут",
+        "современн",
+        "трендов",
+        "что-нибудь",
+        "какую-нибудь",
+        "любую музыку",
+        "просто музыку",
+        "музыка",
+        "музыку",
+    ]
+    .iter()
+    .any(|w| q.contains(w))
+}
+
+fn is_spam_music_track(title: &str, author: &str, duration_s: u32) -> bool {
+    if duration_s > 540 || (duration_s > 0 && duration_s < 45) {
+        return true;
+    }
+    let meta = format!("{} {}", title.to_lowercase(), author.to_lowercase()).replace('ё', "е");
+    [
+        "подборка",
+        "в машину",
+        "сборник",
+        "мегамикс",
+        "megamix",
+        "nonstop",
+        "non-stop",
+        "1 час",
+        "2 часа",
+        "3 часа",
+        "randomchik",
+        "музыка для души",
+        "best hits",
+        "top 100",
+        "топ 100",
+        "миксы",
+        "дискотека 202",
+        "клубная музыка 202",
+        "новинки 202",
+        "хиты 202",
+    ]
+    .iter()
+    .any(|w| meta.contains(w))
+}
+
+fn parse_duration_secs(s: &str) -> u32 {
+    let parts: Vec<u32> = s
+        .trim()
+        .split(':')
+        .filter_map(|p| p.trim().parse::<u32>().ok())
+        .collect();
+    match parts.as_slice() {
+        [m, sec] => m * 60 + sec,
+        [h, m, sec] => h * 3600 + m * 60 + sec,
+        _ => 0,
+    }
+}
+
+fn collect_runs_text(v: &Value) -> String {
+    v.get("runs")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| r.get("text").and_then(Value::as_str))
+                .collect::<String>()
+        })
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+fn collect_ytmusic_tracks(v: &Value, out: &mut Vec<YtMusicTrack>) {
+    match v {
+        Value::Object(map) => {
+            if let Some(it) = map.get("musicResponsiveListItemRenderer") {
+                let vid = it["playlistItemData"]["videoId"]
+                    .as_str()
+                    .or_else(|| it["overlay"]["musicItemThumbnailOverlayRenderer"]["content"]["musicPlayButtonRenderer"]["playNavigationEndpoint"]["watchEndpoint"]["videoId"].as_str())
+                    .unwrap_or("")
+                    .trim();
+                if !vid.is_empty() && !out.iter().any(|t| t.id == vid) {
+                    let cols = it["flexColumns"].as_array();
+                    let title = cols
+                        .and_then(|c| c.first())
+                        .map(|c| collect_runs_text(&c["musicResponsiveListItemFlexColumnRenderer"]["text"]))
+                        .unwrap_or_default();
+                    let sub_runs = cols
+                        .and_then(|c| c.get(1))
+                        .and_then(|c| c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"].as_array());
+                    let mut author = String::new();
+                    let mut duration_s = 0u32;
+                    if let Some(runs) = sub_runs {
+                        let texts: Vec<&str> = runs
+                            .iter()
+                            .filter_map(|r| r.get("text").and_then(Value::as_str))
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty() && *s != "•" && *s != "Песня" && *s != "Song" && *s != "Видео" && *s != "Video")
+                            .collect();
+                        if let Some(first) = texts.first() {
+                            author = (*first).to_string();
+                        }
+                        if let Some(last) = texts.last() {
+                            duration_s = parse_duration_secs(last);
+                        }
+                    }
+                    if !title.is_empty() && !is_spam_music_track(&title, &author, duration_s) {
+                        out.push(YtMusicTrack {
+                            id: vid.to_string(),
+                            title,
+                            author,
+                            duration_s,
+                        });
+                    }
+                }
+            }
+            for val in map.values() {
+                if out.len() >= 15 {
+                    break;
+                }
+                collect_ytmusic_tracks(val, out);
+            }
+        }
+        Value::Array(arr) => {
+            for val in arr {
+                if out.len() >= 15 {
+                    break;
+                }
+                collect_ytmusic_tracks(val, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn search_ytmusic_songs(query: &str) -> Vec<YtMusicTrack> {
+    let clean = query.trim();
+    if clean.is_empty() {
+        return Vec::new();
+    }
+    let body = json!({
+        "context": {
+            "client": {
+                "clientName": "WEB_REMIX",
+                "clientVersion": "1.20240501.01.00",
+                "hl": "ru",
+                "gl": "RU"
+            }
+        },
+        "query": clean,
+        "params": "EgWKAQIIAWoKEAMQBBAJEAoQBQ%3D%3D"
+    });
+    let Ok(resp) = crate::net::direct()
+        .post("https://music.youtube.com/youtubei/v1/search?prettyPrint=false")
+        .header("Origin", "https://music.youtube.com")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .json(&body)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    else {
+        return Vec::new();
+    };
+    if !resp.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(data) = resp.json::<Value>().await else {
+        return Vec::new();
+    };
+    let mut tracks = Vec::new();
+    collect_ytmusic_tracks(&data, &mut tracks);
+    tracks
 }
 
 #[cfg(test)]
