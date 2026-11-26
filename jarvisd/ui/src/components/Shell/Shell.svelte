@@ -29,14 +29,16 @@
   let studioActive = $derived(
     Boolean(
       $activity.reader?.running
-      || $activity.dj?.active
       || $activity.games?.active_game
       || $activity.debate_active
       || Boolean($activity.timers?.length)
       || ($activity.modes?.mode && $activity.modes.mode !== "normal")
     )
   );
-  let isMorePage = $derived(!["home", "studio", "player", "speaker"].includes(page));
+  let mediaActive = $derived(Boolean(playing || $activity.dj?.active || $activity.ambient?.active));
+  let isSystemPage = $derived(["speaker", "connections", "charts", "logs", "security", "training"].includes(page));
+  let isAssistantsPage = $derived(page.startsWith("p:") || page === "characters");
+  let defaultAssistantHref = $derived(activeProfileId ? profilePath(activeProfileId) : "/characters");
 
   onMount(() => subscribeMusic((state) => { playing = !!state?.playing && !state.paused; }));
 
@@ -177,19 +179,11 @@
 
     <nav class="nav" id="nav">
       <a href="/" data-page="home" class:on={page === "home"}>{@html icon("home")}Главная</a>
+      <a href="/player" data-page="player" class:on={page === "player"}>{@html icon("music")}Медиа<span class="nav-eq" class:hidden={!playing} id="nav-eq"><i></i><i></i><i></i></span><span class="dot" class:hidden={playing || !mediaActive}></span></a>
       <a href="/studio" data-page="studio" class:on={page === "studio"}>{@html icon("layers")}Студия<span class="dot" class:hidden={!studioActive}></span></a>
-      <a href="/player" data-page="player" class:on={page === "player"}>{@html icon("music")}Плеер<span class="nav-eq" class:hidden={!playing} id="nav-eq"><i></i><i></i><i></i></span></a>
-      <a href="/memory" data-page="memory" class:on={page === "memory"}>{@html icon("list")}Память</a>
-
-      <div class="nav-group">Система</div>
-      <a href="/speaker" data-page="speaker" class:on={page === "speaker"}>{@html icon("speaker")}Колонка</a>
-      <a href="/connections" data-page="connections" class:on={page === "connections"}>{@html icon("puzzle")}Подключения</a>
-      <div id="nav-ext" class="nav-ext">
-        {#if sidebar?.training}<a href="/training" data-page="training" class:on={page === "training"}>{@html icon("mic")}Обучение</a>{/if}
-      </div>
-      <a href="/charts" data-page="charts" class:on={page === "charts"}>{@html icon("activity")}Графики</a>
-      <a href="/logs" data-page="logs" class:on={page === "logs"}>{@html icon("note")}Логи</a>
-      <a href="/security" data-page="security" class:on={page === "security"}>{@html icon("shield")}Безопасность<span class="dot" class:hidden={!sidebar?.updateAvailable} id="upd-dot"></span></a>
+      <a href="/memory" data-page="memory" class:on={page === "memory"}>{@html icon("brain")}Знания</a>
+      <a href={defaultAssistantHref} data-page="assistants" class:on={isAssistantsPage}>{@html icon("users")}Ассистенты</a>
+      <a href="/speaker" data-page="system" class:on={isSystemPage}>{@html icon("sliders")}Система<span class="dot" class:hidden={!sidebar?.updateAvailable} id="upd-dot"></span></a>
     </nav>
 
     <div class="side-foot">
@@ -242,15 +236,19 @@
 
   <nav class="btab" aria-label="Быстрая навигация">
     <a href="/" class="btab-item" class:on={page === "home"}>{@html icon("home")}<span>Главная</span></a>
+    <a href="/player" class="btab-item" class:on={page === "player"}>
+      {@html icon("music")}<span>Медиа</span>
+      {#if mediaActive}<span class="btab-dot"></span>{/if}
+    </a>
     <a href="/studio" class="btab-item" class:on={page === "studio"}>
       {@html icon("layers")}<span>Студия</span>
       {#if studioActive}<span class="btab-dot"></span>{/if}
     </a>
-    <a href="/player" class="btab-item" class:on={page === "player"}>{@html icon("music")}<span>Плеер</span></a>
-    <a href="/speaker" class="btab-item" class:on={page === "speaker"}>{@html icon("speaker")}<span>Колонка</span></a>
-    <button type="button" class="btab-item" class:on={isMorePage || menuOpen} onclick={() => { menuOpen = !menuOpen; }}>
-      {@html icon("menu")}<span>Ещё</span>
-    </button>
+    <a href="/memory" class="btab-item" class:on={page === "memory"}>{@html icon("brain")}<span>Знания</span></a>
+    <a href="/speaker" class="btab-item" class:on={isSystemPage}>
+      {@html icon("sliders")}<span>Система</span>
+      {#if sidebar?.updateAvailable}<span class="btab-dot"></span>{/if}
+    </a>
   </nav>
 </div>
 

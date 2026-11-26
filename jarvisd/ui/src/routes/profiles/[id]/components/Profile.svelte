@@ -1,6 +1,7 @@
 <script>
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
+  import AssistantsNav from "#components/Shell/AssistantsNav.svelte";
   import { api, icon, setDirty, toast } from "#helpers/core.js";
   import { refreshRoute, reload, S } from "#state/panelState.js";
   import { profilePath } from "#helpers/paths.js";
@@ -21,6 +22,7 @@
   let dirty = $state(false);
   let working = $state("");
   let confirmDelete = $state(false);
+  let ptab = $state("brain");
   let revision = 0;
   let basics = $state();
   let brain = $state();
@@ -126,18 +128,35 @@
   }
 </script>
 
+<AssistantsNav current={isNew ? "p:new" : "p:" + initial.id} />
+
+{#snippet profileTabs()}
+  <div class="seg asst-sub-seg" role="tablist" aria-label="Разделы профиля">
+    <button type="button" role="tab" aria-selected={ptab === "brain"} class:on={ptab === "brain"} onclick={() => { ptab = "brain"; }}>
+      {@html icon("cpu")} Основное и мозг
+    </button>
+    <button type="button" role="tab" aria-selected={ptab === "voice"} class:on={ptab === "voice"} onclick={() => { ptab = "voice"; }}>
+      {@html icon("voice")} Голос и подсветка
+    </button>
+  </div>
+{/snippet}
+
 <ProfileBasics bind:this={basics} initial={{ name: initial.name, color: initial.color, prompt: initial.prompt }}
-  prompts={S.prompts} {isNew} {active} onedit={edit} />
-<ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
-  onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
-<ProfileVoice bind:this={voice} initial={{
-  voice: initial.voice, ttsVoice: initial.tts_voice,
-  ttsProvider: initial.engine === "eleven_realtime" ? "elevenlabs" : initial.tts_engine,
-  volume: initial.volume,
-  ttsSpeed: initial.tts_speed || 1.0,
-}} onedit={edit} {previewModels} />
-<ProfileLighting initial={initial.led} previewAvailable={Boolean(S.speaker.leds)}
-  globallyEnabled={S.settings.led?.enabled !== false} onedit={editLighting} />
+  prompts={S.prompts} {isNew} {active} onedit={edit} hideSection={ptab !== "brain"} tabs={profileTabs} />
+<div class:hidden={ptab !== "brain"}>
+  <ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
+    onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
+</div>
+<div class:hidden={ptab !== "voice"}>
+  <ProfileVoice bind:this={voice} initial={{
+    voice: initial.voice, ttsVoice: initial.tts_voice,
+    ttsProvider: initial.engine === "eleven_realtime" ? "elevenlabs" : initial.tts_engine,
+    volume: initial.volume,
+    ttsSpeed: initial.tts_speed || 1.0,
+  }} onedit={edit} {previewModels} />
+  <ProfileLighting initial={initial.led} previewAvailable={Boolean(S.speaker.leds)}
+    globallyEnabled={S.settings.led?.enabled !== false} onedit={editLighting} />
+</div>
 
 <div class="savebar">
   <button class="btn primary" type="button" id="p-save" disabled={Boolean(working)} onclick={save}>{@html icon(isNew ? "plus" : "save")}{isNew ? "Создать" : "Сохранить"}</button>

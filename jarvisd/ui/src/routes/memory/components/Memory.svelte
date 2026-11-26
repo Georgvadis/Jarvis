@@ -1,10 +1,15 @@
 <script>
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { api, icon, plural, tip, toast } from "#helpers/core.js";
   import { renderMarkdownInto } from "#helpers/markdown.js";
   import { reload } from "#state/panelState.js";
+  import StudioNotes from "../../studio/components/StudioNotes.svelte";
   import Archive from "./Archive/Archive.svelte";
   import styles from "./Memory.module.css";
+
+  const VALID_TABS = new Set(["facts", "notes", "archive"]);
 
   const providers = [
     ["chatgpt", "Подписка ChatGPT"],
@@ -21,7 +26,19 @@
   let data = $state.raw(null);
   let loadError = $state("");
   let busy = $state(false);
+  let tab = $state("facts");
   let archiveView = $state();
+
+  $effect(() => {
+    const q = page.url.searchParams.get("tab");
+    if (q && VALID_TABS.has(q)) tab = q;
+    else if (!q) tab = "facts";
+  });
+
+  function switchTab(id) {
+    tab = id;
+    void goto(id === "facts" ? "/memory" : `/memory?tab=${id}`, { replaceState: true, keepFocus: true, noScroll: true });
+  }
   let editor = $state.raw(null);
   let draft = $state("");
   let newFact = $state("");
@@ -175,7 +192,7 @@
       const result = await api("POST", "/api/memory/compact");
       if (signal.aborted) return;
       await loadMemory();
-      await archiveView.refresh();
+      await archiveView?.refresh();
       if (!signal.aborted) toast(result.turns ? "Досье и конспект обновлены" : "Сжимать пока нечего");
     });
   }
@@ -227,7 +244,7 @@
       if (signal.aborted) return;
       editor = null;
       await loadMemory();
-      await archiveView.refresh(all);
+      await archiveView?.refresh(all);
       if (!signal.aborted) toast(all ? "Память стёрта" : "Новый чат начат");
     });
   }
@@ -237,19 +254,33 @@
 
 <header class="ph ph-row">
   <div>
-    <h1>Память</h1>
-    <p class="sub">Общая память для всех ассистентов</p>
+    <h1>Знания</h1>
   </div>
   {#if data}
     <div class="actions">
       <label class={["sw", styles.toggle]}>
         <input type="checkbox" checked={!settings.off} disabled={busy} onchange={changeEnabled}>
         <span class="tr"></span>
-        Запоминать разговоры
+        Запоминать
       </label>
     </div>
   {/if}
 </header>
+
+<div class="hub-tabs" role="tablist" aria-label="Разделы знаний">
+  <button type="button" role="tab" aria-selected={tab === "facts"} class="hub-tab" class:on={tab === "facts"} onclick={() => switchTab("facts")}>
+    {@html icon("brain")}
+    <span>Память и поиск</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "notes"} class="hub-tab" class:on={tab === "notes"} onclick={() => switchTab("notes")}>
+    {@html icon("note")}
+    <span>Заметки</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "archive"} class="hub-tab" class:on={tab === "archive"} onclick={() => switchTab("archive")}>
+    {@html icon("archive")}
+    <span>Архив и настройки</span>
+  </button>
+</div>
 
 {#snippet stat(count, label, since = "")}
   <div class={styles.stat}>
@@ -266,32 +297,33 @@
   </div>
 {/snippet}
 
-{#if loadError}
+{#if tab === "notes"}
+  <StudioNotes />
+{:else if loadError}
   <p class="err" role="alert">{loadError}</p>
 {:else if !data}
   <div class="card plg-empty" role="status"><span class="spin"></span><p class="muted">Загружаю память…</p></div>
-{:else}
+{:else if tab === "facts"}
   <div class={styles.memory}>
     {#if settings.off}
       <p class={["note", styles.off]}>
         {@html icon("moon")}
-        <span>Память выключена: каждый разговор начинается с чистого листа. То, что уже записано, осталось — его можно смотреть и править.</span>
+        <span>Память выключена — новые разговоры не сохраняются.</span>
       </p>
     {/if}
 
     <div class={styles.stats}>
-      {@render stat(facts.length, plural(facts.length, "факт о вас", "факта о вас", "фактов о вас"))}
-      {@render stat(archiveCount, plural(archiveCount, "реплика в архиве", "реплики в архиве", "реплик в архиве"),
+      {@render stat(facts.length, plural(facts.length, "факт", "факта", "фактов"))}
+      {@render stat(archiveCount, plural(archiveCount, "в архиве", "в архиве", "в архиве"),
         memory.archive_since ? "с " + dateFormat.format(memory.archive_since * 1000) : "")}
-      {@render stat(chronicle.length, plural(chronicle.length, "месяц в летописи", "месяца в летописи", "месяцев в летописи"))}
-      {@render stat(memory.turns || 0, "в текущем чате")}
+      {@render stat(chronicle.length, plural(chronicle.length, "месяц", "месяца", "месяцев"))}
+      {@render stat(memory.turns || 0, "в чате")}
     </div>
 
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
           <h2>{@html icon("sparkles")}Умный поиск</h2>
-          <p class="muted">По смыслу в досье, конспекте, архиве и заметках CyberNotes</p>
         </div>
       </div>
       <form class={styles.ragForm} onsubmit={(e) => { e.preventDefault(); void runRag(false); }}>
@@ -322,15 +354,14 @@
           {/each}
         </div>
       {:else if ragDone && !ragAnswer}
-        <p class={styles.empty}>По смыслу ничего подходящего не нашлось.</p>
+        <p class={styles.empty}>Ничего не найдено.</p>
       {/if}
     </section>
 
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
-          <h2>{@html icon("read")}Что Джарвис знает о вас</h2>
-          <p class="muted">Передаётся в начале каждого разговора</p>
+          <h2>{@html icon("read")}Факты о вас</h2>
         </div>
         <div class="row">
           {#if facts.length > 3}
@@ -341,8 +372,8 @@
           {/if}
           {#if facts.length || memory.summary || chronicle.length}
             <button class="btn sm ghost" type="button" disabled={busy} onclick={exportToNotes}
-              title="Экспортировать досье, конспект и летопись в CyberNotes">
-              {@html icon("upload")} В CyberNotes
+              title="Экспортировать в CyberNotes">
+              {@html icon("upload")} В заметки
             </button>
           {/if}
         </div>
@@ -372,10 +403,10 @@
           {/each}
         </ul>
       {:else}
-        <p class={styles.empty}>Пока пусто. {archiveCount ? "Заполнится, когда разговор сожмётся, — или добавьте сами." : "Расскажите Джарвису о себе или добавьте сами."}</p>
+        <p class={styles.empty}>Пока пусто. Добавьте первый факт ниже.</p>
       {/if}
       <form class={styles.add} onsubmit={addFact}>
-        <input type="text" aria-label="Новый факт" placeholder="Добавить: например, «не ем мясо» или «дочь зовут Аня»"
+        <input type="text" aria-label="Новый факт" placeholder="Например: «люблю фильтр-кофе»"
           maxlength="300" bind:value={newFact} disabled={busy}>
         <button class="btn" type="submit" disabled={busy}>{@html icon("plus")}Добавить</button>
       </form>
@@ -384,13 +415,13 @@
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
-          <h2>{@html icon("todo")}Конспект недавних разговоров</h2>
-          <p class="muted">{memory.summary_at ? "Обновлён " + summaryFormat.format(memory.summary_at * 1000) : "Кто что сказал и когда — сжато"}</p>
+          <h2>{@html icon("todo")}Конспект разговоров</h2>
+          {#if memory.summary_at}<p class="muted">{summaryFormat.format(memory.summary_at * 1000)}</p>{/if}
         </div>
         <div class="row">
           {#if !settings.off && settings.active && archiveCount}
             <button class="btn sm" type="button" disabled={busy} onclick={compact}
-              data-tip="Сжать разговор в досье и конспект сейчас, не дожидаясь длинного разговора">{@html icon("refresh")}Обновить сейчас</button>
+              data-tip="Сжать разговор в досье и конспект сейчас">{@html icon("refresh")}Обновить</button>
           {/if}
           {#if memory.summary && editor?.kind !== "summary"}
             <button class="btn sm ghost" type="button" disabled={busy}
@@ -406,16 +437,17 @@
       {:else if memory.summary}
         <div class={styles.text}>{memory.summary}</div>
       {:else}
-        <p class={styles.empty}>Пока пусто: появится после первого длинного разговора.</p>
+        <p class={styles.empty}>Появится после первого длинного разговора.</p>
       {/if}
     </section>
-
+  </div>
+{:else}
+  <div class={styles.memory}>
     {#if chronicle.length}
       <section class={["card", styles.section]}>
         <div class={styles.heading}>
           <div>
             <h2>{@html icon("moon")}Летопись</h2>
-            <p class="muted">Разговоры старше архива, сжатые по месяцам</p>
           </div>
         </div>
         <div class={styles.months}>
@@ -458,13 +490,12 @@
       <section class={["card", styles.section]}>
         <div class={styles.heading}>
           <div>
-            <h2>{@html icon("tune")}Кто сжимает разговоры</h2>
-            <p class="muted">Короткий текстовый запрос раз в несколько десятков реплик: старое — в досье и конспект</p>
+            <h2>{@html icon("tune")}Сжатие разговоров</h2>
           </div>
         </div>
         <div class="row">
           <div class="f half">
-            <label for="mem-prov">Модель {@html tip("«Сам выбирает» берёт сначала бесплатное: подписку ChatGPT, потом Gemini, потом платный ключ OpenAI. Если один не ответил — следующий.")}</label>
+            <label for="mem-prov">Модель {@html tip("«Сам выбирает» берёт сначала бесплатное: подписку ChatGPT, потом Gemini, потом платный ключ OpenAI.")}</label>
             <select id="mem-prov" value={provider} disabled={busy} onchange={changeProvider}>
               <option value="">Сам выбирает</option>
               {#each providers as [id, name] (id)}
@@ -485,11 +516,11 @@
           {/if}
         </div>
         {#if provider === "none"}
-          <p class="note">Не сжимается: Джарвис видит только последние реплики, а старое находит в архиве.</p>
+          <p class="note">Сжатие выключено: поиск работает по архиву.</p>
         {:else if settings.active}
-          <p class="note">Сейчас сжимает: <b>{providerName(settings.active)}</b> · {versionName(settings.active_model)}.{provider && !available[provider] ? " Выбранное не подключено — пока работает автовыбор." : ""}</p>
+          <p class="note">Активно: <b>{providerName(settings.active)}</b> · {versionName(settings.active_model)}.</p>
         {:else}
-          <p class="err">Нужна текстовая модель: подписка ChatGPT, ключ Gemini или ключ OpenAI. Пока её нет, старое не сжимается, но архив пишется. <a class="lnk" href="/connections">Подключения</a></p>
+          <p class="err">Нужна текстовая модель в <a class="lnk" href="/connections">Подключениях</a>.</p>
         {/if}
       </section>
     {/if}
@@ -497,26 +528,25 @@
     <section class={["card", styles.section, styles.danger]}>
       <div class={styles.heading}>
         <div>
-          <h2>Начать заново</h2>
-          <p class="muted">Новый чат — Джарвис забудет конспект и недавние реплики, досье и архив останутся. Стереть — удалить всё, без возврата</p>
+          <h2>Сброс памяти</h2>
         </div>
       </div>
       <div class="row">
         <button class="btn" type="button" disabled={busy || !(memory.turns || memory.summary)}
-          onclick={() => { confirmReset = "chat"; }}>{@html icon("sparkles")}Начать новый чат</button>
+          onclick={() => { confirmReset = "chat"; }}>{@html icon("sparkles")}Новый чат</button>
         <span class="spacer"></span>
         <button class="btn ghost danger" type="button" disabled={busy || !(archiveCount || facts.length || memory.summary)}
-          onclick={() => { confirmReset = "all"; }}>{@html icon("trash")}Стереть всю память</button>
+          onclick={() => { confirmReset = "all"; }}>{@html icon("trash")}Стереть всё</button>
       </div>
       {#if confirmReset}
         <div class="inline-confirm" role="alert">
           <span>
             {confirmReset === "all"
-              ? "Стереть всю память Джарвиса (досье, конспект, летопись, архив)?"
-              : "Начать новый чат? Джарвис забудет конспект и недавние реплики."}
+              ? "Стереть всю память Джарвиса?"
+              : "Начать новый чат и сбросить конспект?"}
           </span>
           <button class="btn danger sm" type="button" disabled={busy} onclick={() => resetChat(confirmReset === "all")}>
-            {@html icon("check")}{confirmReset === "all" ? "Стереть всё" : "Новый чат"}
+            {@html icon("check")}{confirmReset === "all" ? "Стереть" : "Сбросить"}
           </button>
           <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmReset = ""; }}>
             {@html icon("x")}Отмена

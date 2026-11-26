@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   import {
     bindConnections, closeConnectionDialog, connNetTest, connOpen, CONN_GROUPS, selectConnectionTab,
   } from "#state/connections.js";
@@ -42,10 +43,11 @@
   }
 </script>
 
+<SystemNav current="connections" />
+
 <header class="ph ph-row">
   <div>
     <h1>Подключения</h1>
-    <p class="sub">Сервисы — ключи и входы в аккаунты. Плагины — умения, которые ставятся на колонку отдельно</p>
   </div>
   <div class="actions">
     <button class="btn" type="button" data-net onclick={(event) => connNetTest(event.currentTarget)}

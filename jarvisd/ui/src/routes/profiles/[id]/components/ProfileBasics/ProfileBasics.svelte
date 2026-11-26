@@ -4,7 +4,7 @@
   import { avatar } from "#state/panelState.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
-  let { initial, prompts, isNew, active, onedit } = $props();
+  let { initial, prompts, isNew, active, onedit, hideSection = false, tabs = undefined } = $props();
   let draft = $state({ ...untrack(() => initial) });
   let savedName = $state(untrack(() => initial.name));
 
@@ -24,14 +24,15 @@
   <span id="pav" class="ringbox">{@html avatar(draft, true)}</span>
   <div>
     <h1>{isNew ? "Новый ассистент" : savedName}</h1>
-    <p class="sub">{isNew ? "Свой голос, модель и характер" : active ? "Активный профиль" : "Не активен"}</p>
+    <p class="sub">{isNew ? "Профиль ассистента" : active ? "Активный" : "Не активен"}</p>
   </div>
 </header>
 
-<section class="sec" id="profile-basics">
+{@render tabs?.()}
+
+<section class="sec" class:hidden={hideSection} id="profile-basics">
   <div class="sec-h">
     <h2>{@html icon("sparkles")}Основное</h2>
-    <p>Имя, цвет и характер ассистента</p>
   </div>
   <div class="sec-b">
     <div class="grid g2">

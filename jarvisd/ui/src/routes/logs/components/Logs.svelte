@@ -9,6 +9,7 @@
 
 <script>
   import { onMount, tick } from "svelte";
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   import { api, copyText, icon, toast } from "#helpers/core.js";
   import { parseLogLine } from "#helpers/logs.js";
   import { getPanel } from "#state/panelContext.js";
@@ -115,10 +116,11 @@
   }
 </script>
 
+<SystemNav current="logs" />
+
 <header class="ph ph-row">
   <div>
-    <h1>Логи</h1>
-    <p class="sub">Последние 400 строк · {entries.length} показано</p>
+    <h1>Журнал</h1>
   </div>
   <div class="actions">
     <div class="seg" role="group" aria-label="Источник логов">

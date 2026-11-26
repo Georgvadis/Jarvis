@@ -21,6 +21,7 @@
 
 <script>
   import { onMount } from "svelte";
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   import { api, icon, toast } from "#helpers/core.js";
   import { getPanel } from "#state/panelContext.js";
   import { S } from "#state/panelState.js";
@@ -165,10 +166,11 @@
   }
 </script>
 
+<SystemNav current="charts" />
+
 <header class="ph ph-row">
   <div>
-    <h1>Графики</h1>
-    <p class="sub">Раз в 15 секунд за последние сутки. История живёт в памяти колонки и начинается заново после перезапуска Джарвиса</p>
+    <h1>Мониторинг</h1>
   </div>
   <div class="seg" role="group" aria-label="Период графиков">
     {#each ranges as [seconds, label] (seconds)}

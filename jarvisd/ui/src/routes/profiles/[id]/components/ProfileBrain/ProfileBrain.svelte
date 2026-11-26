@@ -96,7 +96,6 @@
 <section class="sec">
   <div class="sec-h">
     <h2>{@html icon("cpu")}Мозг</h2>
-    <p>Режим работы: живой разговор или пайплайн STT → LLM → TTS</p>
   </div>
   <div class="sec-b">
     {#if engines.length}

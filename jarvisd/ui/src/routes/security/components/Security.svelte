@@ -1,4 +1,5 @@
 <script>
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   import { act, api, icon, tip } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
   import { wizOpen } from "#state/wizard.js";
@@ -51,15 +52,15 @@
   }
 </script>
 
+<SystemNav current="security" />
+
 <header class="ph">
-  <h1>Безопасность</h1>
-  <p class="sub">Кто может попасть в колонку и её настройки</p>
+  <h1>Защита и бэкап</h1>
 </header>
 
 <section class="sec">
   <div class="sec-h">
     <h2>Пароль настроек</h2>
-    <p>После смены все остальные браузеры выйдут из настроек</p>
   </div>
   <form class="sec-b" onsubmit={changePassword}>
     <div class="grid g2">
@@ -79,14 +80,13 @@
 <section class="sec">
   <div class="sec-h">
     <h2>Доступ к настройкам</h2>
-    <p>После 5 неверных паролей вход временно блокируется. Ключи и ссылка VLESS не уходят обратно в браузер</p>
   </div>
   <div class="sec-b">
     <label class="sw">
       <input type="checkbox" checked={lanOnly} disabled={changingAccess} onchange={changeAccess}>
       <span class="tr"></span>
       Только из домашней сети
-      {@html tip("Настройки открываются только с устройств в вашей Wi-Fi сети. Выключайте, только если точно понимаете зачем (например, доступ через свой VPN).")}
+      {@html tip("Настройки открываются только с устройств в вашей Wi-Fi сети. После 5 неверных паролей вход временно блокируется.")}
     </label>
     {#if confirmLanOpen}
       <div class="inline-confirm" role="alert">
@@ -104,8 +104,7 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Что открыто на колонке</h2>
-    <p>Служебные входы, через которые в колонку можно попасть из домашней сети</p>
+    <h2>Служебные входы</h2>
   </div>
   <div class="sec-b">
     <div class="checks">
@@ -127,7 +126,6 @@
 <section class="sec">
   <div class="sec-h">
     <h2>Обновления</h2>
-    <p>Версия прошивки, список изменений и расписание автообновления</p>
   </div>
   <div class="sec-b"><Updates /></div>
 </section>
@@ -135,7 +133,6 @@
 <section class="sec">
   <div class="sec-h">
     <h2>Резервная копия</h2>
-    <p>Настройки, ключи, память и данные плагинов в одном архиве</p>
   </div>
   <div class="sec-b"><Backup /></div>
 </section>
@@ -143,13 +140,12 @@
 <section class="sec">
   <div class="sec-h">
     <h2>Знакомство</h2>
-    <p>Что такое Джарвис, что он умеет, кто думает и какие плагины поставить</p>
   </div>
   <div class="sec-b">
     <div class="row">
       <button class="btn" type="button" onclick={() => wizOpen(0)}>{@html icon("right")}Показать знакомство</button>
       <a class="btn ghost" href="https://github.com/newfpv/YaJarvis" target="_blank" rel="noopener noreferrer">
-        {@html icon("ext")}Поставить звезду на GitHub
+        {@html icon("ext")}GitHub
       </a>
     </div>
   </div>

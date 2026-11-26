@@ -88,7 +88,7 @@
       <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline}></span>
       <span>{overview.micOnline ? "На связи" : "Отключён"}</span>
       {#if presence.phone_ip && presence.state !== "unknown"}
-        <span class="hstat-act" style="pointer-events:none;border-color:transparent;">
+        <span class="hstat-tag">
           {presence.state === "home" ? "Дома" : "Нет дома"}
         </span>
       {/if}

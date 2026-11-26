@@ -361,7 +361,7 @@ body::before { display: none !important; }
 /* ---------- Контентная область и типографика ---------- */
 .view {
   max-width: 1320px;
-  padding: 28px 34px calc(var(--dock-h) + 40px) !important;
+  padding: 26px 34px calc(var(--dock-h) + 40px) !important;
 }
 .view:has(> .home) {
   padding-bottom: calc(var(--dock-h) + 28px) !important;
@@ -369,8 +369,110 @@ body::before { display: none !important; }
 
 h1 { font-size: 26px; line-height: 32px; font-weight: 700; letter-spacing: -.02em; }
 h2 { font-size: 15.5px; line-height: 22px; font-weight: 650; letter-spacing: -.01em; }
-.ph { margin-bottom: 20px; }
+.ph { margin-bottom: 18px; }
 .ph .sub { font-size: 13.5px; color: var(--fg2); margin-top: 4px; }
+
+/* Заголовок Главной в одну строку */
+.home-ph {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.home-sub-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--fg2);
+}
+
+/* ---------- Единые табы разделов (.hub-tabs) ---------- */
+.hub-tabs, .studio-tabs {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  margin-bottom: 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--card-shadow);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.hub-tabs::-webkit-scrollbar, .studio-tabs::-webkit-scrollbar { display: none; }
+.hub-tab, .studio-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--fg2);
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex: none;
+  transition: background-color .15s, color .15s;
+}
+.hub-tab:hover, .studio-tab:hover {
+  background: var(--raise);
+  color: var(--fg);
+  border-color: transparent;
+}
+.hub-tab.on, .studio-tab.on {
+  background: var(--acc-soft);
+  color: var(--acc-ink);
+  border-color: transparent;
+}
+.hub-tab .ic, .studio-tab .ic { width: 16px; height: 16px; flex: none; }
+.hub-tabs.sub-tabs {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0 0 12px;
+  margin-bottom: 18px;
+}
+.hub-tab-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin: 0 4px;
+  flex: none;
+}
+.sdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--acc);
+  flex: none;
+}
+.sdot.ok { background: var(--ok); }
+.av.sm {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+}
+
+.sched-sub-seg, .asst-sub-seg {
+  margin-bottom: 18px;
+  width: fit-content;
+}
 
 /* ---------- Единые поверхности (без матрёшки) ---------- */
 .card, .sec, .kpi, .gate-card {
@@ -380,7 +482,16 @@ h2 { font-size: 15.5px; line-height: 22px; font-weight: 650; letter-spacing: -.0
   box-shadow: var(--card-shadow);
 }
 .card { padding: 20px; }
-.sec { padding: 22px 24px; margin-bottom: 14px; }
+.sec {
+  padding: 20px 24px;
+  margin-bottom: 14px;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 14px 32px;
+}
+.sec-h h2 .ic { color: var(--acc); }
+@media (max-width: 900px) {
+  .sec { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 18px; }
+}
 
 /* Вложенные блоки используют мягкий --raise вместо жёсткого тёмного --bg0 */
 .opt, .voice, .vpn, .nr, .upd, .bg-run, .play-led, .rvp,
@@ -436,7 +547,8 @@ input[type=text], input[type=password], input[type=number], input[type=time], se
 textarea { height: auto; }
 
 .seg { background: var(--raise); border-radius: var(--r-sm); padding: 3px; }
-.seg button { height: 32px; border-radius: 8px; font-size: 13px; }
+.seg button { height: 32px; border-radius: 8px; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.seg button .ic { width: 15px; height: 15px; }
 .seg button.on, .seg-pill { border-radius: 8px; }
 
 .rb.primary {
@@ -490,6 +602,15 @@ a.hstat:hover { border-color: var(--line2); }
 }
 .hstat-act:hover { border-color: var(--acc); color: var(--acc-ink); }
 .hstat-act .ic { width: 12px; height: 12px; }
+.hstat-tag {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: var(--raise);
+  color: var(--fg2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
 
 /* Чат на Главной */
 .home {
@@ -562,14 +683,26 @@ a.hstat:hover { border-color: var(--line2); }
   border: 1px solid var(--line2);
   border-radius: var(--r-sm);
 }
-.cmdk-bg, .note-modal-bg {
+.cmdk-bg, .note-modal-bg, .modal-bg {
   background: rgb(16 15 13 / .58);
   backdrop-filter: blur(4px);
 }
-.cmdk, .note-modal {
+.cmdk, .note-modal, .modal-card {
   background: var(--modal-bg);
   border: 1px solid var(--line2);
   border-radius: var(--r-lg);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / .55);
+}
+dialog {
+  background: var(--modal-bg);
+  color: var(--fg);
+  border: 1px solid var(--line2);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / .55);
+}
+dialog::backdrop {
+  background: rgb(16 15 13 / .58);
+  backdrop-filter: blur(4px);
 }
 .cmdk-kbd { background: var(--raise); border-color: var(--line); }
 

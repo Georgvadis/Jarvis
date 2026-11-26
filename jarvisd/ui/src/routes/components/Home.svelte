@@ -26,9 +26,12 @@
   }
 </script>
 
-<header class="ph">
+<header class="ph home-ph">
   <h1>Главная</h1>
-  <p class="sub"><span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline} id="home-dot"></span><span id="home-sub">{overview.summary}</span></p>
+  <span class="home-sub-pill">
+    <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline} id="home-dot"></span>
+    <span id="home-sub">{overview.summary}</span>
+  </span>
 </header>
 
 <HomeStrip {overview} {activeProfile} {sys} />

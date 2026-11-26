@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import AssistantsNav from "#components/Shell/AssistantsNav.svelte";
   import { api, icon, setDirty, toast } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
   import styles from "./Characters.module.css";
@@ -120,10 +121,11 @@
   }
 </script>
 
+<AssistantsNav current="characters" />
+
 <header class="ph ph-row">
   <div>
     <h1>Характеры</h1>
-    <p class="sub">Стиль и роль общения ассистента</p>
   </div>
   <div class="actions">
     <button class="btn primary" type="button" onclick={() => openEditor()}>{@html icon("plus")}Новый характер</button>

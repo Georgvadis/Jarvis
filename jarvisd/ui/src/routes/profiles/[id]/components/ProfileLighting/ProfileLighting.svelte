@@ -59,7 +59,6 @@
 <section class="sec" id="profile-lighting">
   <div class="sec-h">
     <h2>{@html icon("sun")}Подсветка</h2>
-    <p>Цвет кольца этого ассистента</p>
   </div>
   <div class="sec-b">
     <div id="p-led" class="ledrows">

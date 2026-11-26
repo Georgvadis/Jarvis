@@ -51,6 +51,7 @@
   let routines = $state([]);
   let loading = $state(true);
   let busy = $state(false);
+  let sub = $state("timers");
   let confirmDeleteId = $state("");
   let editingId = $state("");
   let routineFormEl = $state();
@@ -299,6 +300,16 @@
   }
 </script>
 
+<div class="seg sched-sub-seg" role="tablist" aria-label="Автоматизации">
+  <button type="button" role="tab" aria-selected={sub === "timers"} class:on={sub === "timers"} onclick={() => { sub = "timers"; }}>
+    {@html icon("clock")} Таймеры и рутины
+  </button>
+  <button type="button" role="tab" aria-selected={sub === "scenarios"} class:on={sub === "scenarios"} onclick={() => { sub = "scenarios"; }}>
+    {@html icon("sparkles")} Сценарии
+  </button>
+</div>
+
+{#if sub === "timers"}
 <div class="studio-grid">
   <section class="card">
     <div class="card-head">
@@ -605,5 +616,6 @@
     </div>
   </section>
 </div>
-
+{:else}
 <StudioScenarios />
+{/if}

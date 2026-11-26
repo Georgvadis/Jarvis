@@ -4,19 +4,26 @@
   import { api, icon, toast } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
   import StudioBooks from "./StudioBooks.svelte";
-  import StudioDj from "./StudioDj.svelte";
   import StudioGames from "./StudioGames.svelte";
-  import StudioNotes from "./StudioNotes.svelte";
   import StudioPodcast from "./StudioPodcast.svelte";
   import StudioSchedule from "./StudioSchedule.svelte";
 
-  const VALID_TABS = new Set(["podcast", "books", "games", "dj", "notes", "schedule"]);
+  const VALID_TABS = new Set(["podcast", "books", "games", "schedule"]);
   let tab = $state("podcast");
   let busy = $state(false);
 
   $effect(() => {
     const q = page.url.searchParams.get("tab");
+    if (q === "notes") {
+      void goto("/memory?tab=notes", { replaceState: true });
+      return;
+    }
+    if (q === "dj") {
+      void goto("/player?tab=dj", { replaceState: true });
+      return;
+    }
     if (q && VALID_TABS.has(q)) tab = q;
+    else if (!q) tab = "podcast";
   });
 
   function switchTab(id) {
@@ -29,7 +36,6 @@
       $activity.debate_active
       || $activity.reader?.running
       || $activity.games?.active_game
-      || $activity.dj?.active
       || ($activity.modes?.mode && $activity.modes.mode !== "normal")
     )
   );
@@ -49,19 +55,16 @@
   }
 
   let tabs = $derived([
-    { id: "podcast", label: "Подкаст", ic: "podcast", live: Boolean($activity.debate_active || $activity.modes?.mode === "translator") },
+    { id: "podcast", label: "Подкасты и эфир", ic: "podcast", live: Boolean($activity.debate_active || $activity.modes?.mode === "translator") },
     { id: "books", label: "Книги", ic: "book", live: Boolean($activity.reader?.running) },
     { id: "games", label: "Игры", ic: "gamepad", live: Boolean($activity.games?.active_game || $activity.modes?.mode === "rpg" || $activity.modes?.mode === "quiz") },
-    { id: "dj", label: "AI-DJ", ic: "disc", live: Boolean($activity.dj?.active) },
-    { id: "notes", label: "Заметки", ic: "note", live: false },
-    { id: "schedule", label: "Расписание", ic: "clock", live: Boolean($activity.timers?.length) },
+    { id: "schedule", label: "Автоматизации", ic: "clock", live: Boolean($activity.timers?.length) },
   ]);
 </script>
 
 <header class="ph ph-row">
   <div>
     <h1>Студия</h1>
-    <p class="sub">Подкасты, аудиокниги, игры, персональный AI-DJ и заметки</p>
   </div>
   {#if anyActive}
     <div class="actions">
@@ -72,13 +75,13 @@
   {/if}
 </header>
 
-<div class="studio-tabs" role="tablist" aria-label="Разделы студии">
+<div class="hub-tabs" role="tablist" aria-label="Разделы студии">
   {#each tabs as t (t.id)}
     <button
       type="button"
       role="tab"
       aria-selected={tab === t.id}
-      class="studio-tab"
+      class="hub-tab"
       class:on={tab === t.id}
       onclick={() => switchTab(t.id)}
     >
@@ -95,10 +98,6 @@
   <StudioBooks />
 {:else if tab === "games"}
   <StudioGames />
-{:else if tab === "dj"}
-  <StudioDj />
-{:else if tab === "schedule"}
-  <StudioSchedule />
 {:else}
-  <StudioNotes />
+  <StudioSchedule />
 {/if}

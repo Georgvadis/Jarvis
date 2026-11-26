@@ -1,6 +1,9 @@
 <script>
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   let { enabled, showRecords } = $props();
 </script>
+
+<SystemNav current="training" />
 
 <header class="ph"><h1>Обучение</h1></header>
 {#if enabled}

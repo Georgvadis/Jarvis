@@ -72,6 +72,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { SvelteSet } from "svelte/reactivity";
+  import SystemNav from "#components/Shell/SystemNav.svelte";
   import { api, copyText, icon, jelly, tip, toast } from "#helpers/core.js";
   import { activity } from "#state/activity.js";
   import { S, reload } from "#state/panelState.js";
@@ -535,22 +536,23 @@
   </label>
 {/snippet}
 
+<SystemNav current="speaker" />
+
 <header class="ph">
   <h1>Колонка</h1>
-  <p class="sub">Изменения сохраняются сразу</p>
 </header>
 
-<div class="studio-tabs" role="tablist" aria-label="Разделы настроек колонки">
-  <button type="button" role="tab" aria-selected={tab === "general"} class="studio-tab" class:on={tab === "general"} onclick={() => switchTab("general")}>
+<div class="hub-tabs sub-tabs" role="tablist" aria-label="Разделы настроек колонки">
+  <button type="button" role="tab" aria-selected={tab === "general"} class="hub-tab" class:on={tab === "general"} onclick={() => switchTab("general")}>
     {@html icon("home")}<span>Основное</span>
   </button>
-  <button type="button" role="tab" aria-selected={tab === "voice"} class="studio-tab" class:on={tab === "voice"} onclick={() => switchTab("voice")}>
-    {@html icon("mic")}<span>Звук и микрофон</span>
+  <button type="button" role="tab" aria-selected={tab === "voice"} class="hub-tab" class:on={tab === "voice"} onclick={() => switchTab("voice")}>
+    {@html icon("mic")}<span>Микрофон</span>
   </button>
-  <button type="button" role="tab" aria-selected={tab === "light"} class="studio-tab" class:on={tab === "light"} onclick={() => switchTab("light")}>
+  <button type="button" role="tab" aria-selected={tab === "light"} class="hub-tab" class:on={tab === "light"} onclick={() => switchTab("light")}>
     {@html icon("sun")}<span>Свет и ночь</span>
   </button>
-  <button type="button" role="tab" aria-selected={tab === "integrations"} class="studio-tab" class:on={tab === "integrations"} onclick={() => switchTab("integrations")}>
+  <button type="button" role="tab" aria-selected={tab === "integrations"} class="hub-tab" class:on={tab === "integrations"} onclick={() => switchTab("integrations")}>
     {@html icon("monitor")}<span>Интеграции</span>
   </button>
 </div>
@@ -579,7 +581,7 @@
 {/snippet}
 {#if tab === "general"}
   {@render settingSection("Умный дом и музыка",
-    "Каналы управления домом и источник музыки",
+    "",
     homeFields, "home")}
 {/if}
 
@@ -611,7 +613,7 @@
 {/snippet}
 {#if tab === "general"}
   {@render settingSection("Локация",
-    "Комната, город и часовой пояс",
+    "",
     locationFields, "globe")}
 {/if}
 
@@ -756,7 +758,7 @@
   {/if}
 {/snippet}
 {#if tab === "voice"}
-  {@render settingSection("Микрофон и активация", "Слово активации, усиление и порог тишины", wakeFields, "mic")}
+  {@render settingSection("Микрофон и активация", "", wakeFields, "mic")}
 {/if}
 
 {#snippet languageFields()}
@@ -769,7 +771,7 @@
 {/snippet}
 {#if tab === "general"}
   {@render settingSection("Язык",
-    "Язык распознавания и ответов",
+    "",
     languageFields, "globe")}
 {/if}
 
@@ -782,7 +784,7 @@
 {/snippet}
 {#if tab === "light"}
   {@render settingSection("Подсветка",
-    "Световое кольцо колонки",
+    "",
     lightingFields, "sun")}
 {/if}
 
@@ -798,7 +800,7 @@
 {/snippet}
 {#if tab === "integrations"}
   {@render settingSection("HTTP-уведомления",
-    "Вебхук для озвучки событий из домашней сети",
+    "",
     notifyFields, "broadcast")}
 {/if}
 
@@ -860,8 +862,8 @@
   {#if pcScreenText}<p class="note">{pcScreenText}</p>{/if}
 {/snippet}
 {#if tab === "integrations"}
-  {@render settingSection("ПК-компаньон (Экран)",
-    "Зрение на экран и голосовые макросы через jarvis_pc.py",
+  {@render settingSection("ПК-компаньон",
+    "Управление и экран ПК",
     pcFields, "monitor")}
 {/if}
 
@@ -916,8 +918,8 @@
   </div>
 {/snippet}
 {#if tab === "integrations"}
-  {@render settingSection("Живое присутствие",
-    "Автоприветствие при возвращении домой без датчиков",
+  {@render settingSection("Присутствие",
+    "По IP телефона в Wi-Fi",
     presenceFields, "radar")}
 {/if}
 
@@ -926,21 +928,21 @@
     (value) => saveToggle("cybernotes_enabled", value, "Интеграция с CyberNotes включена", "Интеграция с CyberNotes выключена"),
     "Команды «запиши идею...» и поиск по вашей базе знаний.")}
   <p class="note">
-    {notesInfo.available ? `Подключено · заметок в базе: ${notesInfo.total_notes}` : "Каталог CyberNotes недоступен через jarvis-voice"}
+    {notesInfo.available ? `Подключено · заметок: ${notesInfo.total_notes}` : "Каталог CyberNotes недоступен"}
   </p>
 {/snippet}
 {#if tab === "integrations"}
   {@render settingSection("CyberNotes",
-    "База знаний и заметки голосом",
+    "",
     cybernotesFields, "note")}
 {/if}
 
 {#snippet ollamaFields()}
-  {@render toggle("Авто-фолбэк на локальную Ollama", "local_llm_fallback", settings.local_llm_fallback !== false,
+  {@render toggle("Локальный фолбэк Ollama", "local_llm_fallback", settings.local_llm_fallback !== false,
     (value) => saveToggle("local_llm_fallback", value, "Локальный фолбэк Ollama включён", "Локальный фолбэк выключен"),
     "Если облачный ИИ или VPN недоступны, колонка отвечает через локальную модель Ollama.")}
   <div class="f">
-    <label for="s-ollama-model">Локальная модель</label>
+    <label for="s-ollama-model">Модель</label>
     <div class="row">
       <select id="s-ollama-model" value={localModelInput} disabled={pending.has("local_llm_model")} onchange={saveLocalModel}>
         <option value="">По умолчанию сервера ({ollamaInfo.default_model || "gemma4-26b-a4b:latest"})</option>
@@ -956,7 +958,7 @@
 {/snippet}
 {#if tab === "integrations"}
   {@render settingSection("Локальный ИИ (Ollama)",
-    "Резервный интеллект в домашней сети без облака",
+    "",
     ollamaFields, "cpu")}
 {/if}
 
@@ -992,6 +994,6 @@
 {/snippet}
 {#if tab === "integrations"}
   {@render settingSection("Персональный брифинг",
-    "Состав утренней и дневной сводки",
+    "",
     briefingFields, "sparkles")}
 {/if}

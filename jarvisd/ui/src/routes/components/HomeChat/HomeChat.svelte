@@ -3,7 +3,7 @@
   import { api, icon, ring, toast, upload } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
   import { activity, refreshActivity } from "#state/activity.js";
-  import { avatar, journal, refreshRoute, reload, S, speakerState } from "#state/panelState.js";
+  import { avatar, journal, S, speakerState } from "#state/panelState.js";
   import { chatMessages } from "./messages.js";
   import Message from "./Message/Message.svelte";
 
@@ -201,21 +201,6 @@
     };
   }
 
-  async function switchProfile(event) {
-    const id = event.currentTarget.value;
-    if (!id || id === snapshot.profile?.id) return;
-    try {
-      await api("POST", "/api/active", { id }, { signal });
-      await reload();
-      if (signal.aborted) return;
-      const next = S.profiles.find((p) => p.id === id);
-      if (next) toast(`Активен: ${next.name}`);
-      refreshRoute();
-    } catch (error) {
-      if (!signal.aborted) toast(error.message, true);
-    }
-  }
-
   export function refresh() {
     snapshot = readChat();
   }
@@ -387,13 +372,6 @@
       {status}
     </span>
   </div>
-  {#if snapshot.profiles.length > 1 && snapshot.profile}
-    <select class="tg-switch" value={snapshot.profile.id} aria-label="Выбрать активного ассистента" onchange={switchProfile}>
-      {#each snapshot.profiles as p (p.id)}
-        <option value={p.id}>{p.name}</option>
-      {/each}
-    </select>
-  {/if}
   <button class="ib lg" class:on={searchOpen} type="button" onclick={toggleSearch} title="Поиск по переписке" aria-label="Поиск по переписке">{@html icon("search")}</button>
   {#if rows.length}
     {#if confirmClear}
