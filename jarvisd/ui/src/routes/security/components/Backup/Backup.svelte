@@ -6,6 +6,7 @@
   const controller = new AbortController();
   const { signal } = controller;
   let busy = $state("");
+  let pendingFile = $state(null);
 
   function filenameFrom(response) {
     const header = response.headers.get("Content-Disposition") || "";
@@ -45,14 +46,18 @@
     }
   }
 
-  async function restoreBackup(event) {
+  function restoreBackup(event) {
     const input = event.currentTarget;
     const file = input.files?.[0];
     input.value = "";
     if (!file || busy) return;
-    if (!confirm("Восстановить настройки, память и данные плагинов из бэкапа? Текущие настройки будут заменены, а Джарвис перезапустится.")) {
-      return;
-    }
+    pendingFile = file;
+  }
+
+  async function confirmRestoreBackup() {
+    const file = pendingFile;
+    pendingFile = null;
+    if (!file || busy) return;
     busy = "restore";
     try {
       toast("Проверяю и загружаю бэкап…");
@@ -72,7 +77,7 @@
 <div class={styles.backup}>
   <div class={["row", styles.actions]}>
     <button class="btn sm primary" type="button" disabled={!!busy} onclick={downloadBackup}>
-      {busy === "download" ? "Собираю…" : "Скачать бэкап"}
+      {@html icon("download")}{busy === "download" ? "Собираю…" : "Скачать бэкап"}
     </button>
     <label class={["btn sm ghost", styles.file]} data-tip="Восстановить из .zip архива резервной копии">
       {@html icon("upload")}
@@ -80,6 +85,17 @@
       <input type="file" accept=".zip,application/zip" disabled={!!busy} onchange={restoreBackup}>
     </label>
   </div>
+  {#if pendingFile}
+    <div class="inline-confirm" role="alert">
+      <span>Восстановить из «{pendingFile.name}»? Текущие настройки будут заменены.</span>
+      <button class="btn danger sm" type="button" disabled={!!busy} onclick={confirmRestoreBackup}>
+        {@html icon("check")}Восстановить
+      </button>
+      <button class="btn ghost sm" type="button" disabled={!!busy} onclick={() => { pendingFile = null; }}>
+        {@html icon("x")}Отмена
+      </button>
+    </div>
+  {/if}
   <small class="muted">
     В архиве сохраняются настройки, ключи, ассистенты, память и данные плагинов (без аудиозаписей обучения). Храните файл в надёжном месте.
   </small>

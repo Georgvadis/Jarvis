@@ -247,7 +247,10 @@ pub fn router(app: App) -> Router {
         .route("/api/schedule/routine", post(talk::schedule_routine_add))
         .route("/api/schedule/routine/{id}/toggle", post(talk::schedule_routine_toggle))
         .route("/api/schedule/routine/{id}/run", post(talk::schedule_routine_run))
-        .route("/api/schedule/routine/{id}", delete(talk::schedule_routine_del))
+        .route(
+            "/api/schedule/routine/{id}",
+            put(talk::schedule_routine_update).delete(talk::schedule_routine_del),
+        )
         .route("/api/notes/status", get(talk::notes_status))
         .route("/api/notes/list", get(talk::notes_list))
         .route("/api/notes/search", get(talk::notes_search))

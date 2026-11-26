@@ -14,7 +14,7 @@
   padding: 20px;
   border: 1px solid var(--soft-line);
   border-radius: 18px;
-  background: rgb(0 0 0 / .2);
+  background: var(--bg0);
 }
 
 @container (min-width: 540px) {

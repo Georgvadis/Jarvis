@@ -1025,7 +1025,7 @@ pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<Stri
             engine.journal.note("сценарий", "Режим работы", "Фокус 25м + Lo-Fi");
             Ok("Режим работы: фокус 25 минут и Lo-Fi фон.".into())
         }
-        "evening" => {
+        "evening" | "relax" => {
             engine.tools.stop_for(&engine, "dj");
             std::thread::spawn(|| {
                 let _ = crate::speakervol::set_alice_volume(5);

@@ -187,23 +187,8 @@ impl Scheduler {
         payload: String,
         volume: Option<i64>,
     ) -> Result<Value, String> {
-        let Some(mins) = crate::settings::hhmm(&time) else {
-            return Err("Укажите время в формате ЧЧ:ММ".into());
-        };
-        let hhmm_norm = format!("{:02}:{:02}", mins / 60, mins % 60);
-        let action = action.trim().to_lowercase();
-        if !matches!(action.as_str(), "scenario" | "briefing" | "say" | "dj" | "ambient") {
-            return Err("Неизвестный тип действия рутины".into());
-        }
-        let mut clean_days: Vec<u8> = days.into_iter().filter(|d| (1..=7).contains(d)).collect();
-        clean_days.sort_unstable();
-        clean_days.dedup();
-        let clean_title = title.trim().chars().take(80).collect::<String>();
-        let clean_title = if clean_title.is_empty() {
-            routine_default_title(&action).to_string()
-        } else {
-            clean_title
-        };
+        let (clean_title, hhmm_norm, clean_days, action, payload, volume) =
+            normalize_routine_fields(title, time, days, action, payload, volume)?;
         let entry = RoutineEntry {
             id: format!("r_{}", crate::settings::rand_hex(4)),
             title: clean_title,
@@ -211,8 +196,8 @@ impl Scheduler {
             time: hhmm_norm,
             days: clean_days,
             action,
-            payload: payload.trim().chars().take(300).collect(),
-            volume: volume.map(|v| v.clamp(1, 10)),
+            payload,
+            volume,
             last_fired_day: String::new(),
         };
         {
@@ -221,6 +206,37 @@ impl Scheduler {
                 return Err("Максимум 40 расписаний".into());
             }
             g.routines.push(entry);
+            self.save_routines(&g.routines);
+        }
+        Ok(self.status())
+    }
+
+    pub fn update_routine(
+        &self,
+        id: &str,
+        title: String,
+        time: String,
+        days: Vec<u8>,
+        action: String,
+        payload: String,
+        volume: Option<i64>,
+    ) -> Result<Value, String> {
+        let (clean_title, hhmm_norm, clean_days, action, payload, volume) =
+            normalize_routine_fields(title, time, days, action, payload, volume)?;
+        {
+            let mut g = self.inner.lock().unwrap();
+            let Some(r) = g.routines.iter_mut().find(|r| r.id == id) else {
+                return Err("Расписание не найдено".into());
+            };
+            if r.time != hhmm_norm {
+                r.last_fired_day.clear();
+            }
+            r.title = clean_title;
+            r.time = hhmm_norm;
+            r.days = clean_days;
+            r.action = action;
+            r.payload = payload;
+            r.volume = volume;
             self.save_routines(&g.routines);
         }
         Ok(self.status())
@@ -407,6 +423,36 @@ impl Scheduler {
             },
         }
     }
+}
+
+fn normalize_routine_fields(
+    title: String,
+    time: String,
+    days: Vec<u8>,
+    action: String,
+    payload: String,
+    volume: Option<i64>,
+) -> Result<(String, String, Vec<u8>, String, String, Option<i64>), String> {
+    let Some(mins) = crate::settings::hhmm(&time) else {
+        return Err("Укажите время в формате ЧЧ:ММ".into());
+    };
+    let hhmm_norm = format!("{:02}:{:02}", mins / 60, mins % 60);
+    let action = action.trim().to_lowercase();
+    if !matches!(action.as_str(), "scenario" | "briefing" | "say" | "dj" | "ambient") {
+        return Err("Неизвестный тип действия рутины".into());
+    }
+    let mut clean_days: Vec<u8> = days.into_iter().filter(|d| (1..=7).contains(d)).collect();
+    clean_days.sort_unstable();
+    clean_days.dedup();
+    let clean_title = title.trim().chars().take(80).collect::<String>();
+    let clean_title = if clean_title.is_empty() {
+        routine_default_title(&action).to_string()
+    } else {
+        clean_title
+    };
+    let clean_payload = payload.trim().chars().take(300).collect();
+    let clean_vol = volume.map(|v| v.clamp(1, 10));
+    Ok((clean_title, hhmm_norm, clean_days, action, clean_payload, clean_vol))
 }
 
 fn routine_default_title(action: &str) -> &'static str {
@@ -757,6 +803,65 @@ mod tests {
         assert_eq!(s2.status()["routines"][0]["enabled"], false);
         s2.delete_routine(&rid).unwrap();
         assert_eq!(s2.status()["routines"].as_array().unwrap().len(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn update_routine_preserves_enabled_and_resets_fired_day_on_time_change() {
+        let dir = std::env::temp_dir().join(format!("jarvis-sched-upd-{}", crate::settings::rand_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(dir.join("settings.json")).unwrap();
+        let sched = Scheduler::load(dir.clone(), store.clone());
+        sched
+            .add_routine(
+                "Утро".into(),
+                "08:00".into(),
+                vec![1, 2],
+                "scenario".into(),
+                "morning".into(),
+                Some(4),
+            )
+            .unwrap();
+        let rid = sched.status()["routines"][0]["id"].as_str().unwrap().to_string();
+        sched.toggle_routine(&rid, false).unwrap();
+        {
+            let mut g = sched.inner.lock().unwrap();
+            g.routines[0].last_fired_day = "2026-11-26".into();
+        }
+        // Тот же час — last_fired_day сохраняется
+        let st_same = sched
+            .update_routine(
+                &rid,
+                "Новое утро".into(),
+                "08:00".into(),
+                vec![1, 3, 5],
+                "say".into(),
+                "Пора!".into(),
+                Some(6),
+            )
+            .unwrap();
+        assert_eq!(st_same["routines"][0]["enabled"], false);
+        assert_eq!(st_same["routines"][0]["title"], "Новое утро");
+        assert_eq!(st_same["routines"][0]["last_fired_day"], "2026-11-26");
+
+        // Изменилось время — last_fired_day сбрасывается, enabled остаётся false
+        let st_moved = sched
+            .update_routine(
+                &rid,
+                "Новое утро".into(),
+                "09:15".into(),
+                vec![1, 3, 5],
+                "say".into(),
+                "Пора!".into(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(st_moved["routines"][0]["time"], "09:15");
+        assert_eq!(st_moved["routines"][0]["enabled"], false);
+        assert_eq!(st_moved["routines"][0]["last_fired_day"], "");
+
+        let reloaded = Scheduler::load(dir.clone(), store);
+        assert_eq!(reloaded.status()["routines"][0]["time"], "09:15");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

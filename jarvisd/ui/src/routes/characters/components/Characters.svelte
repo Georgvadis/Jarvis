@@ -19,6 +19,8 @@
   let text = $state("");
   let busy = $state(false);
   let errorMessage = $state("");
+  let pendingPreset = $state(null);
+  let confirmDelete = $state(false);
   let dialog = $state();
   let nameInput = $state();
   let disposed = false;
@@ -43,11 +45,15 @@
     name = character?.name || "";
     text = character?.text || "";
     errorMessage = "";
+    pendingPreset = null;
+    confirmDelete = false;
     dialog.showModal();
     nameInput.focus();
   }
 
   function closeEditor() {
+    pendingPreset = null;
+    confirmDelete = false;
     dialog.close();
     setDirty(false);
   }
@@ -62,9 +68,20 @@
   }
 
   function applyPreset(presetName, presetText) {
-    if (text.trim() && !confirm("Заменить текст образцом?")) return;
+    if (text.trim()) {
+      pendingPreset = { name: presetName, text: presetText };
+      return;
+    }
     text = presetText;
     if (!name.trim()) name = presetName;
+    markDirty();
+  }
+
+  function confirmApplyPreset() {
+    if (!pendingPreset) return;
+    text = pendingPreset.text;
+    if (!name.trim()) name = pendingPreset.name;
+    pendingPreset = null;
     markDirty();
   }
 
@@ -96,7 +113,8 @@
   }
 
   function deleteCharacter() {
-    if (!editing || used || busy || !confirm(`Удалить характер «${editing.name}»?`)) return;
+    if (!editing || used || busy) return;
+    confirmDelete = false;
     const url = "/api/prompt?id=" + encodeURIComponent(editing.id);
     void changeCharacter(() => api("DELETE", url), "Удалено");
   }
@@ -158,6 +176,17 @@
             onclick={() => applyPreset(presetName, presetText)}>{presetName}</button>
         {/each}
       </div>
+      {#if pendingPreset}
+        <div class="inline-confirm" role="alert">
+          <span>Заменить текст образцом «{pendingPreset.name}»?</span>
+          <button class="btn danger sm" type="button" disabled={busy} onclick={confirmApplyPreset}>
+            {@html icon("check")}Заменить
+          </button>
+          <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { pendingPreset = null; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {/if}
     </div>
     <div class="f">
       <div class={styles.textLabel}>
@@ -173,11 +202,19 @@
       <p class="err" role="alert">{errorMessage}</p>
     {/if}
     <div class="row">
-      <button class="btn primary" type="submit" disabled={busy}>Сохранить</button>
-      <button class="btn ghost" type="button" onclick={closeEditor} disabled={busy}>Отмена</button>
+      <button class="btn primary" type="submit" disabled={busy}>{@html icon("save")}Сохранить</button>
+      <button class="btn ghost" type="button" onclick={closeEditor} disabled={busy}>{@html icon("x")}Отмена</button>
       {#if editing && !used}
         <span class="spacer"></span>
-        <button class="btn ghost danger" type="button" onclick={deleteCharacter} disabled={busy}>Удалить</button>
+        {#if confirmDelete}
+          <div class="inline-confirm" role="alert">
+            <span>Удалить «{editing.name}»?</span>
+            <button class="btn danger sm" type="button" disabled={busy} onclick={deleteCharacter}>{@html icon("check")}Удалить</button>
+            <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmDelete = false; }}>{@html icon("x")}</button>
+          </div>
+        {:else}
+          <button class="btn ghost danger" type="button" onclick={() => { confirmDelete = true; }} disabled={busy}>{@html icon("trash")}Удалить</button>
+        {/if}
       {/if}
     </div>
   </form>

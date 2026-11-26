@@ -60,7 +60,7 @@
 }
 
 .line:hover {
-  background: rgb(255 255 255 / .03);
+  background: var(--raise);
 }
 
 .time {

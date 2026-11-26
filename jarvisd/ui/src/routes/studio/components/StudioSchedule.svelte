@@ -23,33 +23,36 @@
   ];
 
   const ACTION_META = {
-    scenario: { label: "Сценарий", placeholder: "morning / work / relax / sleep" },
+    scenario: { label: "Сценарий", placeholder: "morning / work / evening / sleep" },
     briefing: { label: "Сводка дня", placeholder: "Необязательно: акцент сводки" },
     say: { label: "Фраза", placeholder: "Что произнести вслух" },
     dj: { label: "AI-DJ", placeholder: "Вайб волны, например: Ночной Токио" },
-    ambient: { label: "Фоновый звук", placeholder: "rain / forest / fireplace / ocean" },
+    ambient: { label: "Фоновый звук", placeholder: "rain / fireplace / ocean / lofi" },
   };
 
   const SCENARIO_PRESETS = [
     { id: "morning", label: "Утро" },
     { id: "work", label: "Работа" },
-    { id: "relax", label: "Релакс" },
+    { id: "evening", label: "Вечер" },
     { id: "sleep", label: "Сон" },
   ];
 
-  const AMBIENT_PRESETS = [
-    { id: "rain", label: "Дождь" },
-    { id: "forest", label: "Лес" },
-    { id: "fireplace", label: "Камин" },
-    { id: "ocean", label: "Океан" },
-    { id: "cafe", label: "Кафе" },
-    { id: "space", label: "Космос" },
+  const FALLBACK_AMBIENT_PRESETS = [
+    { id: "rain", name: "Дождь" },
+    { id: "fireplace", name: "Камин" },
+    { id: "ocean", name: "Океан" },
+    { id: "white", name: "Белый шум" },
+    { id: "lofi", name: "Lo-Fi Radio" },
+    { id: "jazz", name: "Jazz Radio" },
+    { id: "chill", name: "Space Chill" },
   ];
 
   let routines = $state([]);
   let loading = $state(true);
   let busy = $state(false);
   let confirmDeleteId = $state("");
+  let editingId = $state("");
+  let routineFormEl = $state();
 
   let timerMinutes = $state(5);
   let timerLabel = $state("");
@@ -62,6 +65,11 @@
   let rVolume = $state("");
 
   let timers = $derived(Array.isArray($activity.timers) ? $activity.timers : []);
+  let ambientOptions = $derived(
+    Array.isArray($activity.ambient?.presets) && $activity.ambient.presets.length
+      ? $activity.ambient.presets
+      : FALLBACK_AMBIENT_PRESETS
+  );
 
   function applyStatus(data) {
     if (Array.isArray(data?.routines)) {
@@ -91,6 +99,45 @@
     if (key === "1,2,3,4,5") return "Будни";
     if (key === "6,7") return "Выходные";
     return DAYS.filter((d) => days.includes(d.id)).map((d) => d.label).join(", ");
+  }
+
+  function formatPayload(action, payload) {
+    if (!payload) return "";
+    if (action === "scenario") {
+      if (payload === "relax") return "Вечер";
+      return SCENARIO_PRESETS.find((s) => s.id === payload)?.label || payload;
+    }
+    if (action === "ambient") {
+      return ambientOptions.find((a) => a.id === payload)?.name || payload;
+    }
+    return payload;
+  }
+
+  function resetRoutineForm() {
+    editingId = "";
+    rTime = "08:00";
+    rTitle = "";
+    rDays = [1, 2, 3, 4, 5];
+    rAction = "scenario";
+    rPayload = "morning";
+    rVolume = "";
+  }
+
+  function startEdit(r) {
+    confirmDeleteId = "";
+    editingId = r.id;
+    rTime = r.time || "08:00";
+    rTitle = r.title || "";
+    rDays = Array.isArray(r.days) ? [...r.days] : [];
+    rAction = r.action || "say";
+    if (rAction === "scenario" && r.payload === "relax") rPayload = "evening";
+    else rPayload = r.payload || "";
+    rVolume = r.volume ? String(r.volume) : "";
+    routineFormEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function cancelEdit() {
+    resetRoutineForm();
   }
 
   function toggleDay(dayId) {
@@ -166,7 +213,7 @@
     }
   }
 
-  async function createRoutine() {
+  async function submitRoutine() {
     if (!rTime) {
       toast("Укажите время", true);
       return;
@@ -179,17 +226,21 @@
     busy = true;
     try {
       const volNum = rVolume === "" ? null : Number(rVolume);
-      const data = await api("POST", "/api/schedule/routine", {
+      const body = {
         title: rTitle.trim(),
         time: rTime,
         days: rDays,
         action: rAction,
         payload: rPayload.trim(),
         volume: Number.isFinite(volNum) ? volNum : null,
-      });
+      };
+      const wasEdit = Boolean(editingId);
+      const data = wasEdit
+        ? await api("PUT", `/api/schedule/routine/${encodeURIComponent(editingId)}`, body)
+        : await api("POST", "/api/schedule/routine", body);
       applyStatus(data);
-      rTitle = "";
-      toast("Рутина добавлена");
+      resetRoutineForm();
+      toast(wasEdit ? "Рутина обновлена" : "Рутина добавлена");
     } catch (err) {
       toast(err.message, true);
     } finally {
@@ -233,6 +284,7 @@
       const data = await api("DELETE", `/api/schedule/routine/${encodeURIComponent(id)}`);
       applyStatus(data);
       confirmDeleteId = "";
+      if (editingId === id) resetRoutineForm();
       toast("Рутина удалена");
     } catch (err) {
       toast(err.message, true);
@@ -333,7 +385,7 @@
     </div>
 
     <div class="studio-stack">
-      <form class="sched-form" onsubmit={(e) => { e.preventDefault(); createRoutine(); }}>
+      <form class="sched-form" bind:this={routineFormEl} onsubmit={(e) => { e.preventDefault(); submitRoutine(); }}>
         <div class="row sched-row-fields">
           <div class="f sched-time-f">
             <label for="sched-r-time">Время</label>
@@ -425,8 +477,8 @@
           <div class="f">
             <label for="sched-r-amb">Звуковой фон</label>
             <select id="sched-r-amb" bind:value={rPayload} disabled={busy}>
-              {#each AMBIENT_PRESETS as amb (amb.id)}
-                <option value={amb.id}>{amb.label}</option>
+              {#each ambientOptions as amb (amb.id)}
+                <option value={amb.id}>{amb.name || amb.label}</option>
               {/each}
             </select>
           </div>
@@ -444,9 +496,16 @@
           </div>
         {/if}
 
-        <button type="submit" class="btn primary" disabled={busy}>
-          {@html icon("plus")} Добавить рутину
-        </button>
+        <div class="row">
+          <button type="submit" class="btn primary" disabled={busy}>
+            {@html icon(editingId ? "save" : "plus")} {editingId ? "Сохранить" : "Добавить рутину"}
+          </button>
+          {#if editingId}
+            <button type="button" class="btn ghost" disabled={busy} onclick={cancelEdit}>
+              {@html icon("x")} Отмена
+            </button>
+          {/if}
+        </div>
       </form>
 
       {#if loading}
@@ -476,7 +535,7 @@
                 <div class="sched-meta">
                   <span>{ACTION_META[r.action]?.label || r.action}</span>
                   {#if r.payload}
-                    <span>· {r.payload}</span>
+                    <span>· {formatPayload(r.action, r.payload)}</span>
                   {/if}
                   <span>· {formatDays(r.days)}</span>
                 </div>
@@ -511,6 +570,15 @@
                     onclick={() => runRoutineNow(r)}
                   >
                     {@html icon("play", "solid")}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn ghost sm"
+                    disabled={busy}
+                    title="Изменить"
+                    onclick={() => startEdit(r)}
+                  >
+                    {@html icon("edit")}
                   </button>
                   <button
                     type="button"

@@ -37,6 +37,7 @@ pub(crate) struct RestoreReport {
 fn collect_root_files(data_dir: &Path, out: &mut BTreeSet<String>) {
     for name in [
         "settings.json",
+        "schedules.json",
         "plugins.json",
         "chatgpt-chat.json",
         "chatgpt-chat-archive.jsonl",

@@ -899,7 +899,7 @@ pub async fn schedule_timer_del(
     reply(StatusCode::OK, app.scheduler.status())
 }
 
-pub async fn schedule_routine_add(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+fn parse_routine_input(value: &serde_json::Value) -> (String, String, Vec<u8>, String, String, Option<i64>) {
     let title = value["title"].as_str().unwrap_or("").to_string();
     let time = value["time"].as_str().unwrap_or("").to_string();
     let action = value["action"].as_str().unwrap_or("say").to_string();
@@ -915,7 +915,27 @@ pub async fn schedule_routine_add(State(app): State<App>, axum::Json(value): axu
                 .collect()
         })
         .unwrap_or_default();
+    (title, time, days, action, payload, volume)
+}
+
+pub async fn schedule_routine_add(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let (title, time, days, action, payload, volume) = parse_routine_input(&value);
     match app.scheduler.add_routine(title, time, days, action, payload, volume) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_routine_update(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID рутины");
+    }
+    let (title, time, days, action, payload, volume) = parse_routine_input(&value);
+    match app.scheduler.update_routine(&id, title, time, days, action, payload, volume) {
         Ok(st) => reply(StatusCode::OK, st),
         Err(e) => super::bad(e),
     }

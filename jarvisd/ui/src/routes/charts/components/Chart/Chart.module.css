@@ -81,7 +81,9 @@
   padding: 4px 8px;
   border: 1px solid var(--line2);
   border-radius: 8px;
-  background: #26262f;
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: var(--card-shadow);
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;

@@ -1914,3 +1914,15 @@ input[type=range]::-moz-range-thumb {
 .sched-meta { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; color: var(--fg2); }
 .sched-actions { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .empty-msg { margin: 4px 0 0; font-size: 13px; color: var(--fg3); }
+
+/* === Доработки Главной и Заметок (lite2fix20) === */
+.quick-util { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.quick-util > button { flex: 1 1 110px; justify-content: center; }
+
+.note-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.note-acts { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.note-toggle {
+  display: block; width: 100%; padding: 0; border: 0; background: transparent;
+  text-align: left; color: inherit; font: inherit; cursor: pointer;
+}
+.note-card.expanded p { display: block; -webkit-line-clamp: unset; overflow: visible; }

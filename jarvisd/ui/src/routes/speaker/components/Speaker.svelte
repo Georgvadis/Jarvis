@@ -92,6 +92,7 @@
   let rangesInEdit = $state({});
   let wakeReplies = $state.raw(S.wake_replies || null);
   let showWakeConfirm = $state(false);
+  let confirmWakeClear = $state(false);
   let wakeBusy = $state(false);
   let wakeTimer = null;
   let micPeak = $state(0);
@@ -243,9 +244,10 @@
   }
 
   async function clearWakeCache() {
-    if (wakeBusy || !confirm("Очистить сохранённые быстрые отклики для текущего ассистента?")) return;
+    if (wakeBusy) return;
     wakeBusy = true;
     showWakeConfirm = false;
+    confirmWakeClear = false;
     try {
       wakeReplies = await api("DELETE", "/api/wake-replies", undefined, { signal });
       toast("Кеш откликов очищен");
@@ -585,7 +587,15 @@
             </button>
           {/if}
           {#if wakeReplies.ready > 0}
-            <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={clearWakeCache}>Очистить кеш</button>
+            {#if confirmWakeClear}
+              <div class="inline-confirm" role="alert">
+                <span>Очистить кеш откликов?</span>
+                <button type="button" class="btn sm danger" disabled={wakeBusy} onclick={clearWakeCache}>{@html icon("check")}Очистить</button>
+                <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { confirmWakeClear = false; }}>{@html icon("x")}Отмена</button>
+              </div>
+            {:else}
+              <button type="button" class="btn sm ghost danger" disabled={wakeBusy} onclick={() => { confirmWakeClear = true; }}>{@html icon("trash")}Очистить кеш</button>
+            {/if}
           {/if}
         </div>
       {/if}

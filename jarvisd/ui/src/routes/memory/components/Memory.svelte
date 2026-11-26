@@ -26,6 +26,7 @@
   let newFact = $state("");
   let factQuery = $state("");
   let confirmMonth = $state("");
+  let confirmReset = $state("");
   let memory = $derived(data?.memory || {});
   let settings = $derived(data?.settings || {});
   let facts = $derived((memory.profile || "").split("\n").map((line) => line.trim())
@@ -174,10 +175,7 @@
   }
 
   function resetChat(all) {
-    const prompt = all
-      ? "Стереть всю память Джарвиса — досье о вас, конспект, летопись и архив разговоров? Это не отменить."
-      : "Начать новый чат? Джарвис забудет конспект и недавние реплики. Досье о вас, летопись и архив останутся.";
-    if (!confirm(prompt)) return;
+    confirmReset = "";
     void run(async () => {
       await api("POST", all ? "/api/chatgpt/newchat?all=1" : "/api/chatgpt/newchat");
       if (signal.aborted) return;
@@ -299,7 +297,7 @@
         <div class="row">
           {#if !settings.off && settings.active && archiveCount}
             <button class="btn sm" type="button" disabled={busy} onclick={compact}
-              data-tip="Сжать разговор в досье и конспект сейчас, не дожидаясь длинного разговора">Обновить сейчас</button>
+              data-tip="Сжать разговор в досье и конспект сейчас, не дожидаясь длинного разговора">{@html icon("refresh")}Обновить сейчас</button>
           {/if}
           {#if memory.summary && editor?.kind !== "summary"}
             <button class="btn sm ghost" type="button" disabled={busy}
@@ -412,11 +410,26 @@
       </div>
       <div class="row">
         <button class="btn" type="button" disabled={busy || !(memory.turns || memory.summary)}
-          onclick={() => resetChat(false)}>Начать новый чат</button>
+          onclick={() => { confirmReset = "chat"; }}>{@html icon("sparkles")}Начать новый чат</button>
         <span class="spacer"></span>
         <button class="btn ghost danger" type="button" disabled={busy || !(archiveCount || facts.length || memory.summary)}
-          onclick={() => resetChat(true)}>{@html icon("trash")}Стереть всю память</button>
+          onclick={() => { confirmReset = "all"; }}>{@html icon("trash")}Стереть всю память</button>
       </div>
+      {#if confirmReset}
+        <div class="inline-confirm" role="alert">
+          <span>
+            {confirmReset === "all"
+              ? "Стереть всю память Джарвиса (досье, конспект, летопись, архив)?"
+              : "Начать новый чат? Джарвис забудет конспект и недавние реплики."}
+          </span>
+          <button class="btn danger sm" type="button" disabled={busy} onclick={() => resetChat(confirmReset === "all")}>
+            {@html icon("check")}{confirmReset === "all" ? "Стереть всё" : "Новый чат"}
+          </button>
+          <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmReset = ""; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {/if}
     </section>
   </div>
 {/if}

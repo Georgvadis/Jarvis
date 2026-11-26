@@ -17,6 +17,7 @@
   let hasMore = $state(false);
   let loading = $state(true);
   let loadError = $state("");
+  let confirmBulk = $state(false);
   let request;
   let searchTimer;
   let disposed = false;
@@ -33,6 +34,7 @@
   export function refresh(clearSelection = false) {
     clearTimeout(searchTimer);
     searchTimer = undefined;
+    confirmBulk = false;
     if (clearSelection) selected.clear();
     return load();
   }
@@ -77,11 +79,13 @@
   }
 
   function toggle(id, checked) {
+    confirmBulk = false;
     if (checked) selected.add(id);
     else selected.delete(id);
   }
 
   function forget(ids) {
+    confirmBulk = false;
     void run(async () => {
       const result = await api("POST", "/api/memory/forget", { n: ids });
       if (disposed) return;
@@ -95,9 +99,8 @@
   }
 
   function forgetSelected() {
-    if (selected.size && confirm(`Удалить выбранные реплики (${selected.size})? Джарвис их больше не вспомнит.`)) {
-      forget([...selected]);
-    }
+    if (!selected.size) return;
+    forget([...selected]);
   }
 </script>
 
@@ -114,9 +117,21 @@
       <input type="search" placeholder="Найти в разговорах" value={query} autocomplete="off" aria-label="Поиск по архиву" oninput={search}>
     </label>
     {#if selected.size}
-      <button class="btn danger" type="button" disabled={busy} onclick={forgetSelected}>
-        {@html icon("trash")}Удалить выбранные ({selected.size})
-      </button>
+      {#if confirmBulk}
+        <div class="inline-confirm" role="alert">
+          <span>Удалить реплик: {selected.size}?</span>
+          <button class="btn danger sm" type="button" disabled={busy} onclick={forgetSelected}>
+            {@html icon("check")}Удалить ({selected.size})
+          </button>
+          <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmBulk = false; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {:else}
+        <button class="btn danger" type="button" disabled={busy} onclick={() => { confirmBulk = true; }}>
+          {@html icon("trash")}Удалить выбранные ({selected.size})
+        </button>
+      {/if}
     {/if}
   </div>
   {#if turns.length}

@@ -335,6 +335,9 @@ async fn handle_message(
 • Любой текст или /say <текст> — озвучить на колонке (/say! — даже ночью)\n\
 • Голосовое сообщение — проиграть интеркомом (подпись /ask — спросить Джарвиса)\n\
 • /ask <вопрос> — спросить Джарвиса с ответом сюда (/ask! — также озвучить вслух)\n\
+• /timer [минуты|10м|90с|1ч [метка] | list | off] — таймеры и напоминания\n\
+• /scenario <утро|работа|вечер|сон> — быстрый сценарий на колонке\n\
+• /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window> — управление ПК\n\
 • /podcast <ссылка|текст> — подкаст двумя голосами (YouTube / статья / текст)\n\
 • /dj <вайб|next|stop> — AI-DJ под настроение\n\
 • /note <текст> — сохранить быструю заметку в CyberNotes\n\
@@ -384,15 +387,140 @@ async fn handle_message(
             .as_ref()
             .map(|m| m.status()["mode"].as_str().unwrap_or("normal").to_string())
             .unwrap_or_else(|| "normal".into());
-        return format!(
-            "Колонка онлайн ({})\nАссистент: {}\nМикрофон: {}\nРежим: {}\nФокус: {}\nФон/радио: {}",
-            crate::version(),
-            p.name,
-            mic,
-            mode_st,
-            focus_str,
-            amb
-        );
+        let mut lines = vec![
+            format!("Колонка онлайн ({})", crate::version()),
+            format!("Ассистент: {}", p.name),
+            format!("Микрофон: {mic}"),
+            format!("Режим: {mode_st}{}", if engine.store.is_night() { " (ночь)" } else { "" }),
+            format!("Фокус: {focus_str}"),
+            format!("Фон/радио: {amb}"),
+        ];
+        if let Some(sched) = &engine.tools.scheduler {
+            let timers = sched.active_timers_json();
+            if let Some(arr) = timers.as_array()
+                && !arr.is_empty()
+            {
+                let nearest = arr[0]["remaining_s"].as_u64().unwrap_or(0);
+                lines.push(format!(
+                    "Таймеры: {} (ближайший через {})",
+                    arr.len(),
+                    crate::scheduler::format_duration_ru(nearest)
+                ));
+            }
+        }
+        if let Some(dj) = &engine.tools.dj {
+            let st = dj.status();
+            if st["active"].as_bool().unwrap_or(false) {
+                let wave = st["station"].as_str().filter(|s| !s.is_empty())
+                    .or_else(|| st["mood"].as_str())
+                    .unwrap_or("эфир");
+                lines.push(format!("AI-DJ: {wave}"));
+            }
+        }
+        if let Some(reader) = &engine.tools.reader {
+            let st = reader.status();
+            if st["running"].as_bool().unwrap_or(false) {
+                let title = st["title"].as_str().unwrap_or("книга");
+                let ch = st["chapter"].as_u64().unwrap_or(0) + 1;
+                lines.push(format!("Книга: {title} (гл. {ch})"));
+            }
+        }
+        if let Some(games) = &engine.tools.games {
+            let st = games.status();
+            let gname = st["active_game"].as_str().unwrap_or("");
+            if !gname.is_empty() {
+                lines.push(format!("Игра: {gname}"));
+            }
+        }
+        return lines.join("\n");
+    }
+
+    if cmd == "/timer" || cmd == "/timers" {
+        let Some(sched) = &engine.tools.scheduler else {
+            return "Планировщик недоступен.".into();
+        };
+        let low_rest = rest.trim().to_lowercase();
+        if low_rest.is_empty() || matches!(low_rest.as_str(), "list" | "список" | "?") {
+            let timers = sched.active_timers_json();
+            let Some(arr) = timers.as_array() else {
+                return "Активных таймеров сейчас нет.".into();
+            };
+            if arr.is_empty() {
+                return "Активных таймеров сейчас нет.".into();
+            }
+            let items: Vec<String> = arr
+                .iter()
+                .map(|t| {
+                    let lbl = t["label"].as_str().unwrap_or("Таймер");
+                    let rem = t["remaining_s"].as_u64().unwrap_or(0);
+                    format!("• {lbl} — через {}", crate::scheduler::format_duration_ru(rem))
+                })
+                .collect();
+            return format!("⏱ Активные таймеры:\n{}", items.join("\n"));
+        }
+        if matches!(low_rest.as_str(), "off" | "stop" | "cancel" | "отмена" | "стоп") {
+            let n = sched.cancel_all_timers();
+            return if n == 0 {
+                "Активных таймеров сейчас нет.".into()
+            } else {
+                format!("Отменил активные таймеры ({n}).")
+            };
+        }
+        return match parse_tg_timer_arg(rest) {
+            Ok((secs, label)) => match sched.add_timer(label.clone(), secs) {
+                Ok(_) => {
+                    let dur = crate::scheduler::format_duration_ru(secs);
+                    format!("⏱ Поставил «{label}» на {dur}.")
+                }
+                Err(e) => e,
+            },
+            Err(e) => e,
+        };
+    }
+
+    if cmd == "/scenario" {
+        if rest.trim().is_empty() {
+            return "Укажите сценарий: /scenario <утро|работа|вечер|сон>".into();
+        }
+        let Some(id) = map_tg_scenario(rest) else {
+            return "Неизвестный сценарий. Доступны: утро, работа, вечер, сон.".into();
+        };
+        return match crate::tools::run_scenario(engine.clone(), id) {
+            Ok(msg) => msg,
+            Err(e) => e,
+        };
+    }
+
+    if cmd == "/pc" {
+        let (sub_raw, sub_rest) = match rest.trim().split_once(char::is_whitespace) {
+            Some((s, r)) => (s, r.trim()),
+            None => (rest.trim(), ""),
+        };
+        let sub_low = sub_raw.to_lowercase();
+        if sub_low.is_empty() {
+            return "Команды ПК: /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window>".into();
+        }
+        if sub_low == "screen" || sub_low == "экран" {
+            let q = if sub_rest.is_empty() {
+                "Кратко опиши, что сейчас на экране."
+            } else {
+                sub_rest
+            };
+            return match crate::tools::capture_and_describe_screen(&engine.host, &engine.store, q).await {
+                Ok(ans) => {
+                    engine.journal.note("экран", q, &ans);
+                    format!("🖥 {ans}")
+                }
+                Err(e) => format!("Ошибка ПК: {e}"),
+            };
+        }
+        let Some(action) = map_tg_pc_action(&sub_low) else {
+            return "Неизвестная команда ПК. Доступны: screen, play, next, prev, vol+, vol-, mute, shot, lock, window.".into();
+        };
+        return match crate::tools::call_pc_action(&engine.store, action, 30).await {
+            Ok(msg) => format!("🖥 {msg}"),
+            Err(e) => format!("Ошибка ПК: {e}"),
+        };
     }
 
     if cmd == "/vol" || cmd == "громкость" {
@@ -567,4 +695,117 @@ async fn handle_message(
         e.say_text(&say_copy);
     });
     format!("Озвучил на колонке: «{to_say}»")
+}
+
+pub(crate) fn parse_tg_timer_arg(rest: &str) -> Result<(u64, String), String> {
+    let trimmed = rest.trim();
+    if trimmed.is_empty() {
+        return Err("Укажите длительность, например: /timer 10 кофе".into());
+    }
+    let (head, mut tail) = match trimmed.split_once(char::is_whitespace) {
+        Some((h, t)) => (h.trim(), t.trim()),
+        None => (trimmed, ""),
+    };
+    let head_low = head.to_lowercase();
+    let (num_str, mut mult): (&str, Option<u64>) = if let Some(s) = head_low.strip_suffix('s').or_else(|| head_low.strip_suffix('с')) {
+        (s, Some(1))
+    } else if let Some(s) = head_low.strip_suffix('m').or_else(|| head_low.strip_suffix('м')) {
+        (s, Some(60))
+    } else if let Some(s) = head_low.strip_suffix('h').or_else(|| head_low.strip_suffix('ч')) {
+        (s, Some(3600))
+    } else {
+        (head_low.as_str(), None)
+    };
+
+    let Ok(val) = num_str.parse::<u64>() else {
+        return Err("Укажите число (минуты или с суффиксом s/m/h, с/м/ч), например: /timer 5м чай".into());
+    };
+    if mult.is_none() && !tail.is_empty() {
+        let (uword, after) = match tail.split_once(char::is_whitespace) {
+            Some((u, a)) => (u.trim().to_lowercase(), a.trim()),
+            None => (tail.to_lowercase(), ""),
+        };
+        if uword.starts_with("сек") {
+            mult = Some(1);
+            tail = after;
+        } else if uword.starts_with("мин") {
+            mult = Some(60);
+            tail = after;
+        } else if uword.starts_with("час") {
+            mult = Some(3600);
+            tail = after;
+        }
+    }
+    let secs = val.saturating_mul(mult.unwrap_or(60));
+    if !(5..=86400).contains(&secs) {
+        return Err("Длительность таймера: от 5 секунд до 24 часов.".into());
+    }
+    let label = if tail.is_empty() {
+        "Таймер".to_string()
+    } else {
+        tail.chars().take(80).collect()
+    };
+    Ok((secs, label))
+}
+
+pub(crate) fn map_tg_scenario(arg: &str) -> Option<&'static str> {
+    match arg.trim().to_lowercase().as_str() {
+        "morning" | "утро" | "утренний" => Some("morning"),
+        "work" | "работа" | "рабочий" | "фокус" => Some("work"),
+        "evening" | "вечер" | "вечерний" | "relax" | "релакс" => Some("evening"),
+        "sleep" | "сон" | "ночь" | "ночной" => Some("sleep"),
+        _ => None,
+    }
+}
+
+pub(crate) fn map_tg_pc_action(arg: &str) -> Option<&'static str> {
+    match arg.trim().to_lowercase().as_str() {
+        "play" | "pause" | "media" | "пауза" | "плей" => Some("media_play_pause"),
+        "next" | "след" | "дальше" => Some("media_next"),
+        "prev" | "пред" | "назад" => Some("media_prev"),
+        "vol+" | "up" | "громче" => Some("volume_up"),
+        "vol-" | "down" | "тише" => Some("volume_down"),
+        "mute" | "беззвука" => Some("volume_mute"),
+        "shot" | "screenshot" | "скрин" | "скриншот" => Some("screenshot_save"),
+        "lock" | "блок" | "заблокировать" => Some("lock_screen"),
+        "window" | "окно" => Some("active_window"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_tg_timer_durations_and_labels() {
+        assert_eq!(parse_tg_timer_arg("5"), Ok((300, "Таймер".into())));
+        assert_eq!(parse_tg_timer_arg("10 кофе"), Ok((600, "кофе".into())));
+        assert_eq!(parse_tg_timer_arg("90s"), Ok((90, "Таймер".into())));
+        assert_eq!(parse_tg_timer_arg("45с"), Ok((45, "Таймер".into())));
+        assert_eq!(parse_tg_timer_arg("15m духовка"), Ok((900, "духовка".into())));
+        assert_eq!(parse_tg_timer_arg("15м духовка"), Ok((900, "духовка".into())));
+        assert_eq!(parse_tg_timer_arg("2h проветрить"), Ok((7200, "проветрить".into())));
+        assert_eq!(parse_tg_timer_arg("1ч"), Ok((3600, "Таймер".into())));
+        assert_eq!(parse_tg_timer_arg("10 минут пельмени"), Ok((600, "пельмени".into())));
+        assert!(parse_tg_timer_arg("2s").is_err());
+        assert!(parse_tg_timer_arg("25h").is_err());
+        assert!(parse_tg_timer_arg("abc").is_err());
+    }
+
+    #[test]
+    fn maps_tg_scenarios_and_pc_actions() {
+        assert_eq!(map_tg_scenario("утро"), Some("morning"));
+        assert_eq!(map_tg_scenario("Работа"), Some("work"));
+        assert_eq!(map_tg_scenario("relax"), Some("evening"));
+        assert_eq!(map_tg_scenario("сон"), Some("sleep"));
+        assert_eq!(map_tg_scenario("other"), None);
+
+        assert_eq!(map_tg_pc_action("play"), Some("media_play_pause"));
+        assert_eq!(map_tg_pc_action("след"), Some("media_next"));
+        assert_eq!(map_tg_pc_action("vol+"), Some("volume_up"));
+        assert_eq!(map_tg_pc_action("скрин"), Some("screenshot_save"));
+        assert_eq!(map_tg_pc_action("lock"), Some("lock_screen"));
+        assert_eq!(map_tg_pc_action("unknown"), None);
+    }
 }

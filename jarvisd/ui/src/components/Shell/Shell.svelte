@@ -29,6 +29,7 @@
       || $activity.dj?.active
       || $activity.games?.active_game
       || $activity.debate_active
+      || Boolean($activity.timers?.length)
       || ($activity.modes?.mode && $activity.modes.mode !== "normal")
     )
   );

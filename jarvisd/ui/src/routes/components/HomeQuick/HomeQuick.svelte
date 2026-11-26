@@ -37,6 +37,20 @@
     }
   }
 
+  async function quickTimer5m() {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/schedule/timer", { minutes: 5, label: "Таймер" });
+      await refreshActivity();
+      toast("Таймер на 5 мин");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function pcCmd(action) {
     if (pcBusy) return;
     pcBusy = action;
@@ -76,6 +90,10 @@
     <a class="quick-link" href="/studio">Студия {@html icon("right")}</a>
   </div>
   <div class="quick-grid">
+    <button type="button" class="scen-btn" disabled={busy} onclick={() => triggerScenario("morning")}>
+      {@html icon("sun")}
+      <span>Утро</span>
+    </button>
     <button type="button" class="scen-btn" disabled={busy} onclick={() => triggerScenario("work")}>
       {@html icon("briefcase")}
       <span>Работа</span>
@@ -88,10 +106,20 @@
       {@html icon("moon")}
       <span>Сон</span>
     </button>
-    <button type="button" class="scen-btn" class:on={focusRunning} disabled={busy} onclick={toggleFocus}>
+  </div>
+
+  <div class="quick-util">
+    <button type="button" class="btn sm ghost" class:on={focusRunning} disabled={busy} onclick={toggleFocus}>
       {@html icon("bolt")}
       <span>{focusRunning ? `Фокус ${fmtClock(focusRem)}` : "Фокус 25м"}</span>
     </button>
+    <button type="button" class="btn sm ghost" disabled={busy} onclick={quickTimer5m}>
+      {@html icon("clock")}
+      <span>Таймер 5м</span>
+    </button>
+    <a class="btn sm ghost" href="/studio?tab=schedule" title="Расписание и таймеры" aria-label="Расписание и таймеры">
+      {@html icon("bell")}
+    </a>
   </div>
 
   {#if hasPc}

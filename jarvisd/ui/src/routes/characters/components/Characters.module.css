@@ -132,7 +132,7 @@
   border: 1px solid var(--soft-line);
   border-radius: 26px;
   background: var(--modal-bg);
-  box-shadow: 0 30px 80px -20px rgb(0 0 0 / .45);
+  box-shadow: var(--card-shadow);
   color: var(--fg);
 }
 

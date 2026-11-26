@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { api, icon, toast } from "#helpers/core.js";
+  import { api, copyText, icon, toast } from "#helpers/core.js";
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -12,6 +12,8 @@
   let query = $state("");
   let loading = $state(true);
   let busy = $state(false);
+  let expandedPath = $state("");
+  let speakingPath = $state("");
 
   let title = $state("");
   let tagsInput = $state("");
@@ -73,6 +75,34 @@
     }
   }
 
+  async function copyNote(item) {
+    try {
+      await copyText(item.snippet || item.title);
+      toast("Скопировано");
+    } catch {
+      toast("Не удалось скопировать", true);
+    }
+  }
+
+  async function speakNote(item) {
+    if (speakingPath) return;
+    const text = (item.snippet || item.title || "").trim();
+    if (!text) return;
+    speakingPath = item.path;
+    try {
+      await api("POST", "/api/say", { text, direct: true }, { signal });
+      toast("Озвучиваю на колонке");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      speakingPath = "";
+    }
+  }
+
+  function toggleExpand(path) {
+    expandedPath = expandedPath === path ? "" : path;
+  }
+
   onMount(() => {
     void loadList();
     return () => controller.abort();
@@ -126,13 +156,36 @@
     {:else}
       <div class="notes-grid">
         {#each notes as item (item.path)}
-          <article class="note-card">
-            <b>{item.title}</b>
+          <article class="note-card" class:expanded={expandedPath === item.path}>
+            <div class="note-card-head">
+              <b>{item.title}</b>
+              <div class="note-acts">
+                <button
+                  type="button"
+                  class="ib"
+                  title="Копировать"
+                  aria-label="Копировать заметку"
+                  onclick={() => void copyNote(item)}
+                >{@html icon("copy")}</button>
+                <button
+                  type="button"
+                  class="ib"
+                  disabled={speakingPath === item.path}
+                  title="Озвучить на колонке"
+                  aria-label="Озвучить на колонке"
+                  onclick={() => void speakNote(item)}
+                >{@html icon("voice")}</button>
+              </div>
+            </div>
             <small>
               {item.path}
               {#if item.mtime} · {dateFmt.format(new Date(item.mtime * 1000))}{/if}
             </small>
-            {#if item.snippet}<p>{item.snippet}</p>{/if}
+            {#if item.snippet}
+              <button type="button" class="note-toggle" onclick={() => toggleExpand(item.path)}>
+                <p>{item.snippet}</p>
+              </button>
+            {/if}
           </article>
         {/each}
       </div>
