@@ -19,6 +19,7 @@
 <script>
   import { untrack } from "svelte";
   import { api, copyText, icon, toast } from "#helpers/core.js";
+  import { speaker } from "#state/panelState.js";
   import { animateAnswer } from "./animateAnswer.js";
 
   let { row, animate, follow } = $props();
@@ -27,6 +28,7 @@
   let previousAnswer;
   let previousSize;
   let busyAct = $state("");
+  let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
 
   async function copyAnswer() {
     try {
@@ -68,6 +70,19 @@
     }
   }
 
+  async function sendToPcClipboard() {
+    if (busyAct) return;
+    busyAct = "pc";
+    try {
+      await api("POST", "/api/pc/clipboard", { text: row.answer });
+      toast("Отправлено в буфер ПК");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busyAct = "";
+    }
+  }
+
   $effect.pre(() => {
     if (row.answer === previousAnswer) return;
     previousAnswer = row.answer;
@@ -98,6 +113,9 @@
       {row.time}
       <button type="button" class="b-copy" disabled={busyAct === "speak"} onclick={speakAnswer} title="Озвучить на колонке" aria-label="Озвучить на колонке">{@html icon("voice")}</button>
       <button type="button" class="b-copy" disabled={busyAct === "note"} onclick={saveToNotes} title="Сохранить в CyberNotes" aria-label="Сохранить в CyberNotes">{@html icon("note")}</button>
+      {#if hasPc}
+        <button type="button" class="b-copy" disabled={busyAct === "pc"} onclick={sendToPcClipboard} title="Отправить в буфер ПК" aria-label="Отправить в буфер ПК">{@html icon("monitor")}</button>
+      {/if}
       <button type="button" class="b-copy" onclick={copyAnswer} title="Скопировать ответ" aria-label="Скопировать ответ">{@html icon("copy")}</button>
     </span>
   {/if}

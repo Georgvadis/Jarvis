@@ -7,6 +7,7 @@
 
   let state = $state.raw(null);
   let query = $state("");
+  let histFilter = $state("");
   let busy = $state(false);
   let likedSet = $state.raw(new Set());
   let disposed = false;
@@ -15,7 +16,14 @@
   let current = $derived(state?.track || {});
   let queued = $derived(state?.queue || 0);
   let next = $derived(yandex ? [] : state?.next || []);
-  let history = $derived((state?.history || []).filter((track) => !(playing && !yandex && track.ID === current.ID)).slice(0, 12));
+  let allHistory = $derived((state?.history || []).filter((track) => !(playing && !yandex && track.ID === current.ID)).slice(0, 20));
+  let history = $derived.by(() => {
+    const q = histFilter.trim().toLowerCase();
+    if (!q) return allHistory.slice(0, 12);
+    return allHistory.filter((t) =>
+      (t.Title || "").toLowerCase().includes(q) || (t.Author || "").toLowerCase().includes(q)
+    ).slice(0, 12);
+  });
   let youtubeSigned = $derived(Boolean($speaker?.youtube?.plugin && ($speaker?.youtube?.account?.signed_in || $speaker?.youtube?.set)));
 
   onMount(() => {
@@ -59,6 +67,14 @@
     });
   }
 
+  function queueHistory(track) {
+    if (!track?.ID) return;
+    void run(async () => {
+      const ok = await music({ action: "queue", query: track.ID, title: track.Title || "", author: track.Author || "" });
+      if (ok && !disposed) toast("Добавлено в очередь");
+    });
+  }
+
   function remove(index) {
     void run(() => music({ action: "unqueue", index }));
   }
@@ -92,13 +108,19 @@
   {/if}
 {/snippet}
 
-{#snippet row(track, badge = "", index = null)}
+{#snippet row(track, badge = "", index = null, allowQueue = false)}
   {@const liked = isYoutubeTrack(track) && likedSet.has(track.ID)}
   <li class={styles.row}>
     <button class={styles.track} type="button" aria-label={`Включить «${track.Title || "…"}»`}
       disabled={busy || !track.ID} onclick={() => play(track, index)}>
       {@render trackInfo(track, thumbnail(track), badge)}
     </button>
+    {#if allowQueue && track.ID}
+      <button class={["ib", styles.remove]} type="button" disabled={busy}
+        aria-label={`Добавить в очередь «${track.Title || "…"}»`} data-tip="В очередь" onclick={() => queueHistory(track)}>
+        {@html icon("plus")}
+      </button>
+    {/if}
     {#if youtubeSigned && isYoutubeTrack(track)}
       <button class={["ib", styles.remove, { [styles.keepVisible]: liked, liked }]} type="button" disabled={busy}
         aria-label={liked ? `Убрать лайк «${track.Title || "…"}»` : `Поставить лайк «${track.Title || "…"}»`}
@@ -164,12 +186,18 @@
 </section>
 
 <section class="card" aria-labelledby="player-history-title">
-  <div class="card-head"><h2 id="player-history-title">Недавно играло</h2><span class="meta">YouTube · нажмите, чтобы включить</span></div>
+  <div class="card-head">
+    <h2 id="player-history-title">Недавно играло</h2>
+    <span class="meta">YouTube · нажмите, чтобы включить</span>
+  </div>
+  {#if allHistory.length > 4}
+    <input class="hist-filter" type="search" maxlength="80" placeholder="Фильтр по истории…" aria-label="Фильтр по истории" bind:value={histFilter}>
+  {/if}
   {#if history.length}
     <ul class={styles.list}>
-      {#each history as track}{@render row(track)}{/each}
+      {#each history as track}{@render row(track, "", null, true)}{/each}
     </ul>
   {:else if state}
-    <p class="empty">Здесь появится то, что включали с YouTube</p>
+    <p class="empty">{histFilter.trim() ? "Совпадений нет" : "Здесь появится то, что включали с YouTube"}</p>
   {/if}
 </section>

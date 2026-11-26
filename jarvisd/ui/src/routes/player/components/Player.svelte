@@ -1,12 +1,17 @@
 <script>
   import { onMount } from "svelte";
+  import { refreshActivity } from "#state/activity.js";
   import { musicData } from "#state/player.js";
+  import HomeAmbient from "../../components/HomeAmbient/HomeAmbient.svelte";
   import PlayerQueue from "./PlayerQueue/PlayerQueue.svelte";
   import NowPlaying from "./NowPlaying/NowPlaying.svelte";
   import YouTubeSearch from "./YouTubeSearch/YouTubeSearch.svelte";
   import YouTubeLibrary from "./YouTubeLibrary/YouTubeLibrary.svelte";
 
-  onMount(() => { void musicData(); });
+  onMount(() => {
+    void musicData();
+    void refreshActivity();
+  });
 </script>
 
 <header class="ph">
@@ -17,6 +22,9 @@
 <NowPlaying />
 <div class="cols stagger" id="player-queue">
   <PlayerQueue />
+</div>
+<div class="player-ambient">
+  <HomeAmbient />
 </div>
 <YouTubeSearch />
 <YouTubeLibrary />

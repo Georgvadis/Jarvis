@@ -1,8 +1,8 @@
 <script>
   import { onMount } from "svelte";
-  import { icon } from "#helpers/core.js";
+  import { api, icon, toast } from "#helpers/core.js";
   import { speaker } from "#state/panelState.js";
-  import { artOf, clockStr, mountPlayback, musicAct, musicData, playMusicQuery, setArt, setYoutubeLike, subscribeLikes } from "#state/player.js";
+  import { artOf, clockStr, mountPlayback, musicAct, musicData, musicLink, playMusicQuery, setArt, setYoutubeLike, subscribeLikes } from "#state/player.js";
 
   let state = $state.raw(null);
   let cover = $state();
@@ -23,6 +23,7 @@
   let kicker = $derived(active ? source + (state.paused ? " · пауза" : "") : playback === "loading" ? "ищу…" : state ? "Плеер" : "");
   let image = $derived(active ? artOf(track, true, state) : "");
   let fallback = $derived(active ? artOf(track, false, state) : "");
+  let link = $derived(active ? musicLink(state) : "");
   let duration = $derived(state?.dur ? clockStr(state.dur) : "");
   let youtubeSigned = $derived(Boolean($speaker?.youtube?.plugin && ($speaker?.youtube?.account?.signed_in || $speaker?.youtube?.set)));
   let isLiked = $derived(Boolean(!yandex && active && track?.ID && (likedSet.has(track.ID) || state?.liked)));
@@ -56,6 +57,26 @@
     pending = "like";
     try {
       await setYoutubeLike(track.ID, !isLiked, track, event.currentTarget);
+    } finally {
+      pending = "";
+    }
+  }
+
+  async function saveToNotes() {
+    if (pending || !active) return;
+    pending = "note";
+    try {
+      const lines = [`Трек: ${title}`, `Исполнитель: ${artist}`, `Источник: ${source}`];
+      if (link) lines.push(`Ссылка: ${link}`);
+      await api("POST", "/api/notes/save", {
+        title: `${title} — ${artist}`,
+        content: lines.join("\n"),
+        tags: ["музыка"],
+        folder: "Музыка",
+      });
+      toast("Трек сохранён в CyberNotes");
+    } catch (e) {
+      toast(e.message, true);
     } finally {
       pending = "";
     }
@@ -108,6 +129,10 @@
         disabled={pending === "like" || !youtubeSigned}
         data-tip={!youtubeSigned ? "Войдите в YouTube в настройках" : isLiked ? "Убрать лайк" : "Поставить лайк"}
         onclick={toggleLike}>{@html icon("heart")}</button>
+    {/if}
+    {#if active}
+      <button class="cbtn" type="button" data-m="note" aria-label="Сохранить трек в заметки" title="Сохранить трек в заметки"
+        disabled={pending === "note"} onclick={saveToNotes}>{@html icon("note")}</button>
     {/if}
     <button class="cbtn" type="button" data-m="copy" aria-label="Скопировать ссылку" disabled={pending === "copy"}
       onclick={(event) => control(event, "copy")}>{@html icon("link")}</button>

@@ -58,6 +58,9 @@
       if (action === "screen") {
         const res = await api("POST", "/api/pc/screen", { question: "Кратко опиши, что сейчас на экране." });
         toast(res.text || "Экран проанализирован");
+      } else if (action === "clip_speak") {
+        await api("POST", "/api/pc/clipboard", { speak: true });
+        toast("Озвучиваю буфер ПК");
       } else {
         const res = await api("POST", "/api/pc/action", { action });
         toast(res.message || "Выполнено на ПК");
@@ -134,6 +137,9 @@
       <div class="pc-bar-btns">
         <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("screen")} title="Посмотреть экран" aria-label="Посмотреть экран">
           {@html icon("eye")}
+        </button>
+        <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("clip_speak")} title="Озвучить буфер ПК" aria-label="Озвучить буфер ПК">
+          {@html icon("clipboard")}
         </button>
         <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("media_play_pause")} title="Медиа плей/пауза" aria-label="Медиа плей/пауза">
           {@html icon("play", "solid")}

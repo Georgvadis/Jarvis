@@ -352,7 +352,7 @@ async fn handle_message(
 • /ask <вопрос> — спросить Джарвиса с ответом сюда (/ask! — также озвучить вслух)\n\
 • /timer [минуты|10м|90с|1ч [метка] | list | off] — таймеры и напоминания\n\
 • /scenario <утро|работа|вечер|сон> — быстрый сценарий на колонке\n\
-• /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window> — управление ПК\n\
+• /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window|clip|open|info|macro> — управление ПК\n\
 • /podcast <ссылка|текст> — подкаст двумя голосами (YouTube / статья / текст)\n\
 • /dj <вайб|next|stop> — AI-DJ под настроение\n\
 • /note <текст> — сохранить быструю заметку в CyberNotes\n\
@@ -523,7 +523,7 @@ async fn handle_message(
         };
         let sub_low = sub_raw.to_lowercase();
         if sub_low.is_empty() {
-            return "Команды ПК: /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window>".into();
+            return "Команды ПК: /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window|clip|open|info|macro>".into();
         }
         if sub_low == "screen" || sub_low == "экран" {
             let q = if sub_rest.is_empty() {
@@ -539,8 +539,60 @@ async fn handle_message(
                 Err(e) => format!("Ошибка ПК: {e}"),
             };
         }
+        if sub_low == "clip" || sub_low == "буфер" {
+            return if sub_rest.is_empty() {
+                match crate::tools::pc_clipboard_read(&engine.store).await {
+                    Ok(txt) if txt.is_empty() => "📋 Буфер обмена ПК пуст.".into(),
+                    Ok(txt) => format!("📋 Буфер ПК:\n{txt}"),
+                    Err(e) => format!("Ошибка ПК: {e}"),
+                }
+            } else {
+                match crate::tools::pc_clipboard_write(&engine.store, sub_rest).await {
+                    Ok(msg) => format!("📋 {msg}"),
+                    Err(e) => format!("Ошибка ПК: {e}"),
+                }
+            };
+        }
+        if sub_low == "open" || sub_low == "url" {
+            if sub_rest.is_empty() {
+                return "Укажите ссылку: /pc open https://...".into();
+            }
+            return match crate::tools::pc_open_url(&engine.store, sub_rest).await {
+                Ok(msg) => format!("🌐 {msg}"),
+                Err(e) => format!("Ошибка ПК: {e}"),
+            };
+        }
+        if sub_low == "info" || sub_low == "status" {
+            return match crate::tools::pc_system_info(&engine.store).await {
+                Ok(info) => format!("🖥 {}", crate::tools::format_pc_system_summary(&info)),
+                Err(e) => format!("Ошибка ПК: {e}"),
+            };
+        }
+        if sub_low == "macro" {
+            if sub_rest.is_empty() {
+                return match crate::tools::pc_macros_list(&engine.store).await {
+                    Ok(v) => {
+                        let list = v["macros"].as_array().cloned().unwrap_or_default();
+                        if list.is_empty() {
+                            "Макросы не настроены (~/.jarvis-pc-macros.json на ПК).".into()
+                        } else {
+                            let lines: Vec<String> = list
+                                .iter()
+                                .map(|m| format!("• {} — {}", m["id"].as_str().unwrap_or(""), m["name"].as_str().unwrap_or("")))
+                                .collect();
+                            format!("⚡ Макросы ПК:\n{}", lines.join("\n"))
+                        }
+                    }
+                    Err(e) => format!("Ошибка ПК: {e}"),
+                };
+            }
+            return match crate::tools::pc_macro_run(&engine.store, sub_rest).await {
+                Ok(msg) => format!("⚡ {msg}"),
+                Err(e) => format!("Ошибка ПК: {e}"),
+            };
+        }
         let Some(action) = map_tg_pc_action(&sub_low) else {
-            return "Неизвестная команда ПК. Доступны: screen, play, next, prev, vol+, vol-, mute, shot, lock, window.".into();
+            return "Неизвестная команда ПК. Доступны: screen, play, next, prev, vol+, vol-, mute, shot, lock, window, clip, open, info, macro.".into();
         };
         return match crate::tools::call_pc_action(&engine.store, action, 30).await {
             Ok(msg) => format!("🖥 {msg}"),

@@ -535,15 +535,18 @@ impl Tools {
             defs.push(json!({
                 "type": "function",
                 "name": "pc_control",
-                "description": "Выполнить безопасную команду на компьютере хозяина (через PC-компаньон): медиа пауза/далее/назад, громкость ПК, скриншот, блокировка экрана, таймер выключения, узнать активное окно.",
+                "description": "Выполнить безопасную команду на компьютере хозяина (через PC-компаньон): медиа пауза/далее/назад, громкость ПК, скриншот, блокировка экрана, таймер выключения, узнать активное окно, прочитать/записать буфер обмена, открыть ссылку http(s), запустить макрос или узнать загрузку ПК.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["media_play_pause", "media_next", "media_prev", "volume_up", "volume_down", "volume_mute", "lock_screen", "sleep_timer", "cancel_sleep", "screenshot_save", "active_window"]
+                            "enum": ["media_play_pause", "media_next", "media_prev", "volume_up", "volume_down", "volume_mute", "lock_screen", "sleep_timer", "cancel_sleep", "screenshot_save", "active_window", "clipboard_read", "clipboard_write", "open_url", "run_macro", "system_info"]
                         },
-                        "minutes": {"type": "integer", "description": "минуты до выключения (только для sleep_timer)"}
+                        "minutes": {"type": "integer", "description": "минуты до выключения (только для sleep_timer)"},
+                        "text": {"type": "string", "description": "текст для записи в буфер обмена (для clipboard_write)"},
+                        "url": {"type": "string", "description": "ссылка http:// или https:// для открытия в браузере ПК (для open_url)"},
+                        "macro_id": {"type": "string", "description": "идентификатор макроса из ~/.jarvis-pc-macros.json (для run_macro)"}
                     },
                     "required": ["action"]
                 }
@@ -742,6 +745,43 @@ impl Tools {
         }
         if name == "pc_control" {
             let action = field("action");
+            match action.as_str() {
+                "clipboard_read" => {
+                    return match pc_clipboard_read(&self.store).await {
+                        Ok(txt) if txt.is_empty() => "Буфер обмена на ПК пуст.".into(),
+                        Ok(txt) => format!("В буфере обмена ПК: {txt}"),
+                        Err(e) => format!("Не удалось прочитать буфер ПК: {e}"),
+                    };
+                }
+                "clipboard_write" => {
+                    let text = field("text");
+                    return match pc_clipboard_write(&self.store, &text).await {
+                        Ok(msg) => msg,
+                        Err(e) => format!("Не удалось записать в буфер ПК: {e}"),
+                    };
+                }
+                "open_url" => {
+                    let url = field("url");
+                    return match pc_open_url(&self.store, &url).await {
+                        Ok(msg) => msg,
+                        Err(e) => format!("Не удалось открыть ссылку на ПК: {e}"),
+                    };
+                }
+                "run_macro" => {
+                    let mid = field("macro_id");
+                    return match pc_macro_run(&self.store, &mid).await {
+                        Ok(msg) => msg,
+                        Err(e) => format!("Не удалось запустить макрос на ПК: {e}"),
+                    };
+                }
+                "system_info" => {
+                    return match pc_system_info(&self.store).await {
+                        Ok(info) => format_pc_system_summary(&info),
+                        Err(e) => format!("Не удалось получить статус ПК: {e}"),
+                    };
+                }
+                _ => {}
+            }
             let mins = a.get("minutes").and_then(Value::as_i64).unwrap_or(30);
             return match call_pc_action(&self.store, &action, mins).await {
                 Ok(msg) => msg,
@@ -921,13 +961,43 @@ pub async fn capture_and_describe_screen(host: &Host, store: &Store, question: &
     crate::llm::ask_vision(host, &s, &p, &voice_srv, question, &jpg).await
 }
 
-pub async fn call_pc_action(store: &Store, action: &str, minutes: i64) -> Result<String, String> {
+fn pc_config(store: &Store) -> Result<(String, String), String> {
     let s = store.get();
     let url = s.pc_agent_url.trim().trim_end_matches('/').to_string();
     let tok = s.pc_agent_token.trim().to_string();
     if url.is_empty() {
         return Err("ПК-компаньон не настроен".into());
     }
+    Ok((url, tok))
+}
+
+pub(crate) fn valid_http_url(raw: &str) -> Option<String> {
+    let url = raw.trim();
+    if url.is_empty() || url.len() > 2000 || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() {
+        return None;
+    }
+    Some(url.to_string())
+}
+
+pub fn format_pc_system_summary(v: &Value) -> String {
+    let host = v["host"].as_str().unwrap_or("ПК");
+    let os = v["os"].as_str().unwrap_or("");
+    let ram = match (v["ram_used_mb"].as_u64(), v["ram_total_mb"].as_u64()) {
+        (Some(u), Some(t)) if t > 0 => format!(", RAM {u}/{t} МБ"),
+        _ => String::new(),
+    };
+    let win = v["active_window"].as_str().unwrap_or("").trim();
+    let win_part = if win.is_empty() { String::new() } else { format!(", {win}") };
+    format!("{host} ({os}){ram}{win_part}")
+}
+
+pub async fn call_pc_action(store: &Store, action: &str, minutes: i64) -> Result<String, String> {
+    let (url, tok) = pc_config(store)?;
     let resp = crate::net::direct()
         .post(format!("{url}/action"))
         .bearer_auth(&tok)
@@ -942,6 +1012,120 @@ pub async fn call_pc_action(store: &Store, action: &str, minutes: i64) -> Result
         return Err(data["error"].as_str().unwrap_or("Ошибка команды ПК").to_string());
     }
     Ok(data["message"].as_str().unwrap_or("Готово.").to_string())
+}
+
+pub async fn pc_clipboard_read(store: &Store) -> Result<String, String> {
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .get(format!("{url}/clipboard"))
+        .bearer_auth(&tok)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось прочитать буфер ПК").to_string());
+    }
+    Ok(data["text"].as_str().unwrap_or("").to_string())
+}
+
+pub async fn pc_clipboard_write(store: &Store, text: &str) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 16000 {
+        return Err("Текст буфера должен быть от 1 до 16000 байт".into());
+    }
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .post(format!("{url}/clipboard"))
+        .bearer_auth(&tok)
+        .json(&json!({"text": trimmed}))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось записать в буфер ПК").to_string());
+    }
+    Ok(data["message"].as_str().unwrap_or("Скопировано в буфер ПК.").to_string())
+}
+
+pub async fn pc_open_url(store: &Store, raw_url: &str) -> Result<String, String> {
+    let clean = valid_http_url(raw_url).ok_or_else(|| "Укажите корректную ссылку http:// или https://".to_string())?;
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .post(format!("{url}/open-url"))
+        .bearer_auth(&tok)
+        .json(&json!({"url": clean}))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось открыть ссылку на ПК").to_string());
+    }
+    Ok(data["message"].as_str().unwrap_or("Ссылка открыта на ПК.").to_string())
+}
+
+pub async fn pc_macros_list(store: &Store) -> Result<Value, String> {
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .get(format!("{url}/macros"))
+        .bearer_auth(&tok)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось получить список макросов").to_string());
+    }
+    Ok(data)
+}
+
+pub async fn pc_macro_run(store: &Store, id: &str) -> Result<String, String> {
+    let mid = id.trim();
+    if mid.is_empty() || mid.len() > 40 {
+        return Err("Неверный ID макроса".into());
+    }
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .post(format!("{url}/macro"))
+        .bearer_auth(&tok)
+        .json(&json!({"id": mid}))
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось запустить макрос").to_string());
+    }
+    Ok(data["message"].as_str().unwrap_or("Макрос запущен.").to_string())
+}
+
+pub async fn pc_system_info(store: &Store) -> Result<Value, String> {
+    let (url, tok) = pc_config(store)?;
+    let resp = crate::net::direct()
+        .get(format!("{url}/system"))
+        .bearer_auth(&tok)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Не удалось получить системную сводку ПК").to_string());
+    }
+    Ok(data)
 }
 
 pub async fn save_cybernote(host: &Host, title: &str, content: &str, tags: &[String], folder: &str) -> Result<String, String> {
@@ -1139,5 +1323,15 @@ mod tests {
         assert!(is_book_recap_command("перескажи книгу пожалуйста"));
         assert!(is_book_recap_command("напомни книгу"));
         assert!(!is_book_recap_command("включи музыку"));
+    }
+
+    #[test]
+    fn validates_pc_http_urls() {
+        assert_eq!(valid_http_url("https://youtu.be/dQw4w9WgXcQ"), Some("https://youtu.be/dQw4w9WgXcQ".into()));
+        assert_eq!(valid_http_url("  http://example.com/a?b=1  "), Some("http://example.com/a?b=1".into()));
+        assert_eq!(valid_http_url("javascript:alert(1)"), None);
+        assert_eq!(valid_http_url("file:///etc/passwd"), None);
+        assert_eq!(valid_http_url("https://"), None);
+        assert_eq!(valid_http_url("https://bad host.com"), None);
     }
 }

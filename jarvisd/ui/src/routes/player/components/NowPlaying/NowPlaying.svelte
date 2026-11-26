@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { icon } from "#helpers/core.js";
+  import { api, icon, toast } from "#helpers/core.js";
   import { speaker } from "#state/panelState.js";
   import {
     artOf,
@@ -43,6 +43,7 @@
   let youtubeSigned = $derived(
     Boolean($speaker?.youtube?.plugin && ($speaker?.youtube?.account?.signed_in || $speaker?.youtube?.set)),
   );
+  let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
   let isLiked = $derived(
     Boolean(!yandex && active && track?.ID && (likedSet.has(track.ID) || state?.liked)),
   );
@@ -77,6 +78,39 @@
     pending = true;
     try {
       await setYoutubeLike(track.ID, !isLiked, track, event.currentTarget);
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function saveTrackToNotes() {
+    if (pending || !active) return;
+    pending = true;
+    try {
+      const lines = [`Трек: ${title}`, `Исполнитель: ${artist}`, `Источник: ${source}`];
+      if (link) lines.push(`Ссылка: ${link}`);
+      await api("POST", "/api/notes/save", {
+        title: `${title} — ${artist}`,
+        content: lines.join("\n"),
+        tags: ["музыка"],
+        folder: "Музыка",
+      });
+      toast("Трек сохранён в CyberNotes");
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      pending = false;
+    }
+  }
+
+  async function openTrackOnPc() {
+    if (pending || !link) return;
+    pending = true;
+    try {
+      await api("POST", "/api/pc/open-url", { url: link });
+      toast("Трек открыт на ПК");
+    } catch (e) {
+      toast(e.message, true);
     } finally {
       pending = false;
     }
@@ -133,9 +167,17 @@
               onclick={toggleLike}>{@html icon("heart")}</button>
           {/if}
         {/if}
+        {#if active}
+          <button class="cbtn" type="button" disabled={pending} data-tip="Сохранить трек в CyberNotes" aria-label="Сохранить трек в CyberNotes"
+            onclick={saveTrackToNotes}>{@html icon("note")}</button>
+        {/if}
         {#if link}
           <button class="cbtn" type="button" disabled={pending} data-tip="Скопировать ссылку" aria-label="Скопировать ссылку"
             onclick={(event) => control(event, "copy")}>{@html icon("link")}</button>
+          {#if hasPc}
+            <button class="cbtn" type="button" disabled={pending} data-tip="Открыть трек на ПК" aria-label="Открыть трек на ПК"
+              onclick={openTrackOnPc}>{@html icon("monitor")}</button>
+          {/if}
           <a class="cbtn" href={link} target="_blank" rel="noopener" aria-label="Открыть в браузере"
             data-tip={yandex ? "Открыть в Яндекс Музыке" : "Открыть на YouTube"}>{@html icon("ext")}</a>
         {/if}

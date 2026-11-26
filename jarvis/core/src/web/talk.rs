@@ -938,6 +938,69 @@ pub async fn pc_action(State(app): State<App>, axum::Json(value): axum::Json<ser
     }
 }
 
+pub async fn pc_system(State(app): State<App>) -> Response {
+    match crate::tools::pc_system_info(&app.store).await {
+        Ok(v) => reply(StatusCode::OK, v),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_macros(State(app): State<App>) -> Response {
+    match crate::tools::pc_macros_list(&app.store).await {
+        Ok(v) => reply(StatusCode::OK, v),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_macro_run(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let id = value["id"].as_str().unwrap_or("").trim();
+    if !valid_id_segment(id) {
+        return super::bad("Неверный ID макроса");
+    }
+    match crate::tools::pc_macro_run(&app.store, id).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_clipboard_get(State(app): State<App>) -> Response {
+    match crate::tools::pc_clipboard_read(&app.store).await {
+        Ok(text) => reply(StatusCode::OK, json!({"ok": true, "text": text})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_clipboard_post(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    if value["speak"].as_bool() == Some(true) {
+        return match crate::tools::pc_clipboard_read(&app.store).await {
+            Ok(text) if text.trim().is_empty() => super::bad("Буфер обмена ПК пуст"),
+            Ok(text) => {
+                app.engine.journal.note("буфер ПК", "", &text);
+                let eng = app.engine.clone();
+                let say_copy = text.chars().take(4000).collect::<String>();
+                tokio::task::spawn_blocking(move || { eng.say_text(&say_copy); });
+                reply(StatusCode::OK, json!({"ok": true, "text": text}))
+            }
+            Err(e) => super::bad(e),
+        };
+    }
+    let Some(text) = value["text"].as_str().map(str::trim).filter(|t| !t.is_empty() && t.len() <= 16000) else {
+        return super::bad("Текст буфера должен быть от 1 до 16000 байт");
+    };
+    match crate::tools::pc_clipboard_write(&app.store, text).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_open_url(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let url = value["url"].as_str().unwrap_or("");
+    match crate::tools::pc_open_url(&app.store, url).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
 pub async fn schedule_get(State(app): State<App>) -> Response {
     reply(StatusCode::OK, app.scheduler.status())
 }

@@ -102,6 +102,9 @@
   let pcStatus = $state("");
   let pcScreenText = $state("");
   let pcActionBusy = $state("");
+  let pcSys = $state(null);
+  let pcMacros = $state([]);
+  let pcSendInput = $state("");
   let phoneIpInput = $state(untrack(() => S.settings.presence_phone_ip || ""));
   let awayMinInput = $state(untrack(() => S.settings.presence_away_min || 30));
   let greetingInput = $state(untrack(() => S.settings.presence_greeting || ""));
@@ -205,6 +208,20 @@
         if (ns) notesInfo = ns;
       }
     } catch { /* ignore */ }
+    if (pcUrlInput.trim()) void loadPcExtras();
+  }
+
+  async function loadPcExtras() {
+    try {
+      const [sys, mac] = await Promise.all([
+        api("GET", "/api/pc/system", undefined, { signal }),
+        api("GET", "/api/pc/macros", undefined, { signal }),
+      ]);
+      if (!signal.aborted) {
+        if (sys?.ok) pcSys = sys;
+        if (Array.isArray(mac?.macros)) pcMacros = mac.macros;
+      }
+    } catch { /* PC offline */ }
   }
 
   async function refresh() {
@@ -376,6 +393,7 @@
     if (pcTokenInput.trim()) body.pc_agent_token = pcTokenInput.trim();
     await save("pc_agent", () => body, "Настройки ПК-компаньона сохранены");
     pcTokenInput = "";
+    if (pcUrlInput.trim()) void loadPcExtras();
   }
 
   async function pingPc() {
@@ -384,8 +402,10 @@
       const r = await api("GET", "/api/pc/ping", undefined, { signal });
       pcStatus = `${r.host || "ПК"} (${r.os || ""}) · ${r.capture_backend || "ok"}`;
       toast("ПК на связи");
+      void loadPcExtras();
     } catch (e) {
       pcStatus = "";
+      pcSys = null;
       toast(e.message, true);
     }
   }
@@ -401,12 +421,32 @@
     }
   }
 
-  async function runPcAction(action) {
+  async function runPcAction(action, extra = {}) {
     if (pcActionBusy) return;
     pcActionBusy = action;
     try {
-      const r = await api("POST", "/api/pc/action", { action }, { signal });
-      toast(r.message || "Выполнено на ПК");
+      if (action === "clip_speak") {
+        await api("POST", "/api/pc/clipboard", { speak: true }, { signal });
+        toast("Озвучиваю буфер ПК");
+      } else if (action === "open_url") {
+        const u = pcSendInput.trim();
+        if (!u) return;
+        const r = await api("POST", "/api/pc/open-url", { url: u }, { signal });
+        pcSendInput = "";
+        toast(r.message || "Ссылка открыта на ПК");
+      } else if (action === "send_clip") {
+        const t = pcSendInput.trim();
+        if (!t) return;
+        const r = await api("POST", "/api/pc/clipboard", { text: t }, { signal });
+        pcSendInput = "";
+        toast(r.message || "Скопировано в буфер ПК");
+      } else if (action === "macro") {
+        const r = await api("POST", "/api/pc/macro", { id: extra.id }, { signal });
+        toast(r.message || "Макрос запущен");
+      } else {
+        const r = await api("POST", "/api/pc/action", { action, ...extra }, { signal });
+        toast(r.message || "Выполнено на ПК");
+      }
     } catch (e) {
       if (!signal.aborted) toast(e.message, true);
     } finally {
@@ -740,14 +780,42 @@
     <button type="button" class="btn" disabled={!settings.pc_agent_url} onclick={testPcScreen}>{@html icon("eye")}Экран</button>
   </div>
   {#if settings.pc_agent_url}
+    {#if pcSys}
+      <div class="pc-sys-bar">
+        <span class="chip">{pcSys.host || "ПК"} · {pcSys.os || ""}</span>
+        {#if pcSys.ram_total_mb}
+          <span class="chip">RAM {pcSys.ram_used_mb ?? "?"}/{pcSys.ram_total_mb} МБ</span>
+        {/if}
+        {#if pcSys.active_window}
+          <span class="chip">{pcSys.active_window}</span>
+        {/if}
+      </div>
+    {/if}
     <div class="row">
       <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("media_play_pause")}>{@html icon("play", "solid")}Медиа</button>
       <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("media_next")}>{@html icon("skip")}След.</button>
       <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("volume_down")}>{@html icon("minus")}Тише</button>
       <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("volume_up")}>{@html icon("plus")}Громче</button>
       <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("screenshot_save")}>{@html icon("camera")}Скриншот</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("clip_speak")}>{@html icon("clipboard")}Буфер → вслух</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("sleep_timer", { minutes: 30 })}>{@html icon("clock")}Сон 30м</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("cancel_sleep")}>{@html icon("x")}Отмена сна</button>
       <button type="button" class="btn sm ghost danger" disabled={!!pcActionBusy} onclick={() => runPcAction("lock_screen")}>{@html icon("lock")}Блок</button>
     </div>
+    <div class="pc-send-row">
+      <input type="text" maxlength="2000" placeholder="Текст в буфер ПК или ссылка https://…" bind:value={pcSendInput}>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy || !pcSendInput.trim()} onclick={() => runPcAction("send_clip")}>{@html icon("clipboard")}В буфер</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy || !/^https?:\/\//i.test(pcSendInput.trim())} onclick={() => runPcAction("open_url")}>{@html icon("ext")}Открыть URL</button>
+    </div>
+    {#if pcMacros.length}
+      <div class="row">
+        {#each pcMacros as mac (mac.id)}
+          <button type="button" class="btn sm" disabled={!!pcActionBusy} onclick={() => runPcAction("macro", { id: mac.id })}>
+            {@html icon(mac.icon || "bolt")}{mac.name}
+          </button>
+        {/each}
+      </div>
+    {/if}
   {/if}
   {#if pcStatus}<p class="note">{pcStatus}</p>{/if}
   {#if pcScreenText}<p class="note">{pcScreenText}</p>{/if}
