@@ -44,7 +44,7 @@
   overflow: hidden;
   border-radius: 22px;
   background: linear-gradient(135deg, var(--raise2), var(--bg0));
-  box-shadow: 0 24px 50px -22px rgb(0 0 0 / .8);
+  box-shadow: var(--card-shadow);
 }
 
 .cover img {

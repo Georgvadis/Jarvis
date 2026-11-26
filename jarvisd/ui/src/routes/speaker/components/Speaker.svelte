@@ -69,6 +69,8 @@
 
 <script>
   import { onMount, untrack } from "svelte";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { SvelteSet } from "svelte/reactivity";
   import { api, copyText, icon, jelly, tip, toast } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
@@ -77,11 +79,13 @@
   import NightMode from "./NightMode/NightMode.svelte";
   import styles from "./Speaker.module.css";
 
+  const VALID_TABS = new Set(["general", "voice", "light", "integrations"]);
   const controller = new AbortController();
   const { signal } = controller;
   const pending = new SvelteSet();
   let writes = Promise.resolve();
   let state = $state.raw(S);
+  let tab = $state("general");
   let profiles = $state.raw(null);
   let profileError = $state("");
   let selected = $state("");
@@ -91,11 +95,11 @@
   let wakeBusy = $state(false);
   let wakeTimer = null;
   let micPeak = $state(0);
-  let micTimer = null;
   let pcUrlInput = $state(untrack(() => S.settings.pc_agent_url || ""));
   let pcTokenInput = $state("");
   let pcStatus = $state("");
   let pcScreenText = $state("");
+  let pcActionBusy = $state("");
   let phoneIpInput = $state(untrack(() => S.settings.presence_phone_ip || ""));
   let awayMinInput = $state(untrack(() => S.settings.presence_away_min || 30));
   let greetingInput = $state(untrack(() => S.settings.presence_greeting || ""));
@@ -131,6 +135,34 @@
     }
   }
 
+  $effect(() => {
+    const q = page.url.searchParams.get("tab");
+    if (q && VALID_TABS.has(q)) tab = q;
+  });
+
+  function switchTab(id) {
+    tab = id;
+    void goto(id === "general" ? "/speaker" : `/speaker?tab=${id}`, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
+  $effect(() => {
+    if (tab !== "voice") return;
+    let stopped = false;
+    let timer;
+    const pollMic = async () => {
+      try {
+        const res = await api("GET", "/api/mic-level", undefined, { signal });
+        if (!stopped && !signal.aborted && typeof res?.peak === "number") micPeak = res.peak;
+      } catch { /* ignore */ }
+      if (!stopped && !signal.aborted) timer = setTimeout(() => void pollMic(), 250);
+    };
+    void pollMic();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  });
+
   onMount(() => {
     if (settings.wake_training) {
       loadWakeProfiles(signal).then((result) => {
@@ -143,18 +175,9 @@
     if (wakeReplies?.running) {
       wakeTimer = setTimeout(() => void pollWakeReplies(), 1000);
     }
-    const pollMic = async () => {
-      try {
-        const res = await api("GET", "/api/mic-level", undefined, { signal });
-        if (!signal.aborted && typeof res?.peak === "number") micPeak = res.peak;
-      } catch { /* ignore */ }
-      if (!signal.aborted) micTimer = setTimeout(() => void pollMic(), 250);
-    };
-    micTimer = setTimeout(() => void pollMic(), 250);
     void loadExtraStatuses();
     return () => {
       stopWakePoll();
-      clearTimeout(micTimer);
       controller.abort();
     };
   });
@@ -365,6 +388,19 @@
     }
   }
 
+  async function runPcAction(action) {
+    if (pcActionBusy) return;
+    pcActionBusy = action;
+    try {
+      const r = await api("POST", "/api/pc/action", { action }, { signal });
+      toast(r.message || "Выполнено на ПК");
+    } catch (e) {
+      if (!signal.aborted) toast(e.message, true);
+    } finally {
+      pcActionBusy = "";
+    }
+  }
+
   async function savePresence() {
     await save("presence", () => ({
       presence_phone_ip: phoneIpInput.trim(),
@@ -409,6 +445,21 @@
   <p class="sub">Изменения сохраняются сразу</p>
 </header>
 
+<div class="studio-tabs" role="tablist" aria-label="Разделы настроек колонки">
+  <button type="button" role="tab" aria-selected={tab === "general"} class="studio-tab" class:on={tab === "general"} onclick={() => switchTab("general")}>
+    {@html icon("home")}<span>Основное</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "voice"} class="studio-tab" class:on={tab === "voice"} onclick={() => switchTab("voice")}>
+    {@html icon("mic")}<span>Звук и микрофон</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "light"} class="studio-tab" class:on={tab === "light"} onclick={() => switchTab("light")}>
+    {@html icon("sun")}<span>Свет и ночь</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "integrations"} class="studio-tab" class:on={tab === "integrations"} onclick={() => switchTab("integrations")}>
+    {@html icon("monitor")}<span>Интеграции</span>
+  </button>
+</div>
+
 {#snippet homeFields()}
   <div class={styles.services}>
     {#each services as [id, name, description, ready] (id)}
@@ -431,9 +482,11 @@
     {/each}
   </div>
 {/snippet}
-{@render settingSection("Умный дом и музыка",
-  "Каналы управления домом и источник музыки",
-  homeFields, "home")}
+{#if tab === "general"}
+  {@render settingSection("Умный дом и музыка",
+    "Каналы управления домом и источник музыки",
+    homeFields, "home")}
+{/if}
 
 {#snippet locationFields()}
   <div class="f">
@@ -461,9 +514,11 @@
     </div>
   </div>
 {/snippet}
-{@render settingSection("Локация",
-  "Комната, город и часовой пояс",
-  locationFields, "globe")}
+{#if tab === "general"}
+  {@render settingSection("Локация",
+    "Комната, город и часовой пояс",
+    locationFields, "globe")}
+{/if}
 
 {#snippet wakeFields()}
   {#if settings.wake_training}
@@ -597,7 +652,9 @@
     <p class="note">Модель слова ещё не установлена — пока Джарвиса можно позвать только кнопкой «Поговорить» на главной.</p>
   {/if}
 {/snippet}
-{@render settingSection("Микрофон и активация", "Слово активации, усиление и порог тишины", wakeFields, "mic")}
+{#if tab === "voice"}
+  {@render settingSection("Микрофон и активация", "Слово активации, усиление и порог тишины", wakeFields, "mic")}
+{/if}
 
 {#snippet languageFields()}
   <div class="seg" role="group" aria-label="Язык общения">
@@ -607,18 +664,24 @@
     {/each}
   </div>
 {/snippet}
-{@render settingSection("Язык",
-  "Язык распознавания и ответов",
-  languageFields, "globe")}
+{#if tab === "general"}
+  {@render settingSection("Язык",
+    "Язык распознавания и ответов",
+    languageFields, "globe")}
+{/if}
 
-<NightMode {night} now={settings.night_now} leds={state.speaker.leds} {pending} save={saveNight} />
+{#if tab === "light"}
+  <NightMode {night} now={settings.night_now} leds={state.speaker.leds} {pending} save={saveNight} />
+{/if}
 
 {#snippet lightingFields()}
   <Lighting />
 {/snippet}
-{@render settingSection("Подсветка",
-  "Световое кольцо колонки",
-  lightingFields, "sun")}
+{#if tab === "light"}
+  {@render settingSection("Подсветка",
+    "Световое кольцо колонки",
+    lightingFields, "sun")}
+{/if}
 
 {#snippet notifyFields()}
   <div class="f">
@@ -630,9 +693,11 @@
     </div>
   </div>
 {/snippet}
-{@render settingSection("HTTP-уведомления",
-  "Вебхук для озвучки событий из домашней сети",
-  notifyFields, "broadcast")}
+{#if tab === "integrations"}
+  {@render settingSection("HTTP-уведомления",
+    "Вебхук для озвучки событий из домашней сети",
+    notifyFields, "broadcast")}
+{/if}
 
 {#snippet pcFields()}
   <div class="grid g2">
@@ -650,12 +715,24 @@
     <button type="button" class="btn" disabled={!settings.pc_agent_url} onclick={pingPc}>{@html icon("refresh")}Проверить</button>
     <button type="button" class="btn" disabled={!settings.pc_agent_url} onclick={testPcScreen}>{@html icon("eye")}Экран</button>
   </div>
+  {#if settings.pc_agent_url}
+    <div class="row">
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("media_play_pause")}>{@html icon("play", "solid")}Медиа</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("media_next")}>{@html icon("skip")}След.</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("volume_down")}>{@html icon("minus")}Тише</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("volume_up")}>{@html icon("plus")}Громче</button>
+      <button type="button" class="btn sm ghost" disabled={!!pcActionBusy} onclick={() => runPcAction("screenshot_save")}>{@html icon("camera")}Скриншот</button>
+      <button type="button" class="btn sm ghost danger" disabled={!!pcActionBusy} onclick={() => runPcAction("lock_screen")}>{@html icon("lock")}Блок</button>
+    </div>
+  {/if}
   {#if pcStatus}<p class="note">{pcStatus}</p>{/if}
   {#if pcScreenText}<p class="note">{pcScreenText}</p>{/if}
 {/snippet}
-{@render settingSection("ПК-компаньон (Экран)",
-  "Зрение на экран и голосовые макросы через jarvis_pc.py",
-  pcFields, "monitor")}
+{#if tab === "integrations"}
+  {@render settingSection("ПК-компаньон (Экран)",
+    "Зрение на экран и голосовые макросы через jarvis_pc.py",
+    pcFields, "monitor")}
+{/if}
 
 {#snippet presenceFields()}
   <div class="grid g2">
@@ -682,9 +759,11 @@
     {/if}
   </div>
 {/snippet}
-{@render settingSection("Живое присутствие",
-  "Автоприветствие при возвращении домой без датчиков",
-  presenceFields, "radar")}
+{#if tab === "integrations"}
+  {@render settingSection("Живое присутствие",
+    "Автоприветствие при возвращении домой без датчиков",
+    presenceFields, "radar")}
+{/if}
 
 {#snippet cybernotesFields()}
   {@render toggle("Голосовые заметки CyberNotes", "cybernotes_enabled", settings.cybernotes_enabled !== false,
@@ -694,6 +773,8 @@
     {notesInfo.available ? `Подключено · заметок в базе: ${notesInfo.total_notes}` : "Каталог CyberNotes недоступен через jarvis-voice"}
   </p>
 {/snippet}
-{@render settingSection("CyberNotes",
-  "База знаний и заметки голосом",
-  cybernotesFields, "note")}
+{#if tab === "integrations"}
+  {@render settingSection("CyberNotes",
+    "База знаний и заметки голосом",
+    cybernotesFields, "note")}
+{/if}

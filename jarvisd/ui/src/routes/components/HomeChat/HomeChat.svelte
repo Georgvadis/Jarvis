@@ -21,6 +21,7 @@
   let feed = $state();
   let sayInput = $state();
   let animate = $state(false);
+  let scrolledUp = $state(false);
   let stickToBottom = true;
   let pollTimer;
   let confirmTimer;
@@ -88,7 +89,15 @@
 
   function onScroll(event) {
     const node = event.currentTarget;
-    stickToBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+    const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+    stickToBottom = dist < 80;
+    scrolledUp = dist > 140;
+  }
+
+  function jumpToBottom() {
+    stickToBottom = true;
+    scrolledUp = false;
+    if (feed?.isConnected) feed.scrollTo({ top: feed.scrollHeight, behavior: "smooth" });
   }
 
   function followFeed() {
@@ -232,15 +241,22 @@
   {/if}
 </header>
 
-<div class="tg-body" id="feed" bind:this={feed} onscroll={onScroll}>
-  {#each rows as row (row.key)}
-    <Message {row} {animate} follow={followFeed} />
-  {:else}
-    <div class="tg-empty">
-      <b>Здесь будет переписка</b>
-      <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
-    </div>
-  {/each}
+<div class="tg-wrap">
+  <div class="tg-body" id="feed" bind:this={feed} onscroll={onScroll}>
+    {#each rows as row (row.key)}
+      <Message {row} {animate} follow={followFeed} />
+    {:else}
+      <div class="tg-empty">
+        <b>Здесь будет переписка</b>
+        <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
+      </div>
+    {/each}
+  </div>
+  {#if scrolledUp}
+    <button type="button" class="tg-jump" onclick={jumpToBottom} title="К новым сообщениям" aria-label="Вниз">
+      {@html icon("arrowDown")}
+    </button>
+  {/if}
 </div>
 
 <div class="chat-chips" aria-label="Быстрые команды">

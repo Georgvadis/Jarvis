@@ -58,6 +58,7 @@ pub struct Web {
     pub games: Arc<crate::games::GameManager>,
     pub dj: Arc<crate::dj::AiDj>,
     pub presence: Arc<crate::presence::Presence>,
+    pub scheduler: Arc<crate::scheduler::Scheduler>,
     pub data_dir: PathBuf,
     pub started: Instant,
     pub telemetry: Arc<crate::telemetry::Telemetry>,
@@ -84,10 +85,11 @@ impl Web {
         games: Arc<crate::games::GameManager>,
         dj: Arc<crate::dj::AiDj>,
         presence: Arc<crate::presence::Presence>,
+        scheduler: Arc<crate::scheduler::Scheduler>,
     ) -> App {
         let telemetry=crate::telemetry::Telemetry::start(data_dir.clone());
         let updater = crate::updates::Updater::new(data_dir.clone(), store.clone(), plugins.clone());
-        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, reader, games, dj, presence, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
+        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, reader, games, dj, presence, scheduler, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
     }
 }
 
@@ -236,8 +238,16 @@ pub fn router(app: App) -> Router {
         .route("/api/dj/stop", post(talk::dj_stop))
         .route("/api/pc/ping", get(talk::pc_ping))
         .route("/api/pc/screen", post(talk::pc_screen))
+        .route("/api/pc/action", post(talk::pc_action))
         .route("/api/presence", get(talk::presence_status))
         .route("/api/presence/test", post(talk::presence_test))
+        .route("/api/schedule", get(talk::schedule_get))
+        .route("/api/schedule/timer", post(talk::schedule_timer_add))
+        .route("/api/schedule/timer/{id}", delete(talk::schedule_timer_del))
+        .route("/api/schedule/routine", post(talk::schedule_routine_add))
+        .route("/api/schedule/routine/{id}/toggle", post(talk::schedule_routine_toggle))
+        .route("/api/schedule/routine/{id}/run", post(talk::schedule_routine_run))
+        .route("/api/schedule/routine/{id}", delete(talk::schedule_routine_del))
         .route("/api/notes/status", get(talk::notes_status))
         .route("/api/notes/list", get(talk::notes_list))
         .route("/api/notes/search", get(talk::notes_search))

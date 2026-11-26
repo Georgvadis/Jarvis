@@ -45,6 +45,8 @@ pub struct Tools {
     pub ambient: Option<Arc<crate::ambient::Ambient>>,
     /// Фокус-таймер (Помодоро).
     pub focus: Option<Arc<crate::focus::Focus>>,
+    /// Таймеры и ежедневные рутины.
+    pub scheduler: Option<Arc<crate::scheduler::Scheduler>>,
     /// Запуск мини-подкаста / спора двух ассистентов.
     pub on_debate: Option<Arc<dyn Fn(String) + Send + Sync>>,
     /// Фокус-режим (Помодоро) голосом.
@@ -90,6 +92,7 @@ impl Tools {
             leds: None,
             ambient: None,
             focus: None,
+            scheduler: None,
             on_debate: None,
             on_focus: None,
             modes: None,
@@ -245,6 +248,11 @@ impl Tools {
         }
         if let Some(on_focus) = &self.on_focus
             && let Some(ans) = on_focus(text)
+        {
+            return Some(ans);
+        }
+        if let Some(sched) = &self.scheduler
+            && let Some(ans) = sched.fast_command(text)
         {
             return Some(ans);
         }

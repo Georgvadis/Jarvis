@@ -10,6 +10,7 @@ const DEFAULT_ACTIVITY = {
   ambient: { active: "", sleep_s: 0, volume: 70, presets: [] },
   debate_active: false,
   presence: { state: "unknown" },
+  timers: [],
 };
 
 export const activity = writable(DEFAULT_ACTIVITY);
@@ -22,6 +23,10 @@ let subscribers = 0;
 export function fmtClock(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
   const m = Math.floor(s / 60);
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    return `${h}:${String(m % 60).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  }
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
@@ -33,6 +38,7 @@ export async function refreshActivity() {
     activity.update((prev) => ({
       ...prev,
       ...data,
+      timers: Array.isArray(data.timers) ? data.timers : [],
       ambient: {
         ...prev.ambient,
         ...(data.ambient || {}),
@@ -61,6 +67,12 @@ export function startActivityPolling() {
       if (cur.ambient?.active && cur.ambient.sleep_s > 0) {
         const sleep = cur.ambient.sleep_s - 1;
         next.ambient = { ...cur.ambient, sleep_s: sleep };
+        changed = true;
+      }
+      if (Array.isArray(cur.timers) && cur.timers.length) {
+        next.timers = cur.timers
+          .map((t) => ({ ...t, remaining_s: Math.max(0, Number(t.remaining_s || 0) - 1) }))
+          .filter((t) => t.remaining_s > 0);
         changed = true;
       }
       return changed ? next : cur;
@@ -96,8 +108,25 @@ export function summarizeActivity(a) {
       subtitle: `${a.focus.total_min || 25} мин`,
       href: "/",
       canNext: false,
+      stopMethod: "POST",
       stopUrl: "/api/focus",
       stopBody: { minutes: 0 },
+    });
+  }
+
+  if (Array.isArray(a.timers) && a.timers.length) {
+    const t = a.timers[0];
+    items.push({
+      id: "timer:" + t.id,
+      kind: "timer",
+      icon: "clock",
+      title: `${t.label || "Таймер"} · ${fmtClock(t.remaining_s)}`,
+      subtitle: a.timers.length > 1 ? `Ещё таймеров: ${a.timers.length - 1}` : "Таймер",
+      href: "/studio?tab=schedule",
+      canNext: false,
+      stopMethod: "DELETE",
+      stopUrl: "/api/schedule/timer/" + encodeURIComponent(t.id),
+      stopBody: undefined,
     });
   }
 
@@ -113,6 +142,7 @@ export function summarizeActivity(a) {
       nextLabel: "След. глава",
       nextUrl: "/api/books/nav",
       nextBody: { delta: 1 },
+      stopMethod: "POST",
       stopUrl: "/api/books/stop",
       stopBody: {},
     });
@@ -130,6 +160,7 @@ export function summarizeActivity(a) {
       nextLabel: "След. трек",
       nextUrl: "/api/dj/next",
       nextBody: {},
+      stopMethod: "POST",
       stopUrl: "/api/dj/stop",
       stopBody: {},
     });
@@ -148,6 +179,7 @@ export function summarizeActivity(a) {
       nextLabel: "Пропустить",
       nextUrl: "/api/games/melody/skip",
       nextBody: {},
+      stopMethod: "POST",
       stopUrl: "/api/games/stop",
       stopBody: {},
     });
@@ -160,6 +192,7 @@ export function summarizeActivity(a) {
       subtitle: `Улики ${g.detective?.clues_shown || 0}/${g.detective?.clues_total || 3}`,
       href: "/studio?tab=games",
       canNext: false,
+      stopMethod: "POST",
       stopUrl: "/api/games/stop",
       stopBody: {},
     });
@@ -175,6 +208,7 @@ export function summarizeActivity(a) {
       nextLabel: "След. фаза",
       nextUrl: "/api/games/party/next",
       nextBody: {},
+      stopMethod: "POST",
       stopUrl: "/api/games/stop",
       stopBody: {},
     });
@@ -189,6 +223,7 @@ export function summarizeActivity(a) {
       subtitle: "Диалог двух ведущих",
       href: "/studio?tab=podcast",
       canNext: false,
+      stopMethod: "POST",
       stopUrl: "/api/stop",
       stopBody: {},
     });
@@ -209,6 +244,7 @@ export function summarizeActivity(a) {
       subtitle: "Голосовой режим",
       href: "/studio?tab=podcast",
       canNext: false,
+      stopMethod: "POST",
       stopUrl: "/api/modes",
       stopBody: { mode: "off" },
     });
@@ -225,6 +261,7 @@ export function summarizeActivity(a) {
       subtitle: a.ambient.sleep_s > 0 ? `Сон ${Math.ceil(a.ambient.sleep_s / 60)}м` : "Фон / радио",
       href: "/",
       canNext: false,
+      stopMethod: "POST",
       stopUrl: "/api/ambient",
       stopBody: { id: "off" },
     });
@@ -246,8 +283,9 @@ export async function runActivityNext(item) {
 
 export async function stopActivityItem(item) {
   if (!item?.stopUrl) return;
+  const method = item.stopMethod || "POST";
   try {
-    await api("POST", item.stopUrl, item.stopBody || {});
+    await api(method, item.stopUrl, method === "DELETE" ? undefined : (item.stopBody || {}));
     toast("Остановлено");
     await refreshActivity();
   } catch (error) {

@@ -219,6 +219,7 @@ pub async fn activity(State(app): State<App>) -> Response {
             "ambient": app.ambient.status(),
             "debate_active": crate::debate::is_active(),
             "presence": app.presence.status(&app.store),
+            "timers": app.scheduler.active_timers_json(),
         }),
     )
 }
@@ -842,6 +843,121 @@ pub async fn pc_screen(State(app): State<App>, axum::Json(value): axum::Json<ser
             app.engine.journal.note("экран", q, &ans);
             reply(StatusCode::OK, json!({"ok": true, "text": ans}))
         }
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn pc_action(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let action = value["action"].as_str().unwrap_or("").trim();
+    const ALLOWED: &[&str] = &[
+        "media_play_pause",
+        "media_next",
+        "media_prev",
+        "volume_up",
+        "volume_down",
+        "volume_mute",
+        "lock_screen",
+        "sleep_timer",
+        "cancel_sleep",
+        "screenshot_save",
+        "active_window",
+    ];
+    if !ALLOWED.contains(&action) {
+        return super::bad("Недопустимое действие ПК");
+    }
+    let mins = value["minutes"].as_i64().unwrap_or(30).clamp(1, 720);
+    match crate::tools::call_pc_action(&app.store, action, mins).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_get(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.scheduler.status())
+}
+
+pub async fn schedule_timer_add(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let label = value["label"].as_str().unwrap_or("Таймер").to_string();
+    let secs = value["seconds"]
+        .as_u64()
+        .or_else(|| value["minutes"].as_u64().map(|m| m.saturating_mul(60)))
+        .unwrap_or(300);
+    match app.scheduler.add_timer(label, secs) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_timer_del(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID таймера");
+    }
+    let _ = app.scheduler.cancel_timer(&id);
+    reply(StatusCode::OK, app.scheduler.status())
+}
+
+pub async fn schedule_routine_add(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let title = value["title"].as_str().unwrap_or("").to_string();
+    let time = value["time"].as_str().unwrap_or("").to_string();
+    let action = value["action"].as_str().unwrap_or("say").to_string();
+    let payload = value["payload"].as_str().unwrap_or("").to_string();
+    let volume = value.get("volume").and_then(serde_json::Value::as_i64).filter(|&v| v > 0);
+    let days: Vec<u8> = value["days"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(serde_json::Value::as_u64)
+                .filter(|&d| (1..=7).contains(&d))
+                .map(|d| d as u8)
+                .collect()
+        })
+        .unwrap_or_default();
+    match app.scheduler.add_routine(title, time, days, action, payload, volume) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_routine_toggle(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID рутины");
+    }
+    let enabled = value["enabled"].as_bool().unwrap_or(true);
+    match app.scheduler.toggle_routine(&id, enabled) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_routine_run(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID рутины");
+    }
+    match app.scheduler.run_routine_now(app.engine.clone(), &id) {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn schedule_routine_del(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID рутины");
+    }
+    match app.scheduler.delete_routine(&id) {
+        Ok(st) => reply(StatusCode::OK, st),
         Err(e) => super::bad(e),
     }
 }

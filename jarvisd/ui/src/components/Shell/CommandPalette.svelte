@@ -20,10 +20,12 @@
       { id: "nav-games", group: "Навигация", label: "Голосовые игры", hint: "Мелодия, Детектив, Мафия", icon: "gamepad", action: () => goto("/studio?tab=games") },
       { id: "nav-dj", group: "Навигация", label: "AI-DJ", hint: "Умный радиоэфир", icon: "disc", action: () => goto("/studio?tab=dj") },
       { id: "nav-notes", group: "Навигация", label: "Заметки CyberNotes", hint: "Поиск и создание", icon: "note", action: () => goto("/studio?tab=notes") },
+      { id: "nav-schedule", group: "Навигация", label: "Расписание и таймеры", hint: "Студия · Таймеры и рутины", icon: "clock", action: () => goto("/studio?tab=schedule") },
       { id: "nav-player", group: "Навигация", label: "Плеер", hint: "YouTube и Яндекс Музыка", icon: "music", action: () => goto("/player") },
       { id: "nav-chars", group: "Навигация", label: "Характеры", hint: "Системные роли", icon: "smile", action: () => goto("/characters") },
       { id: "nav-memory", group: "Навигация", label: "Память", hint: "Досье и летопись", icon: "list", action: () => goto("/memory") },
       { id: "nav-speaker", group: "Навигация", label: "Колонка", hint: "Звук, ПК, присутствие", icon: "speaker", action: () => goto("/speaker") },
+      { id: "nav-speaker-int", group: "Навигация", label: "Колонка · Интеграции", hint: "ПК-компаньон, Home Assistant", icon: "link", action: () => goto("/speaker?tab=integrations") },
       { id: "nav-conn", group: "Навигация", label: "Подключения", hint: "Ключи и плагины", icon: "puzzle", action: () => goto("/connections") },
       { id: "nav-charts", group: "Навигация", label: "Графики", hint: "CPU, память, температура", icon: "activity", action: () => goto("/charts") },
       { id: "nav-logs", group: "Навигация", label: "Логи", hint: "Журнал событий", icon: "list", action: () => goto("/logs") },
@@ -37,6 +39,22 @@
       {
         id: "act-talk", group: "Действия", label: "Слушать прямо сейчас", hint: "Активировать микрофон", icon: "mic",
         action: async () => { await api("POST", "/api/talk"); toast("Слушаю…"); },
+      },
+      {
+        id: "act-timer-5", group: "Действия", label: "Таймер на 5 минут", hint: "Быстрый обратный отсчёт", icon: "clock",
+        action: async () => {
+          await api("POST", "/api/schedule/timer", { minutes: 5, label: "Таймер" });
+          await refreshActivity();
+          toast("Таймер на 5 мин");
+        },
+      },
+      {
+        id: "act-timer-15", group: "Действия", label: "Таймер на 15 минут", hint: "Быстрый обратный отсчёт", icon: "clock",
+        action: async () => {
+          await api("POST", "/api/schedule/timer", { minutes: 15, label: "Таймер" });
+          await refreshActivity();
+          toast("Таймер на 15 мин");
+        },
       },
       {
         id: "act-stop", group: "Действия", label: "Остановить всё", hint: "Выключить звук, режимы, книги", icon: "stop",

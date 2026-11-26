@@ -10,6 +10,7 @@
   let changingPassword = $state(false);
   let lanOnly = $state(!!S.settings.lan_only);
   let changingAccess = $state(false);
+  let confirmLanOpen = $state(false);
   let checks = $state.raw(S.security);
 
   async function changePassword(event) {
@@ -24,13 +25,8 @@
     changingPassword = false;
   }
 
-  async function changeAccess(event) {
-    const input = event.currentTarget;
-    const allowedOnlyFromLan = input.checked;
-    if (!allowedOnlyFromLan && !confirm("Разрешить вход в настройки не только из домашней сети?")) {
-      input.checked = lanOnly;
-      return;
-    }
+  async function applyAccess(allowedOnlyFromLan) {
+    confirmLanOpen = false;
     changingAccess = true;
     await act(null, async () => {
       await api("PUT", "/api/settings", { lan_only: allowedOnlyFromLan });
@@ -38,8 +34,20 @@
       await reload();
       checks = S.security;
     });
-    input.checked = lanOnly;
     changingAccess = false;
+  }
+
+  async function changeAccess(event) {
+    const input = event.currentTarget;
+    const allowedOnlyFromLan = input.checked;
+    if (!allowedOnlyFromLan) {
+      input.checked = lanOnly;
+      confirmLanOpen = true;
+      return;
+    }
+    confirmLanOpen = false;
+    await applyAccess(true);
+    input.checked = lanOnly;
   }
 </script>
 
@@ -80,6 +88,17 @@
       Только из домашней сети
       {@html tip("Настройки открываются только с устройств в вашей Wi-Fi сети. Выключайте, только если точно понимаете зачем (например, доступ через свой VPN).")}
     </label>
+    {#if confirmLanOpen}
+      <div class="inline-confirm" role="alert">
+        <span>Разрешить вход в настройки не только из домашней сети?</span>
+        <button class="btn danger sm" type="button" disabled={changingAccess} onclick={() => applyAccess(false)}>
+          {@html icon("check")}Разрешить
+        </button>
+        <button class="btn ghost sm" type="button" disabled={changingAccess} onclick={() => { confirmLanOpen = false; }}>
+          {@html icon("x")}Отмена
+        </button>
+      </div>
+    {/if}
   </div>
 </section>
 

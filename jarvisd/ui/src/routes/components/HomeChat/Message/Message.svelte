@@ -18,7 +18,7 @@
 
 <script>
   import { untrack } from "svelte";
-  import { copyText, icon, toast } from "#helpers/core.js";
+  import { api, copyText, icon, toast } from "#helpers/core.js";
   import { animateAnswer } from "./animateAnswer.js";
 
   let { row, animate, follow } = $props();
@@ -26,6 +26,7 @@
   let node = $state();
   let previousAnswer;
   let previousSize;
+  let busyAct = $state("");
 
   async function copyAnswer() {
     try {
@@ -33,6 +34,37 @@
       toast("Ответ скопирован");
     } catch {
       toast("Не удалось скопировать", true);
+    }
+  }
+
+  async function speakAnswer() {
+    if (busyAct) return;
+    busyAct = "speak";
+    try {
+      await api("POST", "/api/say", { text: row.answer, direct: true });
+      toast("Озвучиваю на колонке");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busyAct = "";
+    }
+  }
+
+  async function saveToNotes() {
+    if (busyAct) return;
+    busyAct = "note";
+    try {
+      await api("POST", "/api/notes/save", {
+        title: "",
+        content: row.answer,
+        tags: ["чат"],
+        folder: "Голосовые заметки",
+      });
+      toast("Сохранено в CyberNotes");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busyAct = "";
     }
   }
 
@@ -64,6 +96,8 @@
     <span class="t" use:animateAnswer={{ text: row.answer, animate, follow, measure: () => previousSize }}></span>
     <span class="m">
       {row.time}
+      <button type="button" class="b-copy" disabled={busyAct === "speak"} onclick={speakAnswer} title="Озвучить на колонке" aria-label="Озвучить на колонке">{@html icon("voice")}</button>
+      <button type="button" class="b-copy" disabled={busyAct === "note"} onclick={saveToNotes} title="Сохранить в CyberNotes" aria-label="Сохранить в CyberNotes">{@html icon("note")}</button>
       <button type="button" class="b-copy" onclick={copyAnswer} title="Скопировать ответ" aria-label="Скопировать ответ">{@html icon("copy")}</button>
     </span>
   {/if}

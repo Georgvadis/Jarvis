@@ -1,13 +1,16 @@
 <script>
   import { api, icon, toast } from "#helpers/core.js";
   import { activity, fmtClock, refreshActivity, runActivityNext, runScenario, stopActivityItem, summarizeActivity } from "#state/activity.js";
+  import { speaker } from "#state/panelState.js";
 
   let { overview } = $props();
   let busy = $state(false);
+  let pcBusy = $state("");
 
   let completed = $derived(overview.steps.filter(({ done }) => done).length);
   let focusRunning = $derived(Boolean($activity.focus?.running));
   let focusRem = $derived(Number($activity.focus?.remaining_s || 0));
+  let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
   let liveItems = $derived(summarizeActivity($activity).filter((i) => i.id !== "focus" && i.id !== "ambient"));
 
   async function toggleFocus() {
@@ -31,6 +34,24 @@
       await runScenario(id);
     } finally {
       busy = false;
+    }
+  }
+
+  async function pcCmd(action) {
+    if (pcBusy) return;
+    pcBusy = action;
+    try {
+      if (action === "screen") {
+        const res = await api("POST", "/api/pc/screen", { question: "Кратко опиши, что сейчас на экране." });
+        toast(res.text || "Экран проанализирован");
+      } else {
+        const res = await api("POST", "/api/pc/action", { action });
+        toast(res.message || "Выполнено на ПК");
+      }
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      pcBusy = "";
     }
   }
 </script>
@@ -72,6 +93,26 @@
       <span>{focusRunning ? `Фокус ${fmtClock(focusRem)}` : "Фокус 25м"}</span>
     </button>
   </div>
+
+  {#if hasPc}
+    <div class="pc-bar" aria-label="Управление ПК">
+      <span class="pc-bar-lbl">{@html icon("monitor")} ПК</span>
+      <div class="pc-bar-btns">
+        <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("screen")} title="Посмотреть экран" aria-label="Посмотреть экран">
+          {@html icon("eye")}
+        </button>
+        <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("media_play_pause")} title="Медиа плей/пауза" aria-label="Медиа плей/пауза">
+          {@html icon("play", "solid")}
+        </button>
+        <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("screenshot_save")} title="Сохранить скриншот" aria-label="Сохранить скриншот">
+          {@html icon("camera")}
+        </button>
+        <button type="button" class="ib" disabled={!!pcBusy} onclick={() => pcCmd("lock_screen")} title="Заблокировать экран ПК" aria-label="Заблокировать экран ПК">
+          {@html icon("lock")}
+        </button>
+      </div>
+    </div>
+  {/if}
 
   {#if liveItems.length}
     <div class="quick-live">

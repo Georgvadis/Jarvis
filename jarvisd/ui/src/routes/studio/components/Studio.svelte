@@ -8,8 +8,9 @@
   import StudioGames from "./StudioGames.svelte";
   import StudioNotes from "./StudioNotes.svelte";
   import StudioPodcast from "./StudioPodcast.svelte";
+  import StudioSchedule from "./StudioSchedule.svelte";
 
-  const VALID_TABS = new Set(["podcast", "books", "games", "dj", "notes"]);
+  const VALID_TABS = new Set(["podcast", "books", "games", "dj", "notes", "schedule"]);
   let tab = $state("podcast");
   let busy = $state(false);
 
@@ -53,6 +54,7 @@
     { id: "games", label: "Игры", ic: "gamepad", live: Boolean($activity.games?.active_game || $activity.modes?.mode === "rpg" || $activity.modes?.mode === "quiz") },
     { id: "dj", label: "AI-DJ", ic: "disc", live: Boolean($activity.dj?.active) },
     { id: "notes", label: "Заметки", ic: "note", live: false },
+    { id: "schedule", label: "Расписание", ic: "clock", live: Boolean($activity.timers?.length) },
   ]);
 </script>
 
@@ -95,6 +97,8 @@
   <StudioGames />
 {:else if tab === "dj"}
   <StudioDj />
+{:else if tab === "schedule"}
+  <StudioSchedule />
 {:else}
   <StudioNotes />
 {/if}

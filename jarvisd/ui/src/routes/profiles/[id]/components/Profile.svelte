@@ -20,6 +20,7 @@
   let profile = $state({ ...initial, led: { ...initial.led } });
   let dirty = $state(false);
   let working = $state("");
+  let confirmDelete = $state(false);
   let revision = 0;
   let basics = $state();
   let brain = $state();
@@ -113,7 +114,7 @@
   }
 
   function remove() {
-    if (!confirm(`Удалить ассистента «${profile.name}»?`)) return;
+    confirmDelete = false;
     return run("delete", async () => {
       await api("DELETE", "/api/profile?id=" + encodeURIComponent(profile.id), undefined, { signal });
       await reload();
@@ -143,7 +144,19 @@
   {#if !isNew && !active}
     <button class="btn" type="button" id="p-activate" disabled={Boolean(working)} onclick={activate}
       data-tip="Этот ассистент будет отвечать на «Джарвис»">{@html icon("check")}Сделать активным</button>
-    <button class="btn ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={remove}>{@html icon("trash")}Удалить</button>
+    {#if confirmDelete}
+      <div class="inline-confirm" role="alert">
+        <span>Удалить «{profile.name}»?</span>
+        <button class="btn danger sm" type="button" id="p-del-confirm" disabled={Boolean(working)} onclick={remove}>
+          {@html icon("check")}Удалить
+        </button>
+        <button class="btn ghost sm" type="button" disabled={Boolean(working)} onclick={() => { confirmDelete = false; }}>
+          {@html icon("x")}Отмена
+        </button>
+      </div>
+    {:else}
+      <button class="btn ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={() => { confirmDelete = true; }}>{@html icon("trash")}Удалить</button>
+    {/if}
   {/if}
   <span class="dirty" class:hidden={!dirty} id="dirty">есть несохранённые изменения</span>
 </div>
