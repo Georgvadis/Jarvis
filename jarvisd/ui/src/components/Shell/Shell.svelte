@@ -6,7 +6,7 @@
   import { activity, runActivityNext, stopActivityItem, summarizeActivity } from "#state/activity.js";
   import { refreshRoute, reload } from "#state/panelState.js";
   import { subscribeMusic } from "#state/player.js";
-  import { themeState, toggleThemeMode } from "#state/theme.js";
+  import { ACCENTS, setAccent, themeState, toggleThemeMode } from "#state/theme.js";
   import CommandPalette from "#components/Shell/CommandPalette.svelte";
   import Gate from "#components/Shell/Gate/Gate.svelte";
   import SpeakerDock from "#components/Shell/SpeakerDock.svelte";
@@ -44,6 +44,10 @@
 
   $effect(() => {
     document.body.classList.toggle("menu-open", menuOpen);
+  });
+
+  $effect(() => {
+    document.body.classList.toggle("hearth-lit", $activity.ambient?.active === "fireplace");
   });
 
   $effect(() => {
@@ -130,8 +134,14 @@
 <div id="app" class="app" class:hidden={!active}>
   <aside class="side" class:open={menuOpen} id="side">
     <a class="brand" href="/">
-      <span class="orb" id="orb" data-s={orb.state} role="img" aria-label={orb.text} title={orb.text}><i></i></span>
-      <span class="brand-t"><b>YaJarvis</b><small id="ver">v{sidebar?.version ?? "…"}</small></span>
+      <span class="brand-mark" aria-hidden="true">
+        {@html icon("flame")}
+        <span class="brand-mark-dot" id="orb" data-s={orb.state} title={orb.text}></span>
+      </span>
+      <span class="brand-t">
+        <span class="brand-row"><b>YaJarvis</b><small class="brand-ver" id="ver">v{sidebar?.version ?? "…"}</small></span>
+        <span class="brand-st">{orb.text || "Колонка готова"}</span>
+      </span>
     </a>
 
     {#if activeProfile}
@@ -178,21 +188,41 @@
     </button>
 
     <nav class="nav" id="nav">
+      <div class="nav-group">Дом</div>
       <a href="/" data-page="home" class:on={page === "home"}>{@html icon("home")}Главная</a>
       <a href="/player" data-page="player" class:on={page === "player"}>{@html icon("music")}Медиа<span class="nav-eq" class:hidden={!playing} id="nav-eq"><i></i><i></i><i></i></span><span class="dot" class:hidden={playing || !mediaActive}></span></a>
       <a href="/studio" data-page="studio" class:on={page === "studio"}>{@html icon("layers")}Студия<span class="dot" class:hidden={!studioActive}></span></a>
+
+      <div class="nav-group">Память и ИИ</div>
       <a href="/memory" data-page="memory" class:on={page === "memory"}>{@html icon("brain")}Знания</a>
       <a href={defaultAssistantHref} data-page="assistants" class:on={isAssistantsPage}>{@html icon("users")}Ассистенты</a>
+
+      <div class="nav-group">Устройство</div>
       <a href="/speaker" data-page="system" class:on={isSystemPage}>{@html icon("sliders")}Система<span class="dot" class:hidden={!sidebar?.updateAvailable} id="upd-dot"></span></a>
     </nav>
 
     <div class="side-foot">
-      <button type="button" class="theme-toggle" onclick={toggleThemeMode}
-        title={$themeState.mode === "dark" ? "Светлая тема" : "Тёмная тема"}
-        aria-label="Переключить тему">
-        {@html icon($themeState.mode === "dark" ? "sun" : "moon")}
-      </button>
-      <button class="navbtn" id="logout" type="button" onclick={logout}>
+      <div class="side-theme-row" aria-label="Оформление">
+        <button type="button" class="theme-toggle" onclick={toggleThemeMode}
+          title={$themeState.mode === "dark" ? "Светлая тема" : "Тёмная тема"}
+          aria-label="Переключить тему">
+          {@html icon($themeState.mode === "dark" ? "sun" : "moon")}
+        </button>
+        <div class="side-accents" role="group" aria-label="Оттенок">
+          {#each ACCENTS as acc (acc.id)}
+            <button
+              type="button"
+              class={"side-acc-dot ac-" + acc.id}
+              class:on={$themeState.accent === acc.id}
+              title={acc.label}
+              aria-label={acc.label}
+              aria-pressed={$themeState.accent === acc.id}
+              onclick={() => setAccent(acc.id)}
+            ></button>
+          {/each}
+        </div>
+      </div>
+      <button class="navbtn side-logout" id="logout" type="button" onclick={logout}>
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
         Выйти
       </button>

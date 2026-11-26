@@ -358,6 +358,7 @@
       {/if}
     </section>
 
+    <div class="mem-split">
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
@@ -440,6 +441,7 @@
         <p class={styles.empty}>Появится после первого длинного разговора.</p>
       {/if}
     </section>
+    </div>
   </div>
 {:else}
   <div class={styles.memory}>

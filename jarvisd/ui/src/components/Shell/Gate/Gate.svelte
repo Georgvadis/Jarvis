@@ -1,5 +1,6 @@
 <script>
   import { tick } from "svelte";
+  import { icon } from "#helpers/core.js";
 
   let { access, login } = $props();
   let visible = $derived(access.status === "gate");
@@ -36,8 +37,11 @@
 
 <div id="gate" class="gate" class:hidden={!visible}>
   <form id="gate-form" class="gate-card" autocomplete="on" onsubmit={submit}>
-    <div class="brand"><span class="logo"></span>Джарвис</div>
-    <p id="gate-text" class="gate-text">{setup ? "Придумайте пароль для настроек колонки. Он понадобится, чтобы зайти сюда снова." : "Пароль от настроек колонки"}</p>
+    <div class="gate-brand">
+      <span class="brand-mark" aria-hidden="true">{@html icon("flame")}</span>
+      <span>YaJarvis</span>
+    </div>
+    <p id="gate-text" class="gate-text">{setup ? "Задайте пароль для панели управления" : "Вход в панель управления"}</p>
     <input id="gate-pass" type="password" autocomplete={setup ? "new-password" : "current-password"}
       placeholder="Пароль" required bind:this={input} bind:value={password}>
     <input id="gate-pass2" type="password" autocomplete="new-password" placeholder="Пароль ещё раз"

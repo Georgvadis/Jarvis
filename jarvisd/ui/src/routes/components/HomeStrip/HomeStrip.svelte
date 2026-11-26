@@ -1,10 +1,9 @@
 <script>
   import { onMount } from "svelte";
   import { api, icon, toast } from "#helpers/core.js";
-  import { activity } from "#state/activity.js";
   import { S } from "#state/panelState.js";
 
-  let { overview, activeProfile, sys = {} } = $props();
+  let { activeProfile, sys = {} } = $props();
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -25,18 +24,18 @@
   let sttLabel = $derived(activeProfile ? labelPlugin(activeProfile.stt_engine || "elevenlabs", S.stt_plugins) : "");
   let llmLabel = $derived(activeProfile ? labelPlugin(activeProfile.llm_engine || activeProfile.llm_plugin || activeProfile.engine, S.text_plugins) : "");
   let ttsLabel = $derived(activeProfile ? labelPlugin(activeProfile.tts_engine || "elevenlabs", S.tts_plugins) : "");
+  let pipeShort = $derived(isClassic ? llmLabel : labelPlugin(activeProfile?.engine, []));
+  let pipeFull = $derived(isClassic ? `${sttLabel} → ${llmLabel} → ${ttsLabel}` : pipeShort);
 
-  let memPct = $derived(sys.mem_total_mb ? Math.round(((sys.mem_total_mb - (sys.mem_avail_mb || 0)) / sys.mem_total_mb) * 100) : null);
   let gpuLoaded = $derived(Boolean(gpu?.whisper_loaded || gpu?.qwen_loaded));
   let gpuLabel = $derived.by(() => {
-    if (!gpu) return "GPU: …";
+    if (!gpu) return "GPU…";
     if (!gpu.online) return "GPU офлайн";
     const parts = [];
     if (gpu.whisper_loaded) parts.push("Whisper");
     if (gpu.qwen_loaded) parts.push("Qwen3");
-    return parts.length ? `VRAM: ${parts.join("+")}` : "GPU: сон";
+    return parts.length ? parts.join("+") : "GPU готов";
   });
-  let presence = $derived($activity.presence || { state: "unknown" });
 
   async function refreshStrip() {
     try {
@@ -78,67 +77,31 @@
   });
 </script>
 
-<div class="home-strip" aria-label="Статус колонки и системы">
-  <div class="hstat">
-    <div class="hstat-top">
-      <span>Микрофон</span>
-      {@html icon("mic")}
-    </div>
-    <div class="hstat-val">
-      <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline}></span>
-      <span>{overview.micOnline ? "На связи" : "Отключён"}</span>
-      {#if presence.phone_ip && presence.state !== "unknown"}
-        <span class="hstat-tag">
-          {presence.state === "home" ? "Дома" : "Нет дома"}
-        </span>
-      {/if}
-    </div>
-  </div>
-
-  <div class="hstat">
-    <div class="hstat-top">
-      <span>Пайплайн</span>
+<div class="sys-pill" aria-label="Статус системы">
+  {#if activeProfile}
+    <span class="sys-seg" title={pipeFull}>
       {@html icon("sparkles")}
-    </div>
-    <div class="hstat-val">
-      {#if activeProfile}
-        {#if isClassic}
-          <span title={`${sttLabel} → ${llmLabel} → ${ttsLabel}`}>{sttLabel} → {llmLabel} → {ttsLabel}</span>
-        {:else}
-          <span>{labelPlugin(activeProfile.engine, [])}</span>
-        {/if}
-      {:else}
-        <span class="muted">—</span>
-      {/if}
-    </div>
-  </div>
+      <span>{pipeShort}</span>
+    </span>
+    <span class="sys-div" aria-hidden="true"></span>
+  {/if}
 
-  <div class="hstat">
-    <div class="hstat-top">
-      <span>GPU</span>
-      {@html icon("cpu")}
-    </div>
-    <div class="hstat-val">
-      <span class="dot" class:on={gpu?.online} class:off={gpu && !gpu.online}></span>
-      <span>{gpuLabel}</span>
-      {#if gpuLoaded}
-        <button type="button" class="hstat-act" disabled={unloading} onclick={unloadGpu} title="Освободить VRAM">
-          {@html icon("bolt")}
-        </button>
-      {/if}
-    </div>
-  </div>
+  <span class="sys-seg">
+    <span class="dot" class:on={gpu?.online} class:off={gpu && !gpu.online}></span>
+    <span>{gpuLabel}</span>
+    {#if gpuLoaded}
+      <button type="button" class="sys-vram-btn" disabled={unloading} onclick={unloadGpu} title="Освободить VRAM" aria-label="Освободить VRAM">
+        {@html icon("bolt")}
+      </button>
+    {/if}
+  </span>
 
-  <a class="hstat" href="/charts" title="Открыть графики">
-    <div class="hstat-top">
-      <span>Система</span>
-      {@html icon("right")}
-    </div>
-    <div class="hstat-val">
-      {#if stats.cpu != null}<span>CPU {stats.cpu}%</span>{/if}
-      {#if memPct != null}<span class="muted">· RAM {memPct}%</span>{/if}
-      {#if sys.temp_c}<span class="muted">· {Math.round(sys.temp_c)}°C</span>{/if}
-      {#if stats.cpu == null && memPct == null && !sys.temp_c}<span class="muted">—</span>{/if}
-    </div>
+  <span class="sys-div" aria-hidden="true"></span>
+
+  <a class="sys-seg link" href="/charts" title="Открыть мониторинг">
+    {@html icon("activity")}
+    {#if stats.cpu != null}<span>{stats.cpu}%</span>{/if}
+    {#if sys.temp_c}<span>{Math.round(sys.temp_c)}°C</span>{/if}
+    {#if stats.cpu == null && !sys.temp_c}<span>Мониторинг</span>{/if}
   </a>
 </div>

@@ -538,24 +538,23 @@
 
 <SystemNav current="speaker" />
 
-<header class="ph">
+<header class="speaker-head">
   <h1>Колонка</h1>
+  <div class="seg" role="tablist" aria-label="Разделы настроек колонки">
+    <button type="button" role="tab" aria-selected={tab === "general"} class:on={tab === "general"} onclick={() => switchTab("general")}>
+      {@html icon("home")}<span>Основное</span>
+    </button>
+    <button type="button" role="tab" aria-selected={tab === "voice"} class:on={tab === "voice"} onclick={() => switchTab("voice")}>
+      {@html icon("mic")}<span>Микрофон</span>
+    </button>
+    <button type="button" role="tab" aria-selected={tab === "light"} class:on={tab === "light"} onclick={() => switchTab("light")}>
+      {@html icon("sun")}<span>Свет и ночь</span>
+    </button>
+    <button type="button" role="tab" aria-selected={tab === "integrations"} class:on={tab === "integrations"} onclick={() => switchTab("integrations")}>
+      {@html icon("monitor")}<span>Интеграции</span>
+    </button>
+  </div>
 </header>
-
-<div class="hub-tabs sub-tabs" role="tablist" aria-label="Разделы настроек колонки">
-  <button type="button" role="tab" aria-selected={tab === "general"} class="hub-tab" class:on={tab === "general"} onclick={() => switchTab("general")}>
-    {@html icon("home")}<span>Основное</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "voice"} class="hub-tab" class:on={tab === "voice"} onclick={() => switchTab("voice")}>
-    {@html icon("mic")}<span>Микрофон</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "light"} class="hub-tab" class:on={tab === "light"} onclick={() => switchTab("light")}>
-    {@html icon("sun")}<span>Свет и ночь</span>
-  </button>
-  <button type="button" role="tab" aria-selected={tab === "integrations"} class="hub-tab" class:on={tab === "integrations"} onclick={() => switchTab("integrations")}>
-    {@html icon("monitor")}<span>Интеграции</span>
-  </button>
-</div>
 
 {#snippet homeFields()}
   <div class={styles.services}>

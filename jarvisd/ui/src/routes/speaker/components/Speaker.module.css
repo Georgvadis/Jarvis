@@ -17,9 +17,9 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: var(--raise);
-  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--glass-inset, var(--raise));
+  border: 1px solid var(--glass-border, var(--line));
 }
 
 .vuHead {
@@ -35,7 +35,7 @@
   position: relative;
   height: 8px;
   border-radius: 999px;
-  background: var(--bg0);
+  background: var(--input-bg, var(--bg0));
   overflow: hidden;
 }
 

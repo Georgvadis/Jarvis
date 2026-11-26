@@ -1,11 +1,11 @@
 import { writable } from "svelte/store";
 
 export const ACCENTS = [
-  { id: "orange", label: "Янтарь", hex: "#e59a54" },
-  { id: "emerald", label: "Шалфей", hex: "#5ea87a" },
-  { id: "blue", label: "Сланец", hex: "#6b93c4" },
-  { id: "violet", label: "Лаванда", hex: "#9b87c4" },
-  { id: "rose", label: "Терракота", hex: "#d1736b" },
+  { id: "orange", label: "Камин", hex: "#f2994a" },
+  { id: "emerald", label: "Хвоя", hex: "#63b888" },
+  { id: "blue", label: "Вечер", hex: "#76a2d6" },
+  { id: "violet", label: "Сумерки", hex: "#a892d6" },
+  { id: "rose", label: "Угли", hex: "#df786d" },
 ];
 
 const THEME_KEY = "jarvis.theme";
@@ -23,11 +23,11 @@ function applyDom(mode, accent) {
   else delete root.dataset.accent;
 
   const metaTheme = document.querySelector('meta[name="theme-color"]');
-  if (metaTheme) metaTheme.setAttribute("content", mode === "light" ? "#f6f4ef" : "#171614");
+  if (metaTheme) metaTheme.setAttribute("content", mode === "light" ? "#f5ede3" : "#120e0b");
   const metaScheme = document.querySelector('meta[name="color-scheme"]');
   if (metaScheme) metaScheme.setAttribute("content", mode === "light" ? "light" : "dark");
 
-  const hex = VALID_ACCENTS.get(accent) || "#e59a54";
+  const hex = VALID_ACCENTS.get(accent) || "#f2994a";
   document.querySelectorAll("#spark-fill stop").forEach((stop) => {
     stop.setAttribute("stop-color", hex);
   });

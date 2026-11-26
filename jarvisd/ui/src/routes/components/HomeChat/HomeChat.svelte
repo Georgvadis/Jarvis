@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { api, icon, ring, toast, upload } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
-  import { activity, refreshActivity } from "#state/activity.js";
+  import { refreshActivity } from "#state/activity.js";
   import { avatar, journal, S, speakerState } from "#state/panelState.js";
   import { chatMessages } from "./messages.js";
   import Message from "./Message/Message.svelte";
@@ -50,7 +50,6 @@
   let status = $derived(snapshot.talking ? "говорит и слушает…"
     : snapshot.state.title.replace(/^Жду/, "ждёт").replace(/^Микрофон/, "микрофон"));
   let typing = $derived(draft.trim() !== "");
-  let focusRunning = $derived(Boolean($activity.focus?.running));
 
   onMount(() => {
     animate = true;
@@ -311,20 +310,6 @@
     }
   }
 
-  async function chipFocus() {
-    if (chipBusy) return;
-    chipBusy = "focus";
-    try {
-      const res = await api("POST", "/api/focus", { minutes: focusRunning ? 0 : 25 }, { signal });
-      await refreshActivity();
-      toast(res.running ? "Фокус 25 мин запущен" : "Фокус остановлен");
-    } catch (error) {
-      if (!signal.aborted) toast(error.message, true);
-    } finally {
-      chipBusy = "";
-    }
-  }
-
   async function chipRecap() {
     if (chipBusy) return;
     chipBusy = "recap";
@@ -343,21 +328,6 @@
   function chipNote() {
     draft = "Запиши заметку: ";
     sayInput?.focus();
-  }
-
-  async function chipBriefing() {
-    if (chipBusy) return;
-    chipBusy = "briefing";
-    try {
-      await api("POST", "/api/briefing", { speak }, { signal });
-      stickToBottom = true;
-      void poll();
-      toast("Брифинг готов");
-    } catch (error) {
-      if (!signal.aborted) toast(error.message, true);
-    } finally {
-      chipBusy = "";
-    }
   }
 </script>
 
@@ -419,8 +389,9 @@
           <b>Ничего не найдено</b>
           <span>Попробуйте другой запрос</span>
         {:else}
-          <b>Здесь будет переписка</b>
-          <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
+          <span class="tg-empty-icon" aria-hidden="true">{@html icon("flame")}</span>
+          <b>Готов к беседе</b>
+          <span>Скажите «{snapshot.wakeWord}» или напишите ниже</span>
         {/if}
       </div>
     {/each}
@@ -436,17 +407,11 @@
   <button type="button" class="chat-chip" disabled={chipBusy === "screen"} onclick={chipScreen}>
     {@html icon("monitor")} Экран ПК
   </button>
-  <button type="button" class="chat-chip" class:on={focusRunning} disabled={chipBusy === "focus"} onclick={chipFocus}>
-    {@html icon("bolt")} {focusRunning ? "Стоп фокус" : "Фокус 25м"}
-  </button>
   <button type="button" class="chat-chip" disabled={chipBusy === "recap"} onclick={chipRecap}>
     {@html icon("book")} Суть книги
   </button>
   <button type="button" class="chat-chip" onclick={chipNote}>
     {@html icon("note")} Заметка
-  </button>
-  <button type="button" class="chat-chip" disabled={chipBusy === "briefing"} onclick={chipBriefing}>
-    {@html icon("sparkles")} Брифинг
   </button>
 </div>
 

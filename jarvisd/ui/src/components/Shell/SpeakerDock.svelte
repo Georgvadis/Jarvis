@@ -71,6 +71,7 @@
   }
 </script>
 
+<div class="dock-wrap">
 <footer class="dock" aria-label="Панель колонки">
   {#if active}
     <a class="dock-track" href="/player">
@@ -104,7 +105,7 @@
   {:else if topActivity}
     <a class="dock-track" href={topActivity.href}>
       <div class="dock-art">
-        {@html icon("layers")}
+        {@html icon(topActivity.id === "ambient" ? "flame" : "layers")}
       </div>
       <div class="dock-info">
         <b>{topActivity.title}</b>
@@ -161,3 +162,4 @@
     <span>{isTalking ? "Стоп" : "Слушать"}</span>
   </button>
 </footer>
+</div>

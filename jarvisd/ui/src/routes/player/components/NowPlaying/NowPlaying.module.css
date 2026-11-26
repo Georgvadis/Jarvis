@@ -43,7 +43,8 @@
   aspect-ratio: 1;
   overflow: hidden;
   border-radius: 22px;
-  background: linear-gradient(135deg, var(--raise2), var(--bg0));
+  border: 1px solid var(--glass-border, var(--line));
+  background: linear-gradient(135deg, var(--glass-inset-hover, var(--raise2)), var(--glass-inset, var(--bg0)));
   box-shadow: var(--card-shadow);
 }
 

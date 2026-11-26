@@ -26,7 +26,18 @@
   let active = $derived(amb.active || "");
   let sleepS = $derived(Number(amb.sleep_s || 0));
   let presets = $derived(amb.presets?.length ? amb.presets : fallbackPresets);
+  let fireplaceItem = $derived(presets.find((p) => p.id === "fireplace") || null);
+  let otherPresets = $derived(presets.filter((p) => p.id !== "fireplace"));
   let displayVol = $derived(draggingVol ? localVol : (typeof amb.volume === "number" ? amb.volume : localVol));
+
+  function presetIcon(item) {
+    if (item.kind === "radio") return "radio";
+    if (item.id === "fireplace") return "flame";
+    if (item.id === "rain") return "droplets";
+    if (item.id === "ocean") return "waves";
+    if (item.id === "white") return "wind";
+    return "cloud";
+  }
 
   $effect(() => {
     if (!draggingVol && typeof amb.volume === "number" && volSlider) {
@@ -128,12 +139,12 @@
   }
 </script>
 
-<section class="card" aria-label="Фон и радио">
+<section class="card" aria-label="Камин и атмосфера">
   <h2>
-    {@html icon("radio")} Фон и радио
+    {@html icon("flame")} Камин и атмосфера
     <span class="amb-head-actions">
       <button class="btn sm ghost" type="button" onclick={() => { showAdd = !showAdd; }} title="Добавить радиопоток">
-        {@html icon(showAdd ? "x" : "plus")} Станция
+        {@html icon(showAdd ? "x" : "plus")} Радио
       </button>
       {#if active}
         <button class="btn sm ghost" type="button" disabled={busy} onclick={() => toggle(active)}>
@@ -151,11 +162,27 @@
       </div>
     </form>
   {/if}
+  {#if fireplaceItem}
+    <button
+      type="button"
+      class="hearth-hero"
+      class:on={active === "fireplace"}
+      disabled={busy}
+      onclick={() => toggle("fireplace")}
+    >
+      <span class="hearth-icon">{@html icon("flame")}</span>
+      <span class="hearth-meta">
+        <b>{fireplaceItem.name}</b>
+        <small>{active === "fireplace" ? "Горит · тёплый треск" : "Уютный треск дров"}</small>
+      </span>
+      <span class="hearth-pill">{active === "fireplace" ? "Горит" : "Зажечь"}</span>
+    </button>
+  {/if}
   <div class="amb-grid">
-    {#each presets as item (item.id)}
+    {#each otherPresets as item (item.id)}
       <div class="amb-wrap">
         <button type="button" class="amb-btn" class:on={active === item.id} class:has-del={item.custom} disabled={busy} onclick={() => toggle(item.id)}>
-          {@html icon(item.kind === "radio" ? "radio" : "cloud")}
+          {@html icon(presetIcon(item))}
           <span>{item.name}</span>
         </button>
         {#if item.custom}

@@ -86,6 +86,35 @@
   }
 </script>
 
+{#if liveItems.length}
+  <section class="card live-deck" aria-label="Сейчас активно">
+    <div class="live-deck-head">
+      <span class="live-dot"></span>
+      <span>Сейчас активно</span>
+    </div>
+    <div class="live-deck-list">
+      {#each liveItems as item (item.id)}
+        <div class="live-row">
+          <a class="live-link" href={item.href}>
+            <b>{item.title}</b>
+            {#if item.subtitle}<small>{item.subtitle}</small>{/if}
+          </a>
+          <div class="live-acts">
+            {#if item.canNext}
+              <button type="button" class="ib" title={item.nextLabel || "Далее"} aria-label={item.nextLabel || "Далее"} onclick={() => void runActivityNext(item)}>
+                {@html icon("skip")}
+              </button>
+            {/if}
+            <button type="button" class="ib danger" title="Остановить" aria-label="Остановить" onclick={() => void stopActivityItem(item)}>
+              {@html icon("stop", "solid")}
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </section>
+{/if}
+
 {#if completed < overview.steps.length}
   <div class="card">
     <h2>{@html icon("sparkles")} Настройка <span class="count">{completed} из {overview.steps.length}</span></h2>
@@ -100,9 +129,9 @@
   </div>
 {/if}
 
-<section class="card" aria-label="Быстрый пульт">
+<section class="card" aria-label="Сценарии и ритм">
   <div class="quick-head">
-    <h2>{@html icon("bolt")} Быстрый пульт</h2>
+    <h2>{@html icon("sparkles")} Сценарии</h2>
     <a class="quick-link" href="/studio">Студия {@html icon("right")}</a>
   </div>
   <div class="quick-grid">
@@ -115,7 +144,7 @@
       <span>Работа</span>
     </button>
     <button type="button" class="scen-btn" disabled={busy} onclick={() => triggerScenario("evening")}>
-      {@html icon("sparkles")}
+      {@html icon("coffee")}
       <span>Вечер</span>
     </button>
     <button type="button" class="scen-btn" disabled={busy} onclick={() => triggerScenario("sleep")}>
@@ -133,11 +162,11 @@
   <div class="quick-util">
     <button type="button" class="btn sm ghost" class:on={focusRunning} disabled={busy} onclick={toggleFocus}>
       {@html icon("bolt")}
-      <span>{focusRunning ? `Фокус ${fmtClock(focusRem)}` : "Фокус 25м"}</span>
+      <span>{focusRunning ? fmtClock(focusRem) : "Фокус 25м"}</span>
     </button>
     <button type="button" class="btn sm ghost" disabled={busy} onclick={quickTimer5m}>
       {@html icon("clock")}
-      <span>Таймер 5м</span>
+      <span>5 мин</span>
     </button>
     <button type="button" class="btn sm ghost" disabled={busy} onclick={quickBriefing}>
       {@html icon("sparkles")}
@@ -168,29 +197,6 @@
           {@html icon("lock")}
         </button>
       </div>
-    </div>
-  {/if}
-
-  {#if liveItems.length}
-    <div class="quick-live">
-      {#each liveItems as item (item.id)}
-        <div class="live-row">
-          <a class="live-link" href={item.href}>
-            <b>{item.title}</b>
-            {#if item.subtitle}<small>{item.subtitle}</small>{/if}
-          </a>
-          <div class="live-acts">
-            {#if item.canNext}
-              <button type="button" class="ib" title={item.nextLabel || "Далее"} aria-label={item.nextLabel || "Далее"} onclick={() => void runActivityNext(item)}>
-                {@html icon("skip")}
-              </button>
-            {/if}
-            <button type="button" class="ib danger" title="Остановить" aria-label="Остановить" onclick={() => void stopActivityItem(item)}>
-              {@html icon("stop", "solid")}
-            </button>
-          </div>
-        </div>
-      {/each}
     </div>
   {/if}
 </section>

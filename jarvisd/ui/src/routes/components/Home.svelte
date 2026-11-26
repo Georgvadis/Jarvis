@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import { activity } from "#state/activity.js";
   import { getPanel } from "#state/panelContext.js";
   import { S } from "#state/panelState.js";
   import HomeAmbient from "./HomeAmbient/HomeAmbient.svelte";
@@ -16,6 +17,15 @@
   let sys = $state.raw(S.sys || {});
   let chat = $state();
 
+  let presence = $derived($activity.presence || { state: "unknown" });
+  let greeting = $derived.by(() => {
+    const h = new Date().getHours();
+    if (h >= 5 && h < 12) return "Доброе утро";
+    if (h >= 12 && h < 18) return "Добрый день";
+    if (h >= 18 && h < 23) return "Добрый вечер";
+    return "Доброй ночи";
+  });
+
   onMount(() => onPoll(refresh));
 
   function refresh() {
@@ -26,15 +36,21 @@
   }
 </script>
 
-<header class="ph home-ph">
-  <h1>Главная</h1>
-  <span class="home-sub-pill">
-    <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline} id="home-dot"></span>
-    <span id="home-sub">{overview.summary}</span>
-  </span>
-</header>
+<header class="home-head">
+  <div class="home-greet">
+    <h1>{greeting}</h1>
+    <span class="home-status-pill">
+      <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline} id="home-dot"></span>
+      <span id="home-sub">{overview.micOnline ? "На связи" : "Микрофон выкл"}</span>
+      {#if presence.phone_ip && presence.state !== "unknown"}
+        <span class="sep">·</span>
+        <span>{presence.state === "home" ? "Дома" : "Нет дома"}</span>
+      {/if}
+    </span>
+  </div>
 
-<HomeStrip {overview} {activeProfile} {sys} />
+  <HomeStrip {activeProfile} {sys} />
+</header>
 
 <div class="home">
   <section class="tg" id="home-chat" aria-label="Переписка с ассистентом">
