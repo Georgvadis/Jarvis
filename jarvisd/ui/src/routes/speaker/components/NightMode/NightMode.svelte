@@ -56,12 +56,12 @@
   }
 </script>
 
-<section class="sec">
-  <div class="sec-h">
-    <h2><span class={styles.moon}>{@html icon("moon")}</span>Ночной режим</h2>
-    <p>Тихая громкость и приглушённая подсветка по расписанию</p>
+<section class="card bento-card">
+  <div class="card-head">
+    <h2><span class={styles.moon}>{@html icon("moon")}</span> Ночной режим</h2>
+    {#if now}<span class="badge acc">сейчас ночь</span>{/if}
   </div>
-  <div class="sec-b">
+  <div class="studio-stack">
     <label class="sw">
       <input type="checkbox" checked={night.enabled} disabled={pending.has("night.enabled")} onchange={changeEnabled}>
       <span class="tr"></span>Включать по расписанию
@@ -77,7 +77,6 @@
         <input type="time" id="n-to" value={night.to} disabled={pending.has("night.to")}
           onchange={(event) => changeTime(event, "to")}>
       </div>
-      {#if now}<span class="badge acc">сейчас ночь</span>{/if}
     </div>
     <div class={styles.sliders}>
       {#each controls as control (control.key)}

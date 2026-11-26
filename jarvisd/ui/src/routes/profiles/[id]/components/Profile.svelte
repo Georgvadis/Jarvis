@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import AssistantsNav from "#components/Shell/AssistantsNav.svelte";
   import { api, icon, setDirty, toast } from "#helpers/core.js";
-  import { refreshRoute, reload, S } from "#state/panelState.js";
+  import { avatar, refreshRoute, reload, S } from "#state/panelState.js";
   import { profilePath } from "#helpers/paths.js";
   import { createProfile, profilePayload } from "./profileDraft.js";
   import { availableEngines } from "./ProfileBrain/options.js";
@@ -19,6 +19,7 @@
   const controller = new AbortController();
   const { signal } = controller;
   let profile = $state({ ...initial, led: { ...initial.led } });
+  let savedName = $state(initial.name);
   let dirty = $state(false);
   let working = $state("");
   let confirmDelete = $state(false);
@@ -94,7 +95,10 @@
       }
       const stored = S.profiles.find((item) => item.id === id);
       const unchanged = revision === savedRevision;
-      if (stored) basics.updateSavedName(stored.name, unchanged);
+      if (stored) {
+        savedName = stored.name;
+        basics?.updateSavedName(stored.name, unchanged);
+      }
       if (unchanged) {
         if (stored) {
           profile.name = stored.name;
@@ -130,7 +134,14 @@
 
 <AssistantsNav current={isNew ? "p:new" : "p:" + initial.id} />
 
-{#snippet profileTabs()}
+<header class="profile-head">
+  <div class="profile-head-who">
+    <span id="pav" class="ringbox">{@html avatar(profile, true)}</span>
+    <div>
+      <h1>{isNew ? "Новый ассистент" : savedName}</h1>
+      <p class="sub">{isNew ? "Профиль ассистента" : active ? "Активный" : "Не активен"}</p>
+    </div>
+  </div>
   <div class="seg asst-sub-seg" role="tablist" aria-label="Разделы профиля">
     <button type="button" role="tab" aria-selected={ptab === "brain"} class:on={ptab === "brain"} onclick={() => { ptab = "brain"; }}>
       {@html icon("cpu")} Основное и мозг
@@ -139,15 +150,15 @@
       {@html icon("voice")} Голос и подсветка
     </button>
   </div>
-{/snippet}
+</header>
 
-<ProfileBasics bind:this={basics} initial={{ name: initial.name, color: initial.color, prompt: initial.prompt }}
-  prompts={S.prompts} {isNew} {active} onedit={edit} hideSection={ptab !== "brain"} tabs={profileTabs} />
-<div class:hidden={ptab !== "brain"}>
+<div class="profile-bento" class:hidden={ptab !== "brain"}>
+  <ProfileBasics bind:this={basics} initial={{ name: initial.name, color: initial.color, prompt: initial.prompt }}
+    prompts={S.prompts} onedit={edit} />
   <ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
     onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
 </div>
-<div class:hidden={ptab !== "voice"}>
+<div class="profile-bento-voice" class:hidden={ptab !== "voice"}>
   <ProfileVoice bind:this={voice} initial={{
     voice: initial.voice, ttsVoice: initial.tts_voice,
     ttsProvider: initial.engine === "eleven_realtime" ? "elevenlabs" : initial.tts_engine,

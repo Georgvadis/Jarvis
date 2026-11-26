@@ -123,10 +123,8 @@
 
 <AssistantsNav current="characters" />
 
-<header class="ph ph-row">
-  <div>
-    <h1>Характеры</h1>
-  </div>
+<header class="section-head">
+  <h1>Характеры</h1>
   <div class="actions">
     <button class="btn primary" type="button" onclick={() => openEditor()}>{@html icon("plus")}Новый характер</button>
   </div>

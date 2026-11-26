@@ -1980,10 +1980,22 @@ dialog::backdrop {
   grid-template-columns: repeat(auto-fill, minmax(min(290px, 100%), 1fr)) !important;
 }
 
-/* --- 4. Настройки: 2-колоночная Bento-сетка карточек --- */
+/* --- 4. Настройки, Колонка, Ассистенты, Обучение: Bento-сетки --- */
 .bento-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.profile-bento {
+  display: grid;
+  grid-template-columns: minmax(270px, .68fr) minmax(0, 1.32fr);
+  gap: 18px;
+  align-items: start;
+}
+.profile-bento-voice {
+  display: grid;
+  grid-template-columns: minmax(0, 1.22fr) minmax(300px, .78fr);
   gap: 18px;
   align-items: start;
 }
@@ -1992,11 +2004,81 @@ dialog::backdrop {
   gap: 14px;
   align-content: start;
 }
-.bento-card > h2 {
+.bento-card > h2,
+.bento-card > .card-head h2 {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.bento-card > h2 .ic,
+.bento-card > .card-head h2 .ic {
+  width: 17px;
+  height: 17px;
+  color: var(--acc);
+  flex: none;
 }
 .bento-full {
   grid-column: 1 / -1;
+}
+
+/* Вложенные стеклянные блоки внутри Bento-карточек (Ассистент, Колонка) */
+.wr-box,
+.qwen-upload,
+#v-custom,
+.eng {
+  border-radius: 14px !important;
+  background: var(--glass-inset) !important;
+  border: 1px solid var(--glass-border) !important;
+}
+.eng {
+  padding: 14px !important;
+}
+.choice .opt {
+  background: var(--glass-inset) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: 14px !important;
+  transition: border-color .16s, background-color .16s, transform .15s var(--spring), box-shadow .16s;
+}
+.choice .opt:hover {
+  background: var(--glass-inset-hover) !important;
+  border-color: color-mix(in srgb, var(--acc) 40%, var(--glass-border)) !important;
+  transform: translateY(-1px);
+}
+.choice .opt.on {
+  background: linear-gradient(145deg, var(--acc-soft), color-mix(in srgb, var(--acc) 8%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--glass-border)) !important;
+  box-shadow: inset 0 1px 0 var(--glass-spec), 0 10px 22px -14px var(--acc-glow);
+}
+.ledrow {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+}
+.qwen-upload > summary,
+#v-custom > summary {
+  padding: 11px 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  font-size: 13.5px;
+  color: var(--fg2);
+  list-style: none;
+}
+.qwen-upload > summary::-webkit-details-marker,
+#v-custom > summary::-webkit-details-marker { display: none; }
+.qwen-upload > summary .ic { width: 15px; height: 15px; color: var(--acc); }
+.qwen-upload[open] > summary,
+#v-custom[open] > summary {
+  color: var(--fg);
+  border-bottom: 1px solid var(--glass-border);
+}
+.qwen-upload > .inner,
+#v-custom > .inner {
+  padding: 14px;
 }
 
 /* ==========================================================================
@@ -2023,7 +2105,9 @@ dialog::backdrop {
 
 @media (max-width: 960px) {
   .studio-split { grid-template-columns: minmax(0, 1fr); }
-  .bento-2 { grid-template-columns: minmax(0, 1fr); }
+  .bento-2,
+  .profile-bento,
+  .profile-bento-voice { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 860px) {

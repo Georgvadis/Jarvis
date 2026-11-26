@@ -144,12 +144,9 @@
   }
 </script>
 
-<section class="sec">
-  <div class="sec-h">
-    <h2>Яндекс Диск и запись фона</h2>
-    <p>Колонка выгружает короткие записи и длительный фон в отдельную папку «Приложения / YaJarvis» на вашем Яндекс Диске.</p>
-  </div>
-  <div class="sec-b">
+<section class="card bento-card">
+  <h2>{@html icon("cloud")} Яндекс Диск и фон</h2>
+  <div class="studio-stack">
     {#if result?.connected}
       <div class="cn-ok">
         {@html icon("done")}

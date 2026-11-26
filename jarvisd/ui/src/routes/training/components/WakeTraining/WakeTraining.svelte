@@ -180,10 +180,10 @@
 {:else if !data}
   <p class="note" role="status">Загружаю фразы…</p>
 {:else}
-  <section class="sec">
-    <div class="sec-h"><h2>Сохранённые фразы</h2></div>
-    <div class={["sec-b", styles.fields]}>
-      <div class="stack">
+  <div class="bento-2">
+    <section class="card bento-card">
+      <h2>{@html icon("mic")} Сохранённые фразы</h2>
+      <div class={["studio-stack", styles.fields]}>
         <div class="f">
           <label for="wake-pick">Активная фраза</label>
           <select id="wake-pick" value={data.selected} disabled={!!busy} onchange={changeProfile}>
@@ -196,7 +196,7 @@
           <div class="row">
             <span class={styles.savedPhrase}>{profile.phrase}</span>
             {#if data.training}
-              <button class="btn" type="button" disabled={!!busy} onclick={() => testProfile(profile)}>Проверить</button>
+              <button class="btn sm" type="button" disabled={!!busy} onclick={() => testProfile(profile)}>Проверить</button>
               <span role="status">{results.get(profile.id) || ""}</span>
             {/if}
             {#if profile.id !== data.selected}
@@ -211,7 +211,7 @@
                   </button>
                 </div>
               {:else}
-                <button class="btn ghost danger" type="button" disabled={!!busy} onclick={() => { confirmRemoveId = profile.id; }}>
+                <button class="btn sm ghost danger" type="button" disabled={!!busy} onclick={() => { confirmRemoveId = profile.id; }}>
                   {@html icon("trash")}Удалить
                 </button>
               {/if}
@@ -219,44 +219,39 @@
           </div>
         {/each}
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section class="sec">
-    <div class="sec-h">
-      <h2>Обучить фразу</h2>
-      <p>{data.training
-        ? "Оставьте «Джарвис», чтобы дообучить его на своём голосе, или введите свою фразу. Проверьте модель перед включением."
-        : "Загрузите модель для «Джарвис» или другой фразы."}</p>
-    </div>
-    <div class={["sec-b", styles.fields]}>
-      <div class="f">
-        <label for="wake-phrase">Слово или фраза</label>
-        <input id="wake-phrase" type="text" maxlength="48" autocomplete="off" bind:this={phraseInput} bind:value={phrase}
-          readonly={!!busy || samples.length > 0}>
-      </div>
-      {#if data.training}
-        <div class={styles.recorder}>
-          <p class="muted" role="status">{instructions}</p>
-          <div class="row">
-            <button class="btn" type="button" disabled={!!busy || complete} onclick={() => record(samples.length)}>Записать</button>
-            <select value={reviewed} disabled={!!busy || !samples.length} aria-label="Запись для прослушивания"
-              onchange={(event) => listen(Number(event.currentTarget.value))}>
-              {#each samples as _, index (index)}<option value={index}>{sampleLabel(index)}</option>{/each}
-            </select>
-            <button class="btn" type="button" disabled={!!busy || !samples.length} onclick={() => record(reviewed)}>Перезаписать</button>
-            <button class="btn primary" type="button" disabled={!!busy || !complete} onclick={train}>Обучить</button>
-          </div>
-          {#if previewUrl}
-            <audio bind:this={audio} src={previewUrl} controls preload="metadata"></audio>
-          {/if}
+    <section class="card bento-card">
+      <h2>{@html icon("sparkles")} Обучить фразу</h2>
+      <div class={["studio-stack", styles.fields]}>
+        <div class="f">
+          <label for="wake-phrase">Слово или фраза</label>
+          <input id="wake-phrase" type="text" maxlength="48" autocomplete="off" bind:this={phraseInput} bind:value={phrase}
+            readonly={!!busy || samples.length > 0}>
         </div>
-      {/if}
-      <div class="f">
-        <label for="wake-model">Загрузить готовую модель</label>
-        <input id="wake-model" class={styles.file} type="file" accept=".bin,application/octet-stream"
-          disabled={!!busy || samples.length > 0} onchange={uploadModel}>
+        {#if data.training}
+          <div class={styles.recorder}>
+            <p class="muted" role="status">{instructions}</p>
+            <div class="row">
+              <button class="btn" type="button" disabled={!!busy || complete} onclick={() => record(samples.length)}>Записать</button>
+              <select value={reviewed} disabled={!!busy || !samples.length} aria-label="Запись для прослушивания"
+                onchange={(event) => listen(Number(event.currentTarget.value))}>
+                {#each samples as _, index (index)}<option value={index}>{sampleLabel(index)}</option>{/each}
+              </select>
+              <button class="btn" type="button" disabled={!!busy || !samples.length} onclick={() => record(reviewed)}>Перезаписать</button>
+              <button class="btn primary" type="button" disabled={!!busy || !complete} onclick={train}>Обучить</button>
+            </div>
+            {#if previewUrl}
+              <audio bind:this={audio} src={previewUrl} controls preload="metadata"></audio>
+            {/if}
+          </div>
+        {/if}
+        <div class="f">
+          <label for="wake-model">Загрузить готовую модель</label>
+          <input id="wake-model" class={styles.file} type="file" accept=".bin,application/octet-stream"
+            disabled={!!busy || samples.length > 0} onchange={uploadModel}>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 {/if}

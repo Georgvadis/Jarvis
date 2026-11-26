@@ -118,18 +118,14 @@
 
 <SystemNav current="logs" />
 
-<header class="ph ph-row">
-  <div>
-    <h1>Журнал</h1>
-  </div>
-  <div class="actions">
-    <div class="seg" role="group" aria-label="Источник логов">
-      {#each sources as [id, label] (id)}
-        <button type="button" class:on={source === id} aria-pressed={source === id} onclick={() => selectSource(id)}>
-          {label}
-        </button>
-      {/each}
-    </div>
+<header class="section-head">
+  <h1>Журнал</h1>
+  <div class="seg" role="group" aria-label="Источник логов">
+    {#each sources as [id, label] (id)}
+      <button type="button" class:on={source === id} aria-pressed={source === id} onclick={() => selectSource(id)}>
+        {label}
+      </button>
+    {/each}
   </div>
 </header>
 

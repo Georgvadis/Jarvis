@@ -508,13 +508,6 @@
   }
 </script>
 
-{#snippet settingSection(title, description, fields, ic = "")}
-  <section class="sec">
-    <div class="sec-h"><h2>{#if ic}{@html icon(ic)}{/if}{title}</h2>{#if description}<p>{description}</p>{/if}</div>
-    <div class="sec-b">{@render fields()}</div>
-  </section>
-{/snippet}
-
 {#snippet toggle(label, key, checked, onChange, hint = "")}
   <label class="sw">
     <input type="checkbox" {checked} disabled={pending.has(key)} onchange={(event) => {
@@ -548,203 +541,233 @@
   </div>
 </header>
 
-{#snippet generalFields()}
-  <div class="grid g2">
-    <div class="f">
-      <label for="s-city">Город {@html tip("Используется для прогноза погоды и утреннего брифинга.")}</label>
-      <input id="s-city" type="text" value={settings.city || ""} disabled={pending.has("city")}
-        placeholder="Например, Москва" onchange={(event) => saveText(event, "city")}>
-    </div>
-    <div class="f">
-      <label for="s-tz">Часовой пояс</label>
-      <select id="s-tz" value={timezone} disabled={pending.has("timezone")} onchange={saveTimezone}>
-        {#if !timezones.some(([id]) => id === timezone)}
-          <option value={timezone}>{timezone}</option>
-        {/if}
-        {#each timezones as [id, label] (id)}<option value={id}>{label}</option>{/each}
-      </select>
-    </div>
-  </div>
-  <div class="f">
-    <span class="lbl">Язык общения</span>
-    <div class="seg" role="group" aria-label="Язык общения">
-      {#each languages as [id, label] (id)}
-        <button type="button" class:on={language === id} aria-pressed={language === id}
-          disabled={pending.has("language")} onclick={() => saveLanguage(id, label)}>{label}</button>
-      {/each}
-    </div>
-  </div>
-  <label class="sw">
-    <input type="checkbox" checked={settings.home_use?.yandexmusic !== false} disabled={pending.has("yandexmusic")}
-      onchange={(event) => {
-        const input = event.currentTarget;
-        const next = input.checked;
-        input.checked = settings.home_use?.yandexmusic !== false;
-        saveService("yandexmusic", "Яндекс Музыка", next);
-      }}>
-    <span class="tr"></span>
-    Яндекс Музыка через Алису {@html tip("Выключено — вся музыка по голосовым запросам играет через YouTube.")}
-  </label>
-{/snippet}
 {#if tab === "general"}
-  {@render settingSection("Основные", "", generalFields, "sliders")}
-{/if}
-
-{#snippet wakeFields()}
-  {#if settings.wake_training}
-    <div class="f">
-      <label for="s-wake-profile">Выбранная фраза</label>
-      <select id="s-wake-profile" value={selected} disabled={!profiles || pending.has("wake_profile")} onchange={changeProfile}>
-        {#each profiles || [] as profile (profile.id)}
-          <option value={profile.id}>{modelLabel(profile)}</option>
-        {:else}
-          <option value={selected}>{word}</option>
-        {/each}
-      </select>
-      {#if profileError}<p class="err" role="alert">{profileError}</p>{/if}
-      <a href="/training">Обучение слова</a>
-    </div>
-  {/if}
-  {@render toggle(`Откликаться на «${word}»`, "wake_enabled", !!settings.wake_enabled,
-    (value) => saveToggle("wake_enabled", value, "Джарвис снова слушает", "Джарвис больше не откликается на слово"),
-    "Выключите, если Джарвис нужен только по кнопке «Поговорить». Алиса работает в любом случае.")}
-  {@render toggle(`Перебивать ответ словом «${word}»`, "wake_interrupt", settings.wake_interrupt !== false,
-    (value) => saveToggle("wake_interrupt", value, "Слово активации перебивает ответ", "Слово активации не перебивает ответ"),
-    "Если колонка иногда обрывает свой ответ на первом слове при высоком усилении микрофона, выключите этот тумблер. Команда «стоп» продолжает работать.")}
-  {@render toggle("Быстрый голосовой отклик", "wake_reply_enabled", settings.wake_reply_enabled !== false,
-    (value) => void toggleWakeReply(value),
-    "После слова активации Джарвис сразу говорит «слушаю», «угу» или другую короткую фразу из локального кеша. В фоне фразы автоматически не генерируются, чтобы не тратить лимит API.")}
-  {#if wakeReplies && (settings.wake_reply_enabled !== false || wakeReplies.ready > 0 || wakeReplies.running)}
-    {@const missingCount = Math.max(0, (wakeReplies.total || 12) - (wakeReplies.ready || 0))}
-    <div class="wr-box">
-      <div class="wr-head">
-        <span>
-          {#if wakeReplies.running}
-            Генерирую отклики: <b>{wakeReplies.done} из {wakeReplies.total}</b> ({wakeReplies.engine_name} · {wakeReplies.voice})
-          {:else}
-            В кеше: <b>{wakeReplies.ready} из {wakeReplies.total}</b> фраз ({wakeReplies.engine_name} · {wakeReplies.voice})
-          {/if}
-        </span>
-      </div>
-      {#if wakeReplies.error}
-        <p class="err" role="alert">{wakeReplies.error}</p>
-      {/if}
-      {#if !wakeReplies.can_generate && wakeReplies.missing}
-        <p class="note">{wakeReplies.missing}</p>
-      {:else if wakeReplies.running}
-        <div class="row">
-          <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={cancelWakeGenerate}>Остановить</button>
-        </div>
-      {:else if showWakeConfirm && missingCount > 0}
-        <div class="wr-warn">
-          <p>
-            Будет сгенерировано <b>{missingCount}</b> коротких фраз голосом «{wakeReplies.voice}» через <b>{wakeReplies.engine_name}</b>.
-            Это потратит запросы и может затронуть лимит (особенно на бесплатном Gemini или подписке ChatGPT).
-            При достижении лимита генерация сразу остановится, а готовые фразы сохранятся и переживут обновления.
-          </p>
-          <div class="row">
-            <button type="button" class="btn sm primary" disabled={wakeBusy} onclick={startWakeGenerate}>Сгенерировать сейчас</button>
-            <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { showWakeConfirm = false; }}>Не сейчас</button>
+  <div class="bento-2">
+    <section class="card bento-card">
+      <h2>{@html icon("globe")} Локация и язык</h2>
+      <div class="studio-stack">
+        <div class="grid g2">
+          <div class="f">
+            <label for="s-city">Город {@html tip("Используется для прогноза погоды и утреннего брифинга.")}</label>
+            <input id="s-city" type="text" value={settings.city || ""} disabled={pending.has("city")}
+              placeholder="Например, Москва" onchange={(event) => saveText(event, "city")}>
+          </div>
+          <div class="f">
+            <label for="s-tz">Часовой пояс</label>
+            <select id="s-tz" value={timezone} disabled={pending.has("timezone")} onchange={saveTimezone}>
+              {#if !timezones.some(([id]) => id === timezone)}
+                <option value={timezone}>{timezone}</option>
+              {/if}
+              {#each timezones as [id, label] (id)}<option value={id}>{label}</option>{/each}
+            </select>
           </div>
         </div>
-      {:else}
+        <div class="f">
+          <span class="lbl">Язык общения</span>
+          <div class="seg" role="group" aria-label="Язык общения">
+            {#each languages as [id, label] (id)}
+              <button type="button" class:on={language === id} aria-pressed={language === id}
+                disabled={pending.has("language")} onclick={() => saveLanguage(id, label)}>{label}</button>
+            {/each}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("music")} Музыка и устройство</h2>
+      <div class="studio-stack">
+        <label class="sw">
+          <input type="checkbox" checked={settings.home_use?.yandexmusic !== false} disabled={pending.has("yandexmusic")}
+            onchange={(event) => {
+              const input = event.currentTarget;
+              const next = input.checked;
+              input.checked = settings.home_use?.yandexmusic !== false;
+              saveService("yandexmusic", "Яндекс Музыка", next);
+            }}>
+          <span class="tr"></span>
+          Яндекс Музыка через Алису {@html tip("Выключено — вся музыка по голосовым запросам играет через YouTube.")}
+        </label>
+        <div class="nav-sep"></div>
+        <div class="mem-inline-stats">
+          {#if state.speaker?.version}<span class="chip">{state.speaker.version}</span>{/if}
+          <span class="chip">{state.speaker?.mic ? "Микрофон активен" : "Микрофон выкл."}</span>
+          {#if settings.night_now}<span class="chip">Ночной режим</span>{/if}
+        </div>
         <div class="row">
-          {#if missingCount > 0}
-            <button type="button" class="btn sm" disabled={wakeBusy} onclick={() => { showWakeConfirm = true; }}>
-              {wakeReplies.ready > 0 ? `Догенерировать (${missingCount} фраз)` : `Сгенерировать отклики (${missingCount} фраз)`}
-            </button>
+          <a class="btn sm ghost" href="/connections">{@html icon("puzzle")} Сервисы и ИИ</a>
+          {#if settings.wake_training}
+            <a class="btn sm ghost" href="/training">{@html icon("mic")} Обучение слова</a>
           {/if}
-          {#if wakeReplies.ready > 0}
-            {#if confirmWakeClear}
-              <div class="inline-confirm" role="alert">
-                <span>Очистить кеш откликов?</span>
-                <button type="button" class="btn sm danger" disabled={wakeBusy} onclick={clearWakeCache}>{@html icon("check")}Очистить</button>
-                <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { confirmWakeClear = false; }}>{@html icon("x")}Отмена</button>
+          <a class="btn sm ghost" href="/security">{@html icon("shield")} Бэкап и доступ</a>
+        </div>
+      </div>
+    </section>
+  </div>
+{/if}
+
+{#if tab === "voice"}
+  <div class="bento-2">
+    <section class="card bento-card">
+      <h2>{@html icon("mic")} Активация и отклик</h2>
+      <div class="studio-stack">
+        {#if settings.wake_training}
+          <div class="f">
+            <label for="s-wake-profile">Выбранная фраза</label>
+            <div class="row">
+              <select id="s-wake-profile" value={selected} disabled={!profiles || pending.has("wake_profile")} onchange={changeProfile}>
+                {#each profiles || [] as profile (profile.id)}
+                  <option value={profile.id}>{modelLabel(profile)}</option>
+                {:else}
+                  <option value={selected}>{word}</option>
+                {/each}
+              </select>
+              <a class="btn sm ghost" href="/training">{@html icon("sliders")} Обучить</a>
+            </div>
+            {#if profileError}<p class="err" role="alert">{profileError}</p>{/if}
+          </div>
+        {/if}
+        {@render toggle(`Откликаться на «${word}»`, "wake_enabled", !!settings.wake_enabled,
+          (value) => saveToggle("wake_enabled", value, "Джарвис снова слушает", "Джарвис больше не откликается на слово"),
+          "Выключите, если Джарвис нужен только по кнопке «Поговорить». Алиса работает в любом случае.")}
+        {@render toggle(`Перебивать ответ словом «${word}»`, "wake_interrupt", settings.wake_interrupt !== false,
+          (value) => saveToggle("wake_interrupt", value, "Слово активации перебивает ответ", "Слово активации не перебивает ответ"),
+          "Если колонка иногда обрывает свой ответ на первом слове при высоком усилении микрофона, выключите этот тумблер. Команда «стоп» продолжает работать.")}
+        {@render toggle("Быстрый голосовой отклик", "wake_reply_enabled", settings.wake_reply_enabled !== false,
+          (value) => void toggleWakeReply(value),
+          "После слова активации Джарвис сразу говорит «слушаю», «угу» или другую короткую фразу из локального кеша.")}
+        {#if wakeReplies && (settings.wake_reply_enabled !== false || wakeReplies.ready > 0 || wakeReplies.running)}
+          {@const missingCount = Math.max(0, (wakeReplies.total || 12) - (wakeReplies.ready || 0))}
+          <div class="wr-box">
+            <div class="wr-head">
+              <span>
+                {#if wakeReplies.running}
+                  Генерирую отклики: <b>{wakeReplies.done} из {wakeReplies.total}</b> ({wakeReplies.engine_name} · {wakeReplies.voice})
+                {:else}
+                  В кеше: <b>{wakeReplies.ready} из {wakeReplies.total}</b> фраз ({wakeReplies.engine_name} · {wakeReplies.voice})
+                {/if}
+              </span>
+            </div>
+            {#if wakeReplies.error}
+              <p class="err" role="alert">{wakeReplies.error}</p>
+            {/if}
+            {#if !wakeReplies.can_generate && wakeReplies.missing}
+              <p class="note">{wakeReplies.missing}</p>
+            {:else if wakeReplies.running}
+              <div class="row">
+                <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={cancelWakeGenerate}>Остановить</button>
+              </div>
+            {:else if showWakeConfirm && missingCount > 0}
+              <div class="wr-warn">
+                <p>
+                  Будет сгенерировано <b>{missingCount}</b> коротких фраз голосом «{wakeReplies.voice}» через <b>{wakeReplies.engine_name}</b>.
+                </p>
+                <div class="row">
+                  <button type="button" class="btn sm primary" disabled={wakeBusy} onclick={startWakeGenerate}>Сгенерировать</button>
+                  <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { showWakeConfirm = false; }}>Не сейчас</button>
+                </div>
               </div>
             {:else}
-              <button type="button" class="btn sm ghost danger" disabled={wakeBusy} onclick={() => { confirmWakeClear = true; }}>{@html icon("trash")}Очистить кеш</button>
+              <div class="row">
+                {#if missingCount > 0}
+                  <button type="button" class="btn sm" disabled={wakeBusy} onclick={() => { showWakeConfirm = true; }}>
+                    {wakeReplies.ready > 0 ? `Догенерировать (${missingCount})` : `Сгенерировать (${missingCount})`}
+                  </button>
+                {/if}
+                {#if wakeReplies.ready > 0}
+                  {#if confirmWakeClear}
+                    <div class="inline-confirm" role="alert">
+                      <span>Очистить кеш?</span>
+                      <button type="button" class="btn sm danger" disabled={wakeBusy} onclick={clearWakeCache}>{@html icon("check")}Очистить</button>
+                      <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { confirmWakeClear = false; }}>{@html icon("x")}Отмена</button>
+                    </div>
+                  {:else}
+                    <button type="button" class="btn sm ghost danger" disabled={wakeBusy} onclick={() => { confirmWakeClear = true; }}>{@html icon("trash")}Очистить</button>
+                  {/if}
+                {/if}
+              </div>
             {/if}
-          {/if}
-        </div>
-      {/if}
-    </div>
-  {/if}
-  {@render toggle("Звук «услышал / думаю»", "thinking_sound", settings.thinking_sound !== false,
-    (value) => saveToggle("thinking_sound", value, "Звук отклика включён", "Звук отклика выключен"),
-    "Короткий сигнал сразу после окончания вашей фразы в классическом пайплайне.")}
-  {#if settings.thinking_sound !== false}
-    <div class="f">
-      <span class="lbl">Звуковая тема отклика</span>
-      <div class="seg" role="group" aria-label="Звуковая тема отклика">
-        {#each soundThemes as [id, label] (id)}
-          {@const currentTheme = settings.sound_theme || "scifi"}
-          <button type="button" class:on={currentTheme === id} aria-pressed={currentTheme === id}
-            disabled={pending.has("sound_theme")}
-            onclick={() => {
-              void save("sound_theme", () => ({ sound_theme: id }), `Звук: ${label}`);
-              void api("POST", "/api/sound-preview", { theme: id }, { signal }).catch(() => {});
-            }}>{label}</button>
-        {/each}
+          </div>
+        {/if}
+        {@render toggle("Звук «услышал / думаю»", "thinking_sound", settings.thinking_sound !== false,
+          (value) => saveToggle("thinking_sound", value, "Звук отклика включён", "Звук отклика выключен"),
+          "Короткий сигнал сразу после окончания вашей фразы в классическом пайплайне.")}
+        {#if settings.thinking_sound !== false}
+          <div class="f">
+            <span class="lbl">Звуковая тема отклика</span>
+            <div class="seg" role="group" aria-label="Звуковая тема отклика">
+              {#each soundThemes as [id, label] (id)}
+                {@const currentTheme = settings.sound_theme || "scifi"}
+                <button type="button" class:on={currentTheme === id} aria-pressed={currentTheme === id}
+                  disabled={pending.has("sound_theme")}
+                  onclick={() => {
+                    void save("sound_theme", () => ({ sound_theme: id }), `Звук: ${label}`);
+                    void api("POST", "/api/sound-preview", { theme: id }, { signal }).catch(() => {});
+                  }}>{label}</button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+        {@render toggle("Авто-режим «Шёпот»", "whisper_mode", settings.whisper_mode !== false,
+          (value) => saveToggle("whisper_mode", value, "Авто-режим «Шёпот» включён", "Авто-режим «Шёпот» выключен"),
+          "Если вы говорите тихо или шёпотом, Джарвис сам приглушает ответ и отвечает спокойно.")}
+        {@render toggle("Живые эмоции и SFX", "expressive_mode", settings.expressive_mode !== false,
+          (value) => saveToggle("expressive_mode", value, "Эмоции и эффекты включены", "Эмоции и эффекты выключены"),
+          "Интонации персонажей и короткие звуковые эффекты в живой речи.")}
+        {@render toggle("Озвучивать ошибки Алисой", "voice_error_alice", settings.voice_error_alice !== false,
+          (value) => saveToggle("voice_error_alice", value, "Алиса сообщит, если голосовой ИИ не ответит", "Голосовые уведомления об ошибках выключены"),
+          "Если голосовой движок не ответил после всех автопереключений, Алиса коротко назовёт причину.")}
+        {#if !settings.wake_word}
+          {@render toggle("Проверять имя перед ответом", "wake_check", !!settings.wake_check,
+            (value) => saveToggle("wake_check", value, "Сначала проверяю имя, потом отвечаю", "Отклик сразу, как у Алисы"),
+            "Облачная проверка имени снижает ложные срабатывания.")}
+        {/if}
       </div>
-    </div>
-  {/if}
-  {@render toggle("Авто-режим «Шёпот»", "whisper_mode", settings.whisper_mode !== false,
-    (value) => saveToggle("whisper_mode", value, "Авто-режим «Шёпот» включён", "Авто-режим «Шёпот» выключен"),
-    "Если вы говорите тихо или шёпотом, Джарвис сам приглушает ответ и отвечает коротко и спокойно.")}
-  {@render toggle("Живые эмоции и SFX", "expressive_mode", settings.expressive_mode !== false,
-    (value) => saveToggle("expressive_mode", value, "Эмоции и эффекты включены", "Эмоции и эффекты выключены"),
-    "Интонации персонажей и короткие звуковые эффекты (звонок, фанфары, гром) в живой речи.")}
-  {@render toggle("Озвучивать ошибки Алисой", "voice_error_alice", settings.voice_error_alice !== false,
-    (value) => saveToggle("voice_error_alice", value, "Алиса сообщит, если голосовой ИИ не ответит", "Голосовые уведомления об ошибках выключены"),
-    "Если голосовой движок не смог подключиться или упёрся в лимит после всех автопереключений, штатная Алиса коротко назовёт причину. Ночью и при команде «Стоп» не срабатывает.")}
-  {#if !settings.wake_word}
-    {@render toggle("Проверять имя перед ответом", "wake_check", !!settings.wake_check,
-      (value) => saveToggle("wake_check", value, "Сначала проверяю имя, потом отвечаю", "Отклик сразу, как у Алисы"),
-      "Выключено — как у Алисы: услышал слово, сразу загорается кольцо и Джарвис слушает. Включено — сначала облако проверяет, что прозвучало именно «Джарвис»: ложных разговоров меньше, но отклик на полсекунды-секунду позже.")}
-  {/if}
-  {#each ranges as range (range.key)}
-    {@const value = rangesInEdit[range.key] ?? settings[range.key] ?? range.min}
-    <div class="f">
-      <span class="lbl">
-        <span id={"label-" + range.key}>{range.label}</span>
-        {@html tip(range.hint)}
-        <b class="val" aria-hidden="true">{range.format(value)}</b>
-      </span>
-      <div use:mountRange={range} role="slider" aria-labelledby={"label-" + range.key}
-        aria-valuemin={range.min} aria-valuemax={range.max} aria-valuenow={value}
-        aria-disabled={pending.has(range.key)}></div>
-      <div class={styles.scale}><span>{range.low}</span><span>{range.high}</span></div>
-    </div>
-  {/each}
-  <div class={styles.vu} aria-live="off">
-    <div class={styles.vuHead}>
-      <span>Уровень микрофона</span>
-      <b class="val">{micPeak} / порог {vadThreshold}</b>
-    </div>
-    <div class={styles.vuTrack}>
-      <div class={styles.vuFill} class:hot={micPeak > vadThreshold} style:width={`${Math.min(100, (micPeak / 3000) * 100)}%`}></div>
-      <div class={styles.vuMark} style:left={`${Math.min(100, (vadThreshold / 3000) * 100)}%`}></div>
-    </div>
+    </section>
+
+    <section class="card bento-card">
+      <h2>{@html icon("sliders")} Чувствительность и микрофон</h2>
+      <div class="studio-stack">
+        <div class={styles.vu} aria-live="off">
+          <div class={styles.vuHead}>
+            <span>Уровень микрофона</span>
+            <b class="val">{micPeak} / порог {vadThreshold}</b>
+          </div>
+          <div class={styles.vuTrack}>
+            <div class={styles.vuFill} class:hot={micPeak > vadThreshold} style:width={`${Math.min(100, (micPeak / 3000) * 100)}%`}></div>
+            <div class={styles.vuMark} style:left={`${Math.min(100, (vadThreshold / 3000) * 100)}%`}></div>
+          </div>
+        </div>
+        {#each ranges as range (range.key)}
+          {@const value = rangesInEdit[range.key] ?? settings[range.key] ?? range.min}
+          <div class="f">
+            <span class="lbl">
+              <span id={"label-" + range.key}>{range.label}</span>
+              {@html tip(range.hint)}
+              <b class="val" aria-hidden="true">{range.format(value)}</b>
+            </span>
+            <div use:mountRange={range} role="slider" aria-labelledby={"label-" + range.key}
+              aria-valuemin={range.min} aria-valuemax={range.max} aria-valuenow={value}
+              aria-disabled={pending.has(range.key)}></div>
+            <div class={styles.scale}><span>{range.low}</span><span>{range.high}</span></div>
+          </div>
+        {/each}
+        {#if !state.speaker.wake_model}
+          <p class="note">Модель слова ещё не установлена — пока Джарвиса можно позвать кнопкой «Поговорить».</p>
+        {/if}
+      </div>
+    </section>
   </div>
-  {#if !state.speaker.wake_model}
-    <p class="note">Модель слова ещё не установлена — пока Джарвиса можно позвать только кнопкой «Поговорить» на главной.</p>
-  {/if}
-{/snippet}
-{#if tab === "voice"}
-  {@render settingSection("Микрофон и активация", "", wakeFields, "mic")}
 {/if}
 
 {#if tab === "light"}
-  <NightMode {night} now={settings.night_now} leds={state.speaker.leds} {pending} save={saveNight} />
-{/if}
-
-{#snippet lightingFields()}
-  <Lighting />
-{/snippet}
-{#if tab === "light"}
-  {@render settingSection("Подсветка",
-    "",
-    lightingFields, "sun")}
+  <div class="bento-2">
+    <NightMode {night} now={settings.night_now} leds={state.speaker.leds} {pending} save={saveNight} />
+    <section class="card bento-card">
+      <h2>{@html icon("sun")} Подсветка кольца</h2>
+      <div class="studio-stack"><Lighting /></div>
+    </section>
+  </div>
 {/if}
 
 {#snippet notifyFields()}

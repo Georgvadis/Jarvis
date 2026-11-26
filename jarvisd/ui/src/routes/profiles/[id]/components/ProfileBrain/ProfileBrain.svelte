@@ -93,11 +93,9 @@
   </div>
 {/snippet}
 
-<section class="sec">
-  <div class="sec-h">
-    <h2>{@html icon("cpu")}Мозг</h2>
-  </div>
-  <div class="sec-b">
+<section class="card bento-card">
+  <h2>{@html icon("cpu")} Мозг и пайплайн</h2>
+  <div class="studio-stack">
     {#if engines.length}
       <div class="choice" id="p-engine" role="group" aria-label="Голосовой режим">
         {#each engines as { id, name, description } (id)}

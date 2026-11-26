@@ -12,7 +12,7 @@
     { key: "temp", title: "Температура", unit: "°C", subtitle: "процессор", decimals: 1, zeroIsMissing: true },
     { key: "mem", title: "Память занята", unit: "МБ" },
     { key: "wifi", title: "Сигнал Wi-Fi", unit: "дБм", subtitle: "ближе к нулю — лучше", zeroIsMissing: true },
-    { key: "disk", title: "Свободно на /data", unit: "МБ", subtitle: "меньше 5 МБ — обновления могут не встать" },
+    { key: "disk", title: "Свободно на /data", unit: "МБ", subtitle: "раздел данных колонки" },
     { key: "me", title: "Сам Джарвис", unit: "%", subtitle: "сколько процессора колонки занимает Джарвис", scale: percentScale, skipFirst: true },
   ];
 
@@ -168,10 +168,8 @@
 
 <SystemNav current="charts" />
 
-<header class="ph ph-row">
-  <div>
-    <h1>Мониторинг</h1>
-  </div>
+<header class="section-head">
+  <h1>Мониторинг</h1>
   <div class="seg" role="group" aria-label="Период графиков">
     {#each ranges as [seconds, label] (seconds)}
       <button type="button" class:on={seconds === range} aria-pressed={seconds === range}

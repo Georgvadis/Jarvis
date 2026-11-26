@@ -5,9 +5,9 @@
 
 <SystemNav current="training" />
 
-<header class="ph"><h1>Обучение</h1></header>
+<header class="section-head"><h1>Обучение слова</h1></header>
 {#if enabled}
-  <div>
+  <div class="studio-stack">
     {#await import("./Training.svelte") then { default: Training }}
       <Training {showRecords} />
     {:catch error}

@@ -179,94 +179,86 @@
 {/if}
 
 {#if data}
-  <section class="sec">
-    <div class="sec-h">
-      <h2>Короткие записи</h2>
-      <p>Колонка сохраняет примеры «Джарвиса» для разметки.</p>
-    </div>
-    <div class="sec-b">
-      <label class="sw">
-        <input type="checkbox" checked={data.mode} disabled={busy}
-          onchange={(event) => changeSettings(event, "mode", event.currentTarget.checked)}>
-        <span class="tr"></span>Собирать примеры
-      </label>
-      <div class="f">
-        <label for="train-limit">Лимит на колонке <b class="val">{(data.used_kb / 1024).toFixed(1)} МБ занято</b></label>
-        <select id="train-limit" value={data.limit_mb} disabled={busy}
-          onchange={(event) => changeSettings(event, "limit_mb", Number(event.currentTarget.value))}>
-          {#each limitOptions as megabytes (megabytes)}
-            <option value={megabytes}>{megabytes} МБ</option>
-          {/each}
-        </select>
-      </div>
-      {#if data.max_limit_mb && data.max_limit_mb < 100}
-        <p class="note">Доступно до {data.max_limit_mb} МБ из 100 МБ — минимум 5 МБ всегда остаётся свободно на диске.</p>
-      {/if}
-      <p class="note">
-        {hasCloud
-          ? "Фон и проверенные записи сразу выгружаются на Яндекс Диск. До 20 свежих записей для проверки всегда остаются на колонке (или подкачиваются заранее), чтобы при разметке не ждать загрузки."
-          : "Подключите Яндекс Диск ниже одной кнопкой, чтобы проверенные записи и фон автоматически уходили в облако, а на колонке всегда оставалось до 20 свежих записей для быстрой проверки."}
-        {hasCloud && data.remote ? ` На Диске: ${data.remote}.` : ""}
-        {offload.running ? " Выгружаю…" : ""}
-        {offload.sent ? ` Выгружено за сеанс: ${offload.sent}.` : ""}
-      </p>
-      {#if hasCloud && offload.error}<p class="note err">{offload.error}. Новые записи пока сохраняются на колонке.</p>{/if}
-      {#if data.legacy_kb}<p class="note">Старый архив занимает {(data.legacy_kb / 1024).toFixed(1)} МБ.</p>{/if}
-    </div>
-  </section>
-
-  <BackgroundRecording onconnection={handleConnection} />
-
-  <section class="sec">
-    <div class="sec-h">
-      <h2>Проверка записей «Джарвис»</h2>
-      <p>Прослушайте сохранённые записи и отметьте, где был оклик. Клавиши 1 и 2 отмечают ответ, пробел ставит запись на паузу.</p>
-    </div>
-    <div class="sec-b">
-      {#if current}
-        {#key clipKey(current)}
-          <RecordReview clip={current} remaining={queue.length} {autoplay} {archivePlaying} {busy} onanswer={answer}
-            onplay={() => { autoplay = true; stopArchive(); }} />
-        {/key}
-      {:else}
-        <div class={styles.done}>{@html icon("done")}<b>Всё проверено</b></div>
-      {/if}
-    </div>
-  </section>
-
-  <section class="sec">
-    <div class="sec-h">
-      <h2>Дообучить на компьютере</h2>
-      <p>В архив входят размеченные записи, модель и скрипт дообучения.</p>
-    </div>
-    <div class="sec-b {styles.finetune}">
-      <div class="row">
-        <div class="chips">
-          <span class="chip k-pos">Джарвис <b>{counts.pos || 0}</b></span>
-          <span class="chip k-false">Не Джарвис <b>{counts.false || 0}</b></span>
-          <span class="chip">Фон <b>{counts.bg || 0}</b></span>
+  <div class="bento-2">
+    <section class="card bento-card">
+      <h2>{@html icon("mic")} Короткие записи</h2>
+      <div class="studio-stack">
+        <label class="sw">
+          <input type="checkbox" checked={data.mode} disabled={busy}
+            onchange={(event) => changeSettings(event, "mode", event.currentTarget.checked)}>
+          <span class="tr"></span>Собирать примеры
+        </label>
+        <div class="f">
+          <label for="train-limit">Лимит на колонке <b class="val">{(data.used_kb / 1024).toFixed(1)} МБ занято</b></label>
+          <select id="train-limit" value={data.limit_mb} disabled={busy}
+            onchange={(event) => changeSettings(event, "limit_mb", Number(event.currentTarget.value))}>
+            {#each limitOptions as megabytes (megabytes)}
+              <option value={megabytes}>{megabytes} МБ</option>
+            {/each}
+          </select>
         </div>
-        <span class="spacer"></span>
-        {#if clips.length}
-          <a class="btn primary" href={recordsUrl + "/download"} download>Скачать записи</a>
+        {#if data.max_limit_mb && data.max_limit_mb < 100}
+          <p class="note">Доступно до {data.max_limit_mb} МБ из 100 МБ.</p>
+        {/if}
+        <p class="note">
+          {hasCloud
+            ? "Проверенные записи и фон выгружаются на Яндекс Диск."
+            : "Подключите Яндекс Диск рядом для автовыгрузки записей."}
+          {hasCloud && data.remote ? ` На Диске: ${data.remote}.` : ""}
+          {offload.running ? " Выгружаю…" : ""}
+          {offload.sent ? ` Выгружено: ${offload.sent}.` : ""}
+        </p>
+        {#if hasCloud && offload.error}<p class="note err">{offload.error}. Новые записи пока сохраняются на колонке.</p>{/if}
+        {#if data.legacy_kb}<p class="note">Старый архив занимает {(data.legacy_kb / 1024).toFixed(1)} МБ.</p>{/if}
+      </div>
+    </section>
+
+    <BackgroundRecording onconnection={handleConnection} />
+
+    <section class="card bento-card">
+      <h2>{@html icon("check")} Проверка записей</h2>
+      <div class="studio-stack">
+        {#if current}
+          {#key clipKey(current)}
+            <RecordReview clip={current} remaining={queue.length} {autoplay} {archivePlaying} {busy} onanswer={answer}
+              onplay={() => { autoplay = true; stopArchive(); }} />
+          {/key}
         {:else}
-          <button class="btn" type="button" disabled>Скачать записи</button>
+          <div class={styles.done}>{@html icon("done")}<b>Всё проверено</b></div>
         {/if}
       </div>
-      <ol class="steps">
-        <li><b>Скачайте и распакуйте архив.</b> Записи уже разложены по вашим ответам.</li>
-        <li><b>Дообучите модель.</b> В распакованной папке установите зависимости командой <code>pip install torch numpy</code> и запустите <code>python finetune.py</code>.</li>
-        <li><b>Загрузите</b> <code>wake_new.bin</code> в разделе «Обучить фразу» с именем «Джарвис». Проверьте и выберите модель в списке.</li>
-      </ol>
-      {#if data.prev_model}
-        <div><button class="btn ghost {styles.restore}" type="button" disabled={busy} onclick={restoreModel}>Вернуть прежнюю модель «Джарвис»</button></div>
-      {/if}
-    </div>
-  </section>
+    </section>
 
-  <section class="sec">
-    <div class="sec-h"><h2>Все записи</h2></div>
-    <div class="sec-b">
+    <section class="card bento-card">
+      <h2>{@html icon("download")} Дообучение на ПК</h2>
+      <div class={["studio-stack", styles.finetune]}>
+        <div class="row">
+          <div class="chips">
+            <span class="chip k-pos">Джарвис <b>{counts.pos || 0}</b></span>
+            <span class="chip k-false">Не Джарвис <b>{counts.false || 0}</b></span>
+            <span class="chip">Фон <b>{counts.bg || 0}</b></span>
+          </div>
+          <span class="spacer"></span>
+          {#if clips.length}
+            <a class="btn sm primary" href={recordsUrl + "/download"} download>{@html icon("download")} Скачать</a>
+          {:else}
+            <button class="btn sm" type="button" disabled>{@html icon("download")} Скачать</button>
+          {/if}
+        </div>
+        <ol class="steps">
+          <li>Распакуйте архив — записи уже разложены по ответам.</li>
+          <li>Выполните <code>pip install torch numpy</code> и <code>python finetune.py</code>.</li>
+          <li>Загрузите <code>wake_new.bin</code> в карточке «Обучить фразу».</li>
+        </ol>
+        {#if data.prev_model}
+          <div><button class="btn sm ghost {styles.restore}" type="button" disabled={busy} onclick={restoreModel}>Вернуть прежнюю модель</button></div>
+        {/if}
+      </div>
+    </section>
+
+    <section class="card bento-card bento-full">
+      <h2>{@html icon("list")} Все записи {#if clips.length}<span class="badge">{clips.length}</span>{/if}</h2>
+      <div class="studio-stack">
       <audio
         bind:this={audio}
         use:archiveAudio
@@ -342,7 +334,8 @@
         </button>
       {/if}
     </div>
-  </section>
+    </section>
+  </div>
 {:else if pending}
   <p class="note" role="status">Загружаю записи…</p>
 {/if}

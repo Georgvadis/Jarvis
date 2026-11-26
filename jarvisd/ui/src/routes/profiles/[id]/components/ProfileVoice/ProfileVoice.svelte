@@ -474,12 +474,9 @@
   </div>
 {/snippet}
 
-<section class="sec" id="profile-voice">
-  <div class="sec-h">
-    <h2>{@html icon("voice")}Голос</h2>
-    <p>Выбор голоса, прослушивание на колонке и громкость</p>
-  </div>
-  <div class="sec-b">
+<section class="card bento-card" id="profile-voice">
+  <h2>{@html icon("voice")} Голос и эмоции</h2>
+  <div class="studio-stack">
     <div id="voices" class="vgroups">
       {#if !ready}
         <p class="note">{hasOptions ? "Выберите движок в разделе «Мозг»." : "Голос появится после настройки плагина."}</p>

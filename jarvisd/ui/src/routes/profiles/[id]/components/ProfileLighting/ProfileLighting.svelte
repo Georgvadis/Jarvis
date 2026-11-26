@@ -56,11 +56,9 @@
   }
 </script>
 
-<section class="sec" id="profile-lighting">
-  <div class="sec-h">
-    <h2>{@html icon("sun")}Подсветка</h2>
-  </div>
-  <div class="sec-b">
+<section class="card bento-card" id="profile-lighting">
+  <h2>{@html icon("sun")} Подсветка кольца</h2>
+  <div class="studio-stack">
     <div id="p-led" class="ledrows">
       {#each modes as [mode, title, hint] (mode)}
         <div class="ledrow" data-k={mode}>
