@@ -153,6 +153,29 @@ export async function act(btn, fn, okMsg) {
   try { await fn(); if (okMsg) toast(okMsg); } catch (e) { toast(e.message, true); } finally { if (btn) btn.disabled = false; }
 }
 
+const armTimers = new WeakMap();
+export function armConfirm(el, msg) {
+  if (!el) return true;
+  const until = Number(el.dataset.confirmUntil || 0);
+  if (until > Date.now()) {
+    delete el.dataset.confirmUntil;
+    clearTimeout(armTimers.get(el));
+    armTimers.delete(el);
+    el.classList.remove("confirm-armed");
+    return true;
+  }
+  clearTimeout(armTimers.get(el));
+  el.dataset.confirmUntil = String(Date.now() + 4500);
+  el.classList.add("confirm-armed");
+  armTimers.set(el, setTimeout(() => {
+    delete el.dataset.confirmUntil;
+    el.classList.remove("confirm-armed");
+    armTimers.delete(el);
+  }, 4500));
+  toast(`${msg} — нажмите ещё раз для подтверждения`, true);
+  return false;
+}
+
 // ---------------------------------------------------------------- загрузка файлов (тело — сам файл)
 export async function upload(method, url, file, { signal } = {}) {
   const r = await fetch(url, { method, headers: { "X-Jarvis": "1", "Content-Type": "application/octet-stream" }, body: file, credentials: "same-origin", signal });

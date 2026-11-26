@@ -29,10 +29,40 @@
 
   setPanel({ poll, onPoll });
 
+  let dirtyConfirmUntil = 0;
   beforeNavigate(({ willUnload, cancel }) => {
-    if (!willUnload && dirty && !confirm("Есть несохранённые изменения. Уйти без сохранения?")) cancel();
+    if (!willUnload && dirty) {
+      if (Date.now() > dirtyConfirmUntil) {
+        dirtyConfirmUntil = Date.now() + 5000;
+        cancel();
+        toast("Есть несохранённые изменения — нажмите ещё раз для выхода", true);
+        return;
+      }
+      dirtyConfirmUntil = 0;
+    }
   });
-  afterNavigate(() => setDirty(false));
+  afterNavigate(() => {
+    dirtyConfirmUntil = 0;
+    setDirty(false);
+  });
+
+  function onGlobalKey(event) {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+    const target = event.target;
+    const tag = target?.tagName;
+    const editing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
+    if (editing || document.querySelector("dialog[open], .note-modal-bg, .modal-bg")) return;
+    if (event.key === "/") {
+      const input = document.querySelector("#say, main input[type='search']");
+      if (input instanceof HTMLElement) {
+        event.preventDefault();
+        input.focus();
+      }
+    } else if (event.altKey && (event.code === "KeyS" || event.key.toLowerCase() === "s")) {
+      event.preventDefault();
+      void api("POST", "/api/stop").then(() => toast("Остановлено")).catch((e) => toast(e.message, true));
+    }
+  }
 
   onMount(() => {
     initTheme();
@@ -127,7 +157,7 @@
   }
 </script>
 
-<svelte:window onbeforeunload={(event) => { if (dirty) event.preventDefault(); }} />
+<svelte:window onbeforeunload={(event) => { if (dirty) event.preventDefault(); }} onkeydown={onGlobalKey} />
 
 <Shell access={$access} {login} {logout} {sidebar} {orb} {navigation}>
   {#if $access.status === "active"}

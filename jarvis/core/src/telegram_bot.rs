@@ -90,6 +90,58 @@ async fn send_tg(client: &reqwest::Client, token: &str, chat_id: &str, text: &st
         .await;
 }
 
+async fn send_tg_markup(
+    client: &reqwest::Client,
+    token: &str,
+    chat_id: &str,
+    text: &str,
+    reply_markup: &Value,
+) {
+    let send_url = format!("https://api.telegram.org/bot{token}/sendMessage");
+    let _ = client
+        .post(&send_url)
+        .json(&json!({
+            "chat_id": chat_id,
+            "text": clip_tg(text, 3900),
+            "reply_markup": reply_markup,
+        }))
+        .send()
+        .await;
+}
+
+async fn edit_tg_markup(
+    client: &reqwest::Client,
+    token: &str,
+    chat_id: &str,
+    message_id: i64,
+    text: &str,
+    reply_markup: &Value,
+) {
+    let edit_url = format!("https://api.telegram.org/bot{token}/editMessageText");
+    let _ = client
+        .post(&edit_url)
+        .json(&json!({
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": clip_tg(text, 3900),
+            "reply_markup": reply_markup,
+        }))
+        .send()
+        .await;
+}
+
+async fn answer_callback(client: &reqwest::Client, token: &str, callback_id: &str, text: &str) {
+    let ans_url = format!("https://api.telegram.org/bot{token}/answerCallbackQuery");
+    let _ = client
+        .post(&ans_url)
+        .json(&json!({
+            "callback_query_id": callback_id,
+            "text": clip_tg(text, 190),
+        }))
+        .send()
+        .await;
+}
+
 pub async fn notify_telegram(plugins: &Host, proxy: &Proxy, text: &str) {
     if text.trim().is_empty() {
         return;
@@ -210,7 +262,7 @@ pub fn spawn(
             }
 
             let url = format!(
-                "https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=25&allowed_updates=[\"message\"]"
+                "https://api.telegram.org/bot{token}/getUpdates?offset={offset}&timeout=25&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D"
             );
             let resp = match client.get(&url).send().await {
                 Ok(r) => r,
@@ -234,6 +286,39 @@ pub fn spawn(
                 if let Some(uid) = upd["update_id"].as_i64() {
                     offset = offset.max(uid + 1);
                 }
+
+                let cb = &upd["callback_query"];
+                if !cb.is_null() {
+                    let cb_id = cb["id"].as_str().unwrap_or("");
+                    let cb_chat = cb["message"]["chat"]["id"]
+                        .as_i64()
+                        .map(|n| n.to_string())
+                        .or_else(|| cb["message"]["chat"]["id"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let msg_id = cb["message"]["message_id"].as_i64().unwrap_or(0);
+                    let data = cb["data"].as_str().unwrap_or("");
+                    if cb_chat != allowed_chat {
+                        if !cb_id.is_empty() {
+                            answer_callback(&client, &token, cb_id, "Доступ запрещён").await;
+                        }
+                        continue;
+                    }
+                    let (toast_msg, extra_msg) = handle_menu_callback(&engine, &ambient, &focus, data).await;
+                    if !cb_id.is_empty() {
+                        answer_callback(&client, &token, cb_id, &toast_msg).await;
+                    }
+                    if msg_id > 0 {
+                        let status_text = format_status_text(&engine, &ambient, &focus);
+                        let focus_on = focus.status()["running"].as_bool().unwrap_or(false);
+                        let kb = build_menu_keyboard(focus_on);
+                        edit_tg_markup(&client, &token, &allowed_chat, msg_id, &status_text, &kb).await;
+                    }
+                    if let Some(extra) = extra_msg {
+                        send_tg(&client, &token, &allowed_chat, &extra).await;
+                    }
+                    continue;
+                }
+
                 let msg = &upd["message"];
                 let chat_id = msg["chat"]["id"]
                     .as_i64()
@@ -266,6 +351,22 @@ pub fn spawn(
                 };
                 let text = raw_text.trim();
                 if text.is_empty() {
+                    continue;
+                }
+
+                let cmd_head = text
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .split('@')
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase();
+                if cmd_head == "/menu" || cmd_head == "/panel" {
+                    let status_text = format_status_text(&engine, &ambient, &focus);
+                    let focus_on = focus.status()["running"].as_bool().unwrap_or(false);
+                    let kb = build_menu_keyboard(focus_on);
+                    send_tg_markup(&client, &token, &allowed_chat, &status_text, &kb).await;
                     continue;
                 }
 
@@ -395,6 +496,7 @@ async fn handle_message(
 
     if cmd == "/start" || cmd == "/help" {
         return "Управление колонкой YaJarvis:\n\
+• /menu — интерактивный пульт с кнопками управления\n\
 • Любой текст или /say <текст> — озвучить на колонке (/say! — даже ночью)\n\
 • Голосовое сообщение — проиграть интеркомом (подпись /ask — спросить Джарвиса)\n\
 • /ask <вопрос> — спросить Джарвиса с ответом сюда (/ask! — также озвучить вслух)\n\
@@ -414,89 +516,12 @@ async fn handle_message(
     }
 
     if cmd == "/stop" || lower == "стоп" {
-        if let Some(reader) = &engine.tools.reader {
-            reader.stop();
-        }
-        if let Some(dj) = &engine.tools.dj {
-            dj.stop(Some(engine));
-        }
-        if let Some(games) = &engine.tools.games {
-            games.stop_all(Some(engine));
-        }
-        if let Some(modes) = &engine.tools.modes {
-            modes.reset(Some(ambient));
-        }
-        focus.stop();
-        ambient.stop();
-        let e = engine.clone();
-        let _ = tokio::task::spawn_blocking(move || e.stop("Telegram")).await;
+        stop_all_features(engine, ambient, focus).await;
         return "Остановил.".into();
     }
 
     if cmd == "/status" {
-        let s = engine.store.get();
-        let p = s.active_profile();
-        let mic = if engine.mic.online() { "вкл" } else { "выкл" };
-        let amb = ambient.current_label().unwrap_or_else(|| "выкл".into());
-        let focus_st = focus.status();
-        let focus_str = if focus_st["running"].as_bool().unwrap_or(false) {
-            let rem = focus_st["remaining_s"].as_u64().unwrap_or(0);
-            format!("{:02}:{:02}", rem / 60, rem % 60)
-        } else {
-            "выкл".into()
-        };
-        let mode_st = engine
-            .tools
-            .modes
-            .as_ref()
-            .map(|m| m.status()["mode"].as_str().unwrap_or("normal").to_string())
-            .unwrap_or_else(|| "normal".into());
-        let mut lines = vec![
-            format!("Колонка онлайн ({})", crate::version()),
-            format!("Ассистент: {}", p.name),
-            format!("Микрофон: {mic}"),
-            format!("Режим: {mode_st}{}", if engine.store.is_night() { " (ночь)" } else { "" }),
-            format!("Фокус: {focus_str}"),
-            format!("Фон/радио: {amb}"),
-        ];
-        if let Some(sched) = &engine.tools.scheduler {
-            let timers = sched.active_timers_json();
-            if let Some(arr) = timers.as_array()
-                && !arr.is_empty()
-            {
-                let nearest = arr[0]["remaining_s"].as_u64().unwrap_or(0);
-                lines.push(format!(
-                    "Таймеры: {} (ближайший через {})",
-                    arr.len(),
-                    crate::scheduler::format_duration_ru(nearest)
-                ));
-            }
-        }
-        if let Some(dj) = &engine.tools.dj {
-            let st = dj.status();
-            if st["active"].as_bool().unwrap_or(false) {
-                let wave = st["station"].as_str().filter(|s| !s.is_empty())
-                    .or_else(|| st["mood"].as_str())
-                    .unwrap_or("эфир");
-                lines.push(format!("AI-DJ: {wave}"));
-            }
-        }
-        if let Some(reader) = &engine.tools.reader {
-            let st = reader.status();
-            if st["running"].as_bool().unwrap_or(false) {
-                let title = st["title"].as_str().unwrap_or("книга");
-                let ch = st["chapter"].as_u64().unwrap_or(0) + 1;
-                lines.push(format!("Книга: {title} (гл. {ch})"));
-            }
-        }
-        if let Some(games) = &engine.tools.games {
-            let st = games.status();
-            let gname = st["active_game"].as_str().unwrap_or("");
-            if !gname.is_empty() {
-                lines.push(format!("Игра: {gname}"));
-            }
-        }
-        return lines.join("\n");
+        return format_status_text(engine, ambient, focus);
     }
 
     if cmd == "/timer" || cmd == "/timers" {
@@ -885,6 +910,198 @@ pub(crate) fn parse_tg_timer_arg(rest: &str) -> Result<(u64, String), String> {
     Ok((secs, label))
 }
 
+async fn stop_all_features(engine: &Arc<Engine>, ambient: &Arc<Ambient>, focus: &Arc<Focus>) {
+    if let Some(reader) = &engine.tools.reader {
+        reader.stop();
+    }
+    if let Some(dj) = &engine.tools.dj {
+        dj.stop(Some(engine));
+    }
+    if let Some(games) = &engine.tools.games {
+        games.stop_all(Some(engine));
+    }
+    if let Some(modes) = &engine.tools.modes {
+        modes.reset(Some(ambient));
+    }
+    focus.stop();
+    ambient.stop();
+    let e = engine.clone();
+    let _ = tokio::task::spawn_blocking(move || e.stop("Telegram")).await;
+}
+
+fn format_status_text(engine: &Engine, ambient: &Ambient, focus: &Focus) -> String {
+    let s = engine.store.get();
+    let p = s.active_profile();
+    let mic = if engine.mic.online() { "вкл" } else { "выкл" };
+    let amb = ambient.current_label().unwrap_or_else(|| "выкл".into());
+    let focus_st = focus.status();
+    let focus_str = if focus_st["running"].as_bool().unwrap_or(false) {
+        let rem = focus_st["remaining_s"].as_u64().unwrap_or(0);
+        format!("{:02}:{:02}", rem / 60, rem % 60)
+    } else {
+        "выкл".into()
+    };
+    let mode_st = engine
+        .tools
+        .modes
+        .as_ref()
+        .map(|m| m.status()["mode"].as_str().unwrap_or("normal").to_string())
+        .unwrap_or_else(|| "normal".into());
+    let vol_str = crate::speakervol::speaker_volume()
+        .map(|v| format!("{v}/10"))
+        .unwrap_or_else(|| "—".into());
+    let mut lines = vec![
+        format!("🎛 YaJarvis ({})", crate::version()),
+        format!("Ассистент: {}", p.name),
+        format!("Громкость: {vol_str} · Микрофон: {mic}"),
+        format!("Режим: {mode_st}{}", if engine.store.is_night() { " (ночь)" } else { "" }),
+        format!("Фокус: {focus_str} · Фон/радио: {amb}"),
+    ];
+    if let Some(sched) = &engine.tools.scheduler {
+        let timers = sched.active_timers_json();
+        if let Some(arr) = timers.as_array()
+            && !arr.is_empty()
+        {
+            let nearest = arr[0]["remaining_s"].as_u64().unwrap_or(0);
+            lines.push(format!(
+                "Таймеры: {} (ближайший через {})",
+                arr.len(),
+                crate::scheduler::format_duration_ru(nearest)
+            ));
+        }
+    }
+    if let Some(dj) = &engine.tools.dj {
+        let st = dj.status();
+        if st["active"].as_bool().unwrap_or(false) {
+            let wave = st["station"].as_str().filter(|s| !s.is_empty())
+                .or_else(|| st["mood"].as_str())
+                .unwrap_or("эфир");
+            lines.push(format!("AI-DJ: {wave}"));
+        }
+    }
+    if let Some(reader) = &engine.tools.reader {
+        let st = reader.status();
+        if st["running"].as_bool().unwrap_or(false) {
+            let title = st["title"].as_str().unwrap_or("книга");
+            let ch = st["chapter"].as_u64().unwrap_or(0) + 1;
+            lines.push(format!("Книга: {title} (гл. {ch})"));
+        }
+    }
+    if let Some(games) = &engine.tools.games {
+        let st = games.status();
+        let gname = st["active_game"].as_str().unwrap_or("");
+        if !gname.is_empty() {
+            lines.push(format!("Игра: {gname}"));
+        }
+    }
+    lines.join("\n")
+}
+
+pub(crate) fn build_menu_keyboard(focus_running: bool) -> Value {
+    let focus_label = if focus_running { "⏹ Стоп фокус" } else { "⚡ Фокус 25м" };
+    json!({
+        "inline_keyboard": [
+            [
+                {"text": "⏯ Пауза/Плей", "callback_data": "m:pp"},
+                {"text": "⏭ След.", "callback_data": "m:next"},
+                {"text": "🔉 −", "callback_data": "m:vd"},
+                {"text": "🔊 +", "callback_data": "m:vu"}
+            ],
+            [
+                {"text": "🌅 Утро", "callback_data": "m:sc:morning"},
+                {"text": "💼 Работа", "callback_data": "m:sc:work"},
+                {"text": "🌆 Вечер", "callback_data": "m:sc:evening"},
+                {"text": "🌙 Сон", "callback_data": "m:sc:sleep"}
+            ],
+            [
+                {"text": focus_label, "callback_data": "m:focus"},
+                {"text": "⏱ Таймер 5м", "callback_data": "m:t5"},
+                {"text": "📋 Брифинг", "callback_data": "m:brief"}
+            ],
+            [
+                {"text": "⏹ Стоп всё", "callback_data": "m:stop"},
+                {"text": "🔄 Обновить", "callback_data": "m:refresh"}
+            ]
+        ]
+    })
+}
+
+async fn handle_menu_callback(
+    engine: &Arc<Engine>,
+    ambient: &Arc<Ambient>,
+    focus: &Arc<Focus>,
+    data: &str,
+) -> (String, Option<String>) {
+    if let Some(sc_id) = data.strip_prefix("m:sc:") {
+        let msg = crate::tools::run_scenario(engine.clone(), sc_id).unwrap_or_else(|e| e);
+        return (clip_tg(&msg, 180), None);
+    }
+    match data {
+        "m:pp" => {
+            let playing = engine.music.playing();
+            let op = if playing { "pause" } else { "resume" };
+            match engine.music.transport(&engine.host, op, Value::Null).await {
+                Ok(()) => (if playing { "Пауза".into() } else { "Воспроизведение".into() }, None),
+                Err(e) => (clip_tg(&e, 180), None),
+            }
+        }
+        "m:next" => {
+            if let Some(dj) = &engine.tools.dj
+                && dj.status()["active"].as_bool().unwrap_or(false)
+            {
+                dj.next();
+                return ("Следующий трек AI-DJ".into(), None);
+            }
+            match engine.music.transport(&engine.host, "next", Value::Null).await {
+                Ok(()) => ("Следующий трек".into(), None),
+                Err(e) => (clip_tg(&e, 180), None),
+            }
+        }
+        "m:vd" | "m:vu" => {
+            let cur = crate::speakervol::speaker_volume().unwrap_or(5);
+            let target = (cur + if data == "m:vu" { 1 } else { -1 }).clamp(0, 10);
+            let res = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(target))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+            match res {
+                Ok(()) => {
+                    crate::engine::flash_volume_clock(engine, target);
+                    (format!("Громкость: {target}/10"), None)
+                }
+                Err(e) => (clip_tg(&format!("Ошибка громкости: {e}"), 180), None),
+            }
+        }
+        "m:focus" => {
+            if focus.status()["running"].as_bool().unwrap_or(false) {
+                focus.stop();
+                ("Фокус остановлен".into(), None)
+            } else {
+                let msg = focus.start(engine.clone(), 25);
+                (clip_tg(&msg, 180), None)
+            }
+        }
+        "m:t5" => {
+            let Some(sched) = &engine.tools.scheduler else {
+                return ("Планировщик недоступен".into(), None);
+            };
+            match sched.add_timer("Таймер (TG)".into(), 300) {
+                Ok(_) => ("⏱ Таймер на 5 минут поставлен".into(), None),
+                Err(e) => (clip_tg(&e, 180), None),
+            }
+        }
+        "m:brief" => match crate::briefing::run_briefing(engine.clone(), "", false).await {
+            Ok(ans) => ("Брифинг сформирован".into(), Some(format!("🌅 {ans}"))),
+            Err(e) => (clip_tg(&e, 180), None),
+        },
+        "m:stop" => {
+            stop_all_features(engine, ambient, focus).await;
+            ("Всё остановлено".into(), None)
+        }
+        "m:refresh" => ("Статус обновлён".into(), None),
+        _ => ("Неизвестная кнопка".into(), None),
+    }
+}
+
 pub(crate) fn map_tg_scenario(arg: &str) -> Option<&'static str> {
     match arg.trim().to_lowercase().as_str() {
         "morning" | "утро" | "утренний" => Some("morning"),
@@ -944,5 +1161,19 @@ mod tests {
         assert_eq!(map_tg_pc_action("скрин"), Some("screenshot_save"));
         assert_eq!(map_tg_pc_action("lock"), Some("lock_screen"));
         assert_eq!(map_tg_pc_action("unknown"), None);
+    }
+
+    #[test]
+    fn builds_inline_menu_keyboard() {
+        let kb_idle = build_menu_keyboard(false);
+        let rows = kb_idle["inline_keyboard"].as_array().unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0][0]["callback_data"], "m:pp");
+        assert_eq!(rows[1][2]["callback_data"], "m:sc:evening");
+        assert_eq!(rows[2][0]["text"], "⚡ Фокус 25м");
+        assert_eq!(rows[3][0]["callback_data"], "m:stop");
+
+        let kb_focus = build_menu_keyboard(true);
+        assert_eq!(kb_focus["inline_keyboard"][2][0]["text"], "⏹ Стоп фокус");
     }
 }

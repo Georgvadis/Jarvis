@@ -3,7 +3,7 @@
 // «Плагины» — что стоит на колонке (список: включить, настроить) и что можно поставить.
 // Сервису, который живёт в плагине (YouTube, умный дом, VPN), окно предлагает поставить плагин и показывает его.
 import { tick } from "svelte";
-import { act, api, plural, toast } from "#helpers/core.js";
+import { act, api, armConfirm, plural, toast } from "#helpers/core.js";
 import { S, reload } from "./panelState.js";
 import { PL, plCatalog, plEnable, plInstall, plInstalled, plItems, plLoad, plMarkWarned, plOfficialItems,
   plRemove, plRepo, plSave, plState, plUpdate, plUpdateAll, plUpdateCandidates, plUpload, plWarned } from "./plugins.js";
@@ -385,13 +385,13 @@ export async function serviceAction(t, root, redraw) {
   const gk = t.closest("[data-gk-remove], [data-gk-reset], [data-gk-reset-all], [data-gk-activate]");
   if (gk) {
     if (gk.dataset.gkResetAll !== undefined) {
-      if (confirm("Сбросить паузы по лимитам для всех ключей Google?")) {
+      if (armConfirm(gk, "Сбросить паузы для всех ключей Google?")) {
         return act(gk, async () => { await api("PUT", "/api/gemini-keys", { reset_all: true }); await redraw(); }, "Лимиты всех ключей сброшены");
       }
       return;
     }
     if (gk.dataset.gkRemove !== undefined) {
-      if (confirm("Убрать этот ключ Google с колонки?")) {
+      if (armConfirm(gk, "Убрать этот ключ Google?")) {
         return act(gk, async () => { await api("PUT", "/api/gemini-keys", { remove: +gk.dataset.gkRemove }); await redraw(); }, "Ключ убран");
       }
       return;
@@ -406,7 +406,7 @@ export async function serviceAction(t, root, redraw) {
   const ek = t.closest("[data-ek-remove], [data-ek-reset]");
   if (ek) {
     const rm = ek.dataset.ekRemove !== undefined, i = +(rm ? ek.dataset.ekRemove : ek.dataset.ekReset);
-    if (rm && !confirm(`Убрать ключ ${i + 1} с колонки?`)) return;
+    if (rm && !armConfirm(ek, `Убрать ключ ${i + 1}?`)) return;
     return act(ek, async () => { await api("PUT", "/api/eleven-keys", rm ? { remove: i } : { reset: i }); await redraw(); }, rm ? "Ключ убран" : "Ключ снова в работе");
   }
   const b = t.closest("[data-key]"), c = t.closest("[data-clear]");
@@ -416,35 +416,45 @@ export async function serviceAction(t, root, redraw) {
     if (!val) return toast("Сначала вставьте ключ в поле", true);
     return act(b, async () => { await api("PUT", "/api/keys", { [b.dataset.key]: val }); input.value = ""; delete CONN.net[b.dataset.key]; await redraw(); }, (b.dataset.key === "elevenlabs" && (S.eleven_keys || []).length > 1) || (b.dataset.key === "gemini" && (S.gemini_keys || []).length > 1) ? "Ключ добавлен в запас" : "Ключ сохранён");
   }
-  if (c) { if (confirm(c.dataset.clear === "elevenlabs" && (S.eleven_keys || []).length > 1 ? "Убрать все ключи ElevenLabs с колонки?" : c.dataset.clear === "gemini" && (S.gemini_keys || []).length > 1 ? "Убрать все ключи Google с колонки?" : "Убрать этот ключ с колонки?")) act(c, async () => { await api("PUT", "/api/keys", { [c.dataset.clear]: "" }); delete CONN.net[c.dataset.clear]; await redraw(); }); return; }
+  if (c) {
+    const label = c.dataset.clear === "elevenlabs" && (S.eleven_keys || []).length > 1
+      ? "Убрать все ключи ElevenLabs?"
+      : c.dataset.clear === "gemini" && (S.gemini_keys || []).length > 1
+        ? "Убрать все ключи Google?"
+        : "Убрать этот ключ?";
+    if (armConfirm(c, label)) {
+      act(c, async () => { await api("PUT", "/api/keys", { [c.dataset.clear]: "" }); delete CONN.net[c.dataset.clear]; await redraw(); });
+    }
+    return;
+  }
   const btn = t.closest("button[id]");
   if (!btn) return;
   switch (btn.id) {
     case "cg-in": return act(btn, async () => { await api("POST", "/api/chatgpt/login"); await redraw(); });
-    case "cg-out": if (confirm("Выйти из ChatGPT на колонке?")) act(btn, async () => { await api("DELETE", "/api/chatgpt"); await redraw(); }); return;
+    case "cg-out": if (armConfirm(btn, "Выйти из ChatGPT?")) act(btn, async () => { await api("DELETE", "/api/chatgpt"); await redraw(); }); return;
     case "sl-in": {
       const code = field("#sl-code").value.trim();
       if (!code) return toast("Сначала вставьте код пользователя из Smart Life", true);
       return act(btn, async () => { await api("POST", "/api/smartlife/login", { user_code: code }); await redraw(); });
     }
     case "sl-refresh": return act(btn, async () => { const r = await api("POST", "/api/smartlife/refresh"); await redraw(); toast(`Устройств: ${r.devices}`); });
-    case "sl-out": if (confirm("Выйти из Smart Life на колонке?")) act(btn, async () => { await api("DELETE", "/api/smartlife"); await redraw(); }); return;
+    case "sl-out": if (armConfirm(btn, "Выйти из Smart Life?")) act(btn, async () => { await api("DELETE", "/api/smartlife"); await redraw(); }); return;
     case "xm-in": return act(btn, async () => { await api("POST", "/api/xiaomi/login"); await redraw(); });
     case "xm-refresh": return act(btn, async () => { const r = await api("POST", "/api/xiaomi/refresh"); await redraw(); toast(`Устройств: ${r.devices}`); });
-    case "xm-out": if (confirm("Выйти из Xiaomi Home на колонке?")) act(btn, async () => { await api("DELETE", "/api/xiaomi"); await redraw(); }); return;
+    case "xm-out": if (armConfirm(btn, "Выйти из Xiaomi Home?")) act(btn, async () => { await api("DELETE", "/api/xiaomi"); await redraw(); }); return;
     case "ya-in": return act(btn, async () => { await api("POST", "/api/youtube/login"); await redraw(); });
-    case "ya-out": if (confirm("Выйти из YouTube на колонке?")) act(btn, async () => { await api("DELETE", "/api/youtube/login"); await redraw(); }); return;
+    case "ya-out": if (armConfirm(btn, "Выйти из YouTube?")) act(btn, async () => { await api("DELETE", "/api/youtube/login"); await redraw(); }); return;
     case "yt-save": {
       const input = field("#yt-cookies");
       const txt = input.value.trim();
       if (!txt) return toast("Сначала вставьте текст файла cookies.txt", true);
       return act(btn, async () => { await api("PUT", "/api/youtube", { cookies: txt }); input.value = ""; await redraw(); }, "YouTube принял вход");
     }
-    case "yt-clear": if (confirm("Убрать вход в YouTube с колонки?")) act(btn, async () => { await api("DELETE", "/api/youtube"); await redraw(); }); return;
+    case "yt-clear": if (armConfirm(btn, "Убрать вход в YouTube?")) act(btn, async () => { await api("DELETE", "/api/youtube"); await redraw(); }); return;
     case "vless-save": {
       const input = field("#vless");
       return act(btn, async () => { await api("PUT", "/api/vless", { link: input.value }); input.value = ""; await redraw(); }, "Ссылка сохранена — проверьте связь");
     }
-    case "vless-clear": if (confirm("Убрать VPN? Колонка пойдёт в интернет напрямую.")) act(btn, async () => { await api("PUT", "/api/vless", { link: "" }); await redraw(); }); return;
+    case "vless-clear": if (armConfirm(btn, "Убрать VPN?")) act(btn, async () => { await api("PUT", "/api/vless", { link: "" }); await redraw(); }); return;
   }
 }

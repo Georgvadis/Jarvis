@@ -388,7 +388,7 @@
     </span>
   </div>
   {#if snapshot.profiles.length > 1 && snapshot.profile}
-    <select class="tg-switch mobile-only" value={snapshot.profile.id} aria-label="Выбрать активного ассистента" onchange={switchProfile}>
+    <select class="tg-switch" value={snapshot.profile.id} aria-label="Выбрать активного ассистента" onchange={switchProfile}>
       {#each snapshot.profiles as p (p.id)}
         <option value={p.id}>{p.name}</option>
       {/each}

@@ -2132,3 +2132,11 @@ h5.md-h { font-size: .94em; color: var(--fg2); }
 .note-rag-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .note-rag-head b { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--acc-ink); }
 .note-rag-head b .ic { width: 15px; height: 15px; }
+
+/* === Двухкликовое подтверждение вместо confirm() (lite2fix28) === */
+.confirm-armed {
+  border-color: var(--bad) !important;
+  background: var(--bad-soft) !important;
+  color: var(--bad) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 25%, transparent);
+}
