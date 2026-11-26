@@ -30,6 +30,8 @@
   let editDraft = $state("");
   let modalBusy = $state(false);
   let confirmDelete = $state(false);
+  let ragBusy = $state(false);
+  let ragAnswer = $state("");
 
   let visibleNotes = $derived.by(() => {
     return notes.filter((item) => {
@@ -68,7 +70,10 @@
   async function search(event) {
     event?.preventDefault();
     const q = query.trim();
-    if (!q) return void loadList();
+    if (!q) {
+      ragAnswer = "";
+      return void loadList();
+    }
     loading = true;
     try {
       const res = await api("GET", "/api/notes/search?q=" + encodeURIComponent(q) + "&limit=20", undefined, { signal });
@@ -79,6 +84,34 @@
       if (!signal.aborted) toast(error.message, true);
     } finally {
       if (!signal.aborted) loading = false;
+    }
+  }
+
+  async function askRag() {
+    const q = query.trim();
+    if (!q || ragBusy) return;
+    ragBusy = true;
+    ragAnswer = "";
+    try {
+      const res = await api("POST", "/api/memory/rag", { query: q, ask: true, limit: 8 }, { signal });
+      if (signal.aborted) return;
+      ragAnswer = res.answer || "";
+      const noteHits = (res.hits || []).filter((h) => h.source === "note" && h.path);
+      if (noteHits.length) {
+        notes = noteHits.map((h) => ({
+          path: h.path,
+          title: h.title,
+          folder: h.folder || "",
+          tags: h.tags || [],
+          snippet: h.snippet || "",
+          mtime: h.mtime || 0,
+        }));
+      }
+      if (res.total_notes) total = Number(res.total_notes);
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      if (!signal.aborted) ragBusy = false;
     }
   }
 
@@ -265,21 +298,34 @@
   <section class="card">
     <div class="card-head">
       <h2>{@html icon("note")} База знаний</h2>
-      <button type="button" class="btn sm ghost" disabled={loading} onclick={() => { query = ""; selectedFolder = ""; selectedTag = ""; void loadList(); }}>
+      <button type="button" class="btn sm ghost" disabled={loading || ragBusy} onclick={() => { query = ""; selectedFolder = ""; selectedTag = ""; ragAnswer = ""; void loadList(); }}>
         {@html icon("refresh")} Обновить
       </button>
     </div>
 
     <form class="mode-row" onsubmit={search}>
-      <input type="text" maxlength="120" placeholder="Поиск по заметкам…" bind:value={query}>
+      <input type="text" maxlength="120" placeholder="Поиск по заметкам или вопрос ИИ…" bind:value={query}>
       {#if folders.length > 0}
         <select class="note-folder-sel" aria-label="Фильтр по папке" bind:value={selectedFolder}>
           <option value="">Все папки</option>
           {#each folders as f (f)}<option value={f}>{f}</option>{/each}
         </select>
       {/if}
-      <button type="submit" class="btn sm primary">{@html icon("search")} Найти</button>
+      <button type="submit" class="btn sm ghost" disabled={loading || ragBusy}>{@html icon("search")} Найти</button>
+      <button type="button" class="btn sm primary" disabled={loading || ragBusy || !query.trim()} onclick={() => void askRag()}>
+        {@html icon("sparkles")} {ragBusy ? "Думаю…" : "ИИ-ответ"}
+      </button>
     </form>
+
+    {#if ragAnswer}
+      <div class="note-rag-box">
+        <div class="note-rag-head">
+          <b>{@html icon("sparkles")} Ответ по базе знаний</b>
+          <button type="button" class="ib" aria-label="Скрыть ответ" onclick={() => { ragAnswer = ""; }}>{@html icon("x")}</button>
+        </div>
+        <div class="md-prose" use:renderMd={ragAnswer}></div>
+      </div>
+    {/if}
 
     {#if allTags.length > 0}
       <div class="note-tags" role="group" aria-label="Фильтр по тегам">

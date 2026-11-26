@@ -585,11 +585,11 @@ impl Tools {
             defs.push(json!({
                 "type": "function",
                 "name": "search_notes",
-                "description": "Найти информацию в заметках хозяина в CyberNotes («что я записывал про...», «найди в моих заметках»).",
+                "description": "Найти информацию по смыслу или ключевым словам в заметках CyberNotes и долгой памяти Джарвиса («что я записывал про...», «найди в моих заметках», «какая идея была насчёт...»).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "поисковый запрос или ключевые слова"}
+                        "query": {"type": "string", "description": "поисковый запрос, тема или ключевые слова"}
                     },
                     "required": ["query"]
                 }
@@ -818,9 +818,36 @@ impl Tools {
         }
         if name == "search_notes" {
             let q = field("query");
-            return match search_cybernotes(&self.host, &q).await {
-                Ok(summary) => summary,
-                Err(e) => format!("Не удалось поискать в заметках: {e}"),
+            return match semantic_search_all(&self.host, self.memory.as_deref(), &q, 6).await {
+                Ok(v) => {
+                    let hits = v["hits"].as_array().cloned().unwrap_or_default();
+                    if hits.is_empty() {
+                        match search_cybernotes(&self.host, &q).await {
+                            Ok(s) => s,
+                            Err(e) => format!("Не удалось поискать в заметках: {e}"),
+                        }
+                    } else {
+                        let lines: Vec<String> = hits
+                            .iter()
+                            .map(|h| {
+                                let kind = if h["source"].as_str() == Some("note") { "Заметка" } else { "Память" };
+                                let title = h["title"].as_str().unwrap_or("");
+                                let folder = h["folder"].as_str().unwrap_or("");
+                                let snippet = h["snippet"].as_str().unwrap_or("");
+                                if folder.is_empty() {
+                                    format!("• [{kind}] «{title}»: {snippet}")
+                                } else {
+                                    format!("• [{kind}] «{title}» ({folder}): {snippet}")
+                                }
+                            })
+                            .collect();
+                        format!("Найдено по смыслу:\n{}", lines.join("\n"))
+                    }
+                }
+                Err(_) => match search_cybernotes(&self.host, &q).await {
+                    Ok(summary) => summary,
+                    Err(e) => format!("Не удалось поискать в заметках: {e}"),
+                },
             };
         }
         if name == "start_ai_dj"
@@ -1158,6 +1185,37 @@ pub async fn save_cybernote(host: &Host, title: &str, content: &str, tags: &[Str
         return Err(v["detail"].as_str().unwrap_or("Ошибка записи заметки").to_string());
     }
     Ok(v["path"].as_str().unwrap_or(title).to_string())
+}
+
+pub async fn semantic_search_all(
+    host: &Host,
+    memory: Option<&crate::memory::Memory>,
+    query: &str,
+    limit: usize,
+) -> Result<Value, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Err("Пустой запрос".into());
+    }
+    let extra_docs = memory.map(|m| m.semantic_docs(45)).unwrap_or_default();
+    let srv = local_voice_url(host);
+    let resp = crate::net::direct()
+        .post(format!("{srv}/notes/semantic"))
+        .json(&json!({
+            "query": q,
+            "limit": limit.clamp(1, 24),
+            "extra_docs": extra_docs,
+        }))
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("Сервер поиска недоступен: {e}"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(v["detail"].as_str().unwrap_or("Ошибка семантического поиска").to_string());
+    }
+    Ok(v)
 }
 
 pub async fn search_cybernotes(host: &Host, query: &str) -> Result<String, String> {

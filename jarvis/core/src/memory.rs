@@ -1501,6 +1501,104 @@ impl Memory {
         }
         v
     }
+
+    /// Документы из долгой памяти (досье, конспект, летопись, недавние разговоры) для локального RAG.
+    pub fn semantic_docs(&self, max_turns: usize) -> Vec<Value> {
+        let now = self.now();
+        let st = self.st.lock().unwrap();
+        let mut docs = Vec::new();
+        let profile = profile_lines(&st.d.profile);
+        if !profile.trim().is_empty() {
+            docs.push(json!({
+                "id": "mem:profile",
+                "source": "memory",
+                "title": "Досье о хозяине",
+                "folder": "Память",
+                "content": profile,
+                "updated_at": st.d.summary_at,
+            }));
+        }
+        if !st.d.summary.trim().is_empty() {
+            docs.push(json!({
+                "id": "mem:summary",
+                "source": "memory",
+                "title": "Конспект недавних разговоров",
+                "folder": "Память",
+                "content": st.d.summary,
+                "updated_at": st.d.summary_at,
+            }));
+        }
+        for m in st.d.chronicle.iter().rev() {
+            if !m.text.trim().is_empty() {
+                docs.push(json!({
+                    "id": format!("mem:chron:{}", m.month),
+                    "source": "memory",
+                    "title": format!("Летопись: {}", month_label(&m.month)),
+                    "folder": "Летопись",
+                    "content": m.text,
+                    "updated_at": st.d.summary_at,
+                }));
+            }
+        }
+        let take_n = max_turns.min(st.recent.len());
+        if take_n > 0 {
+            let start = st.recent.len() - take_n;
+            let slice = &st.recent[start..];
+            for chunk in slice.rchunks(3) {
+                let mut lines = Vec::new();
+                let first_n = chunk.first().map(|t| t.n).unwrap_or(0);
+                let last_ts = chunk.last().map(|t| t.ts).unwrap_or(0);
+                let day = day_label(at(last_ts, &now).date(), &now, false);
+                for t in chunk {
+                    if !t.user.trim().is_empty() {
+                        lines.push(format!("Вы: {}", t.user.trim()));
+                    }
+                    if !t.bot.trim().is_empty() && !(t.user.trim().is_empty() && t.bot.starts_with('[') && t.bot.ends_with(']')) {
+                        lines.push(format!("Джарвис: {}", t.bot.trim()));
+                    }
+                }
+                if !lines.is_empty() {
+                    docs.push(json!({
+                        "id": format!("mem:arch:{first_n}"),
+                        "source": "memory",
+                        "title": format!("Разговор ({day})"),
+                        "folder": "Архив",
+                        "content": lines.join("\n"),
+                        "updated_at": last_ts,
+                    }));
+                }
+            }
+        }
+        docs
+    }
+
+    /// Экспорт досье, конспекта и летописи в чистый Markdown (для CyberNotes).
+    pub fn export_markdown(&self) -> String {
+        let st = self.st.lock().unwrap();
+        let mut parts = Vec::new();
+        let profile = profile_lines(&st.d.profile);
+        if !profile.trim().is_empty() {
+            parts.push(format!("## Досье о хозяине\n\n{profile}"));
+        }
+        if !st.d.summary.trim().is_empty() {
+            parts.push(format!("## Конспект недавних разговоров\n\n{}", st.d.summary.trim()));
+        }
+        if !st.d.chronicle.is_empty() {
+            let mut chron_parts = Vec::new();
+            for m in st.d.chronicle.iter().rev() {
+                if !m.text.trim().is_empty() {
+                    chron_parts.push(format!("### {}\n\n{}", month_label(&m.month), m.text.trim()));
+                }
+            }
+            if !chron_parts.is_empty() {
+                parts.push(format!("## Летопись по месяцам\n\n{}", chron_parts.join("\n\n")));
+            }
+        }
+        if parts.is_empty() {
+            return String::new();
+        }
+        format!("# Долгая память Джарвиса\n\n{}\n", parts.join("\n\n"))
+    }
 }
 
 fn write_private(p: &std::path::Path, b: &[u8]) -> std::io::Result<()> {
@@ -1668,6 +1766,27 @@ mod tests {
         assert!(!prof.contains("арбуз"), "{prof}");
         assert!(prof.contains("шахматы с соседом"), "{prof}");
         assert!(prof.contains("фразу ёлки-палки"), "{prof}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn semantic_docs_and_markdown_export() {
+        let dir = std::env::temp_dir().join(format!("jmem-sem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let m = mem(&dir);
+        m.set_profile("- Пишет на Rust и Python").unwrap();
+        m.set_summary("Обсудили локальный RAG и поиск по заметкам.").unwrap();
+        m.add("Напомни про архитектуру внимания", "Transformer использует self-attention.");
+        let docs = m.semantic_docs(10);
+        assert!(docs.iter().any(|d| d["id"] == "mem:profile" && d["content"].as_str().unwrap_or("").contains("Rust")));
+        assert!(docs.iter().any(|d| d["id"] == "mem:summary" && d["content"].as_str().unwrap_or("").contains("RAG")));
+        assert!(docs.iter().any(|d| d["id"].as_str().unwrap_or("").starts_with("mem:arch:")));
+        let md = m.export_markdown();
+        assert!(md.contains("# Долгая память Джарвиса"));
+        assert!(md.contains("## Досье о хозяине"));
+        assert!(md.contains("Пишет на Rust и Python"));
+        assert!(md.contains("## Конспект недавних разговоров"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

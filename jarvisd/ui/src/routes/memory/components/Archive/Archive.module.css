@@ -108,6 +108,12 @@
   transition: opacity .15s;
 }
 
+.turnActs {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .turn:is(:hover, :focus-within) :global(.ib) {
   opacity: 1;
 }

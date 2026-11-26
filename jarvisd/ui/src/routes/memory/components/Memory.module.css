@@ -252,6 +252,65 @@
   border-color: color-mix(in srgb, var(--bad) 22%, var(--line));
 }
 
+.ragForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ragForm input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.ragAnswer {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--line));
+  border-radius: 12px;
+  background: var(--raise);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.ragHits {
+  display: grid;
+  gap: 8px;
+}
+
+.ragHit {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+}
+
+.ragHitHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ragHitHead b {
+  font-size: 13.5px;
+}
+
+.ragHitHead small {
+  color: var(--fg3);
+  font-size: 12px;
+}
+
+.ragHit p {
+  margin: 0;
+  color: var(--fg2);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 @media (hover: none) {
   .fact :global(.ib) {
     opacity: 1;

@@ -298,6 +298,8 @@ pub fn router(app: App) -> Router {
         .route("/api/memory/archive", get(memory::archive))
         .route("/api/memory/forget", post(memory::forget))
         .route("/api/memory/compact", post(memory::compact))
+        .route("/api/memory/rag", post(memory::rag))
+        .route("/api/memory/export-notes", post(memory::export_notes))
         .route("/api/chatgpt/newchat", post(memory::new_chat))
         .route_layer(middleware::from_fn_with_state(app.clone(), auth::require));
     Router::new()

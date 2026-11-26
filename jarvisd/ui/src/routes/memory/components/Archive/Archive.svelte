@@ -18,6 +18,7 @@
   let loading = $state(true);
   let loadError = $state("");
   let confirmBulk = $state(false);
+  let savingTurn = $state(0);
   let request;
   let searchTimer;
   let disposed = false;
@@ -102,6 +103,33 @@
     if (!selected.size) return;
     forget([...selected]);
   }
+
+  async function saveToNotes(turn) {
+    if (savingTurn || disposed) return;
+    savingTurn = turn.n;
+    const parts = [];
+    if (turn.user) parts.push(`**Вы:** ${turn.user}`);
+    if (turn.bot) parts.push(`**Джарвис:** ${turn.bot}`);
+    const content = parts.join("\n\n").trim();
+    if (!content) {
+      savingTurn = 0;
+      return;
+    }
+    const title = (turn.user || turn.bot || "Разговор").replace(/\s+/g, " ").slice(0, 60);
+    try {
+      const res = await api("POST", "/api/notes/save", {
+        title,
+        folder: "Из разговоров",
+        tags: ["разговор"],
+        content,
+      });
+      if (!disposed) toast("Сохранено в CyberNotes: " + (res.path || ""));
+    } catch (error) {
+      if (!disposed) toast(error.message, true);
+    } finally {
+      savingTurn = 0;
+    }
+  }
 </script>
 
 <section class={["card", sectionStyles.section]} aria-labelledby="memory-archive-title">
@@ -151,8 +179,12 @@
             {#if turn.user}<p class={styles.user}><b>Вы</b><span>{turn.user}</span></p>{/if}
             {#if turn.bot}<p><b>{event ? "Событие" : "Джарвис"}</b><span>{event ? turn.bot.slice(1, -1) : turn.bot}</span></p>{/if}
           </div>
-          <button class="ib danger" type="button" aria-label="Удалить реплику" disabled={busy}
-            onclick={() => forget([turn.n])}>{@html icon("trash")}</button>
+          <div class={styles.turnActs}>
+            <button class="ib" type="button" title="Сохранить в CyberNotes" aria-label="Сохранить реплику в CyberNotes"
+              disabled={busy || savingTurn === turn.n} onclick={() => void saveToNotes(turn)}>{@html icon("note")}</button>
+            <button class="ib danger" type="button" aria-label="Удалить реплику" disabled={busy}
+              onclick={() => forget([turn.n])}>{@html icon("trash")}</button>
+          </div>
         </div>
       {/each}
     </div>

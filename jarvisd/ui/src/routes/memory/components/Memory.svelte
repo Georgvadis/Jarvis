@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { api, icon, plural, tip, toast } from "#helpers/core.js";
+  import { renderMarkdownInto } from "#helpers/markdown.js";
   import { reload } from "#state/panelState.js";
   import Archive from "./Archive/Archive.svelte";
   import styles from "./Memory.module.css";
@@ -27,6 +28,11 @@
   let factQuery = $state("");
   let confirmMonth = $state("");
   let confirmReset = $state("");
+  let ragQuery = $state("");
+  let ragBusy = $state(false);
+  let ragAnswer = $state("");
+  let ragHits = $state.raw([]);
+  let ragDone = $state(false);
   let memory = $derived(data?.memory || {});
   let settings = $derived(data?.settings || {});
   let facts = $derived((memory.profile || "").split("\n").map((line) => line.trim())
@@ -174,6 +180,46 @@
     });
   }
 
+  function renderMd(node, text) {
+    renderMarkdownInto(node, text);
+    return {
+      update(nextText) {
+        renderMarkdownInto(node, nextText);
+      },
+    };
+  }
+
+  async function runRag(ask = false) {
+    const q = ragQuery.trim();
+    if (!q || ragBusy) return;
+    ragBusy = true;
+    try {
+      const res = await api("POST", "/api/memory/rag", { query: q, ask, limit: 8 }, { signal });
+      if (signal.aborted) return;
+      ragAnswer = res.answer || "";
+      ragHits = res.hits || [];
+      ragDone = true;
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      ragBusy = false;
+    }
+  }
+
+  function clearRag() {
+    ragQuery = "";
+    ragAnswer = "";
+    ragHits = [];
+    ragDone = false;
+  }
+
+  function exportToNotes() {
+    void run(async () => {
+      const res = await api("POST", "/api/memory/export-notes", {}, { signal });
+      if (!signal.aborted) toast("Сохранено в CyberNotes: " + res.path);
+    });
+  }
+
   function resetChat(all) {
     confirmReset = "";
     void run(async () => {
@@ -244,15 +290,62 @@
     <section class={["card", styles.section]}>
       <div class={styles.heading}>
         <div>
+          <h2>{@html icon("sparkles")}Умный поиск</h2>
+          <p class="muted">По смыслу в досье, конспекте, архиве и заметках CyberNotes</p>
+        </div>
+      </div>
+      <form class={styles.ragForm} onsubmit={(e) => { e.preventDefault(); void runRag(false); }}>
+        <input type="search" maxlength="160" placeholder="Вопрос или тема по памяти и заметкам…" bind:value={ragQuery} disabled={ragBusy}>
+        <button class="btn sm ghost" type="submit" disabled={ragBusy || !ragQuery.trim()}>{@html icon("search")} Найти</button>
+        <button class="btn sm primary" type="button" disabled={ragBusy || !ragQuery.trim()} onclick={() => void runRag(true)}>
+          {@html icon("sparkles")} {ragBusy ? "Ищу…" : "ИИ-ответ"}
+        </button>
+        {#if ragDone}
+          <button class="ib" type="button" aria-label="Сбросить поиск" onclick={clearRag}>{@html icon("x")}</button>
+        {/if}
+      </form>
+      {#if ragAnswer}
+        <div class={["md-prose", styles.ragAnswer]} use:renderMd={ragAnswer}></div>
+      {/if}
+      {#if ragHits.length}
+        <div class={styles.ragHits}>
+          {#each ragHits as hit, i (`${hit.source}:${hit.id || hit.path}:${i}`)}
+            <article class={styles.ragHit}>
+              <div class={styles.ragHitHead}>
+                <span class="chip">{hit.source === "note" ? "Заметка" : "Память"}</span>
+                <b>{hit.title}</b>
+                {#if hit.folder}<small>{hit.folder}</small>{/if}
+                <small class={styles.push}>{Math.round((hit.score || 0) * 100)}%</small>
+              </div>
+              <p>{hit.snippet}</p>
+            </article>
+          {/each}
+        </div>
+      {:else if ragDone && !ragAnswer}
+        <p class={styles.empty}>По смыслу ничего подходящего не нашлось.</p>
+      {/if}
+    </section>
+
+    <section class={["card", styles.section]}>
+      <div class={styles.heading}>
+        <div>
           <h2>{@html icon("read")}Что Джарвис знает о вас</h2>
           <p class="muted">Передаётся в начале каждого разговора</p>
         </div>
-        {#if facts.length > 3}
-          <label class="cx-search mem-search">
-            {@html icon("search")}
-            <input type="search" aria-label="Поиск по фактам" placeholder="Поиск по фактам" bind:value={factQuery}>
-          </label>
-        {/if}
+        <div class="row">
+          {#if facts.length > 3}
+            <label class="cx-search mem-search">
+              {@html icon("search")}
+              <input type="search" aria-label="Поиск по фактам" placeholder="Поиск по фактам" bind:value={factQuery}>
+            </label>
+          {/if}
+          {#if facts.length || memory.summary || chronicle.length}
+            <button class="btn sm ghost" type="button" disabled={busy} onclick={exportToNotes}
+              title="Экспортировать досье, конспект и летопись в CyberNotes">
+              {@html icon("upload")} В CyberNotes
+            </button>
+          {/if}
+        </div>
       </div>
       {#if facts.length}
         <ul class={styles.facts}>
