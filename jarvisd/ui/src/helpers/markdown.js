@@ -319,6 +319,38 @@ export function renderMarkdownInto(container, rawText) {
       continue;
     }
 
+    if (HR_RE.test(line)) {
+      flushPara();
+      flushList();
+      const hr = document.createElement("hr");
+      hr.className = "md-hr";
+      container.append(hr);
+      continue;
+    }
+
+    const hMatch = line.match(HEADING_RE);
+    if (hMatch) {
+      flushPara();
+      flushList();
+      const lvl = Math.min(hMatch[1].length + 2, 5);
+      const h = document.createElement(`h${lvl}`);
+      h.className = "md-h";
+      appendInlineDom(h, hMatch[2].trim());
+      container.append(h);
+      continue;
+    }
+
+    const qMatch = line.match(QUOTE_RE);
+    if (qMatch) {
+      flushPara();
+      flushList();
+      const bq = document.createElement("blockquote");
+      bq.className = "md-quote";
+      appendInlineDom(bq, qMatch[1]);
+      container.append(bq);
+      continue;
+    }
+
     const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
     if (ulMatch) {
       flushPara();

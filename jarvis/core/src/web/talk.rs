@@ -1073,11 +1073,52 @@ pub async fn notes_status(State(app): State<App>) -> Response {
     }
 }
 
+fn valid_note_path(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 300
+        && !p.starts_with('/')
+        && !p.contains('\\')
+        && !p.contains('\0')
+        && !p.chars().any(char::is_control)
+        && p.to_lowercase().ends_with(".md")
+        && p.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != ".." && !seg.starts_with('.'))
+}
+
+fn sanitize_audio_ext(raw: &str) -> (&'static str, &'static str) {
+    match raw.trim().trim_start_matches('.').to_lowercase().as_str() {
+        "ogg" => ("ogg", "audio/ogg"),
+        "opus" => ("opus", "audio/opus"),
+        "wav" => ("wav", "audio/wav"),
+        "mp4" => ("mp4", "audio/mp4"),
+        "m4a" => ("m4a", "audio/mp4"),
+        "mp3" => ("mp3", "audio/mpeg"),
+        _ => ("webm", "audio/webm"),
+    }
+}
+
+fn build_audio_multipart(boundary: &str, filename: &str, mime: &str, lang: &str, data: &[u8]) -> Vec<u8> {
+    let mut body = Vec::with_capacity(data.len() + 512);
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"{filename}\"\r\nContent-Type: {mime}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(data);
+    body.extend_from_slice(
+        format!(
+            "\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"language\"\r\n\r\n{lang}\r\n--{boundary}--\r\n"
+        )
+        .as_bytes(),
+    );
+    body
+}
+
 pub async fn notes_list(
     State(app): State<App>,
     axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    let limit = query.get("limit").and_then(|s| s.parse::<u32>().ok()).unwrap_or(20).clamp(1, 100);
+    let limit = query.get("limit").and_then(|s| s.parse::<u32>().ok()).unwrap_or(40).clamp(1, 200);
     let url = format!("{}/notes/list?limit={limit}", local_voice_server(&app));
     let resp = crate::net::direct()
         .get(&url)
@@ -1103,6 +1144,60 @@ pub async fn notes_search(
     forward_voice_response(resp, "Не удалось поискать заметки CyberNotes").await
 }
 
+pub async fn notes_read(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let path = query.get("path").map(String::as_str).unwrap_or("").trim();
+    if !valid_note_path(path) {
+        return super::bad("Недопустимый путь заметки");
+    }
+    let url = format!("{}/notes/read", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .get(&url)
+        .query(&[("path", path)])
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось прочитать заметку CyberNotes").await
+}
+
+pub async fn notes_update(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let path = value["path"].as_str().unwrap_or("").trim();
+    if !valid_note_path(path) {
+        return super::bad("Недопустимый путь заметки");
+    }
+    let Some(content) = value["content"].as_str().filter(|c| !c.is_empty() && c.len() <= 100_000) else {
+        return super::bad("Текст заметки должен быть от 1 до 100000 байт");
+    };
+    let url = format!("{}/notes/update", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .put(&url)
+        .json(&json!({"path": path, "content": content}))
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось обновить заметку в CyberNotes").await
+}
+
+pub async fn notes_delete(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let path = query.get("path").map(String::as_str).unwrap_or("").trim();
+    if !valid_note_path(path) {
+        return super::bad("Недопустимый путь заметки");
+    }
+    let url = format!("{}/notes/delete", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .delete(&url)
+        .query(&[("path", path)])
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось удалить заметку CyberNotes").await
+}
+
 pub async fn notes_save(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let content = value["content"].as_str().unwrap_or("").trim();
     if content.is_empty() || content.len() > 20000 {
@@ -1122,6 +1217,60 @@ pub async fn notes_save(State(app): State<App>, axum::Json(value): axum::Json<se
         .send()
         .await;
     forward_voice_response(resp, "Не удалось сохранить заметку в CyberNotes").await
+}
+
+pub async fn ptt(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if body.is_empty() || body.len() > 8 * 1024 * 1024 {
+        return super::bad("Аудио должно быть от 1 байта до 8 МБ");
+    }
+    let (ext, mime) = sanitize_audio_ext(query.get("ext").map(String::as_str).unwrap_or("webm"));
+    let speak = query.get("speak").map(|v| v != "0" && v != "false").unwrap_or(true);
+    let direct = query.get("direct").is_some_and(|v| v == "1" || v == "true");
+    let lang = app.store.with(|s| {
+        let l = s.language.trim();
+        if l.is_empty() || l == "auto" { "ru".to_string() } else { l.to_string() }
+    });
+
+    let boundary = format!("jarvis-ptt-{}", crate::settings::rand_hex(8));
+    let filename = format!("ptt.{ext}");
+    let mp_body = build_audio_multipart(&boundary, &filename, mime, &lang, &body);
+    let url = format!("{}/stt", local_voice_server(&app));
+    let resp = match crate::net::direct()
+        .post(&url)
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(mp_body)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        let msg = v["detail"].as_str().or(v["error"].as_str()).unwrap_or("Ошибка распознавания речи");
+        return super::bad(msg);
+    }
+    let text = v["text"].as_str().unwrap_or("").trim().to_string();
+    if text.is_empty() {
+        return reply(StatusCode::OK, json!({"ok": false, "text": "", "error": "Речь не распознана"}));
+    }
+
+    let engine = app.engine.clone();
+    if direct {
+        engine.journal.note("озвучка", &text, "");
+        let say_copy = text.clone();
+        tokio::task::spawn_blocking(move || { engine.say_text(&say_copy); });
+    } else {
+        let turn_copy = text.clone();
+        tokio::spawn(async move { engine.text_turn(turn_copy, speak).await; });
+    }
+    reply(StatusCode::OK, json!({"ok": true, "text": text}))
 }
 
 pub async fn stack_health(State(app): State<App>) -> Response {
@@ -1233,4 +1382,38 @@ pub async fn stack_health(State(app): State<App>) -> Response {
             "vpn": vpn_json,
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_cybernote_paths() {
+        assert!(valid_note_path("note.md"));
+        assert!(valid_note_path("Инструкции/Домашняя Сеть/Тест.MD"));
+        assert!(!valid_note_path(""));
+        assert!(!valid_note_path("/etc/passwd.md"));
+        assert!(!valid_note_path("../secret.md"));
+        assert!(!valid_note_path("dir/../secret.md"));
+        assert!(!valid_note_path(".hidden/note.md"));
+        assert!(!valid_note_path("dir\\note.md"));
+        assert!(!valid_note_path("note.txt"));
+        assert!(!valid_note_path("note\n.md"));
+    }
+
+    #[test]
+    fn sanitizes_audio_extensions_and_multipart() {
+        assert_eq!(sanitize_audio_ext("ogg"), ("ogg", "audio/ogg"));
+        assert_eq!(sanitize_audio_ext(".M4A"), ("m4a", "audio/mp4"));
+        assert_eq!(sanitize_audio_ext("../../exe"), ("webm", "audio/webm"));
+
+        let body = build_audio_multipart("b123", "ptt.webm", "audio/webm", "ru", b"abc");
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains("--b123\r\n"));
+        assert!(text.contains("filename=\"ptt.webm\""));
+        assert!(text.contains("Content-Type: audio/webm"));
+        assert!(text.contains("name=\"language\"\r\n\r\nru"));
+        assert!(text.ends_with("--b123--\r\n"));
+    }
 }

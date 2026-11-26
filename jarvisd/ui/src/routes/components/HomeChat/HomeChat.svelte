@@ -1,6 +1,6 @@
 <script>
   import { onMount, tick } from "svelte";
-  import { api, icon, ring, toast } from "#helpers/core.js";
+  import { api, icon, ring, toast, upload } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
   import { activity, refreshActivity } from "#state/activity.js";
   import { avatar, journal, refreshRoute, reload, S, speakerState } from "#state/panelState.js";
@@ -25,9 +25,18 @@
   let searchOpen = $state(false);
   let searchQuery = $state("");
   let searchInput = $state();
+  let pttRecording = $state(false);
+  let pttBusy = $state(false);
+  let pttSec = $state(0);
   let stickToBottom = true;
   let pollTimer;
   let confirmTimer;
+  let pttTickTimer;
+  let pttMaxTimer;
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let audioChunks = [];
+  let pttExt = "webm";
 
   let rows = $derived(chatMessages(snapshot.turns, snapshot.phase));
   let visibleRows = $derived.by(() => {
@@ -49,8 +58,132 @@
       controller.abort();
       clearTimeout(pollTimer);
       clearTimeout(confirmTimer);
+      stopPttCleanup();
     };
   });
+
+  function stopPttCleanup() {
+    clearInterval(pttTickTimer);
+    clearTimeout(pttMaxTimer);
+    try {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+    } catch { /* ignore */ }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+      mediaStream = null;
+    }
+  }
+
+  function pickAudioMime() {
+    if (typeof MediaRecorder === "undefined") return ["", "webm"];
+    const candidates = [
+      ["audio/webm;codecs=opus", "webm"],
+      ["audio/webm", "webm"],
+      ["audio/ogg;codecs=opus", "ogg"],
+      ["audio/mp4", "mp4"],
+    ];
+    if (typeof MediaRecorder.isTypeSupported !== "function") return ["", "webm"];
+    for (const [mime, ext] of candidates) {
+      if (MediaRecorder.isTypeSupported(mime)) return [mime, ext];
+    }
+    return ["", "webm"];
+  }
+
+  async function togglePtt() {
+    if (pttBusy) return;
+    if (pttRecording) {
+      clearInterval(pttTickTimer);
+      clearTimeout(pttMaxTimer);
+      try {
+        mediaRecorder?.stop();
+      } catch {
+        stopPttCleanup();
+        pttRecording = false;
+      }
+      return;
+    }
+
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      toast("Микрофон браузера требует HTTPS или localhost (Chrome: flags → insecure-origins)", true);
+      return;
+    }
+    if (typeof MediaRecorder === "undefined") {
+      toast("Браузер не поддерживает запись аудио (MediaRecorder)", true);
+      return;
+    }
+
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      toast("Нет доступа к микрофону браузера", true);
+      return;
+    }
+
+    const [mime, ext] = pickAudioMime();
+    pttExt = ext;
+    audioChunks = [];
+    try {
+      mediaRecorder = mime ? new MediaRecorder(mediaStream, { mimeType: mime }) : new MediaRecorder(mediaStream);
+    } catch {
+      stopPttCleanup();
+      toast("Не удалось запустить запись с микрофона", true);
+      return;
+    }
+
+    mediaRecorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) audioChunks.push(ev.data);
+    };
+    mediaRecorder.onstop = () => {
+      clearInterval(pttTickTimer);
+      clearTimeout(pttMaxTimer);
+      const chunks = audioChunks;
+      const recordedExt = pttExt;
+      audioChunks = [];
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+        mediaStream = null;
+      }
+      pttRecording = false;
+      const blob = new Blob(chunks, { type: mime || "audio/webm" });
+      if (blob.size < 256) {
+        toast("Запись слишком короткая", true);
+        return;
+      }
+      void sendPttAudio(blob, recordedExt);
+    };
+
+    pttSec = 0;
+    pttRecording = true;
+    mediaRecorder.start(250);
+    pttTickTimer = setInterval(() => { pttSec += 1; }, 1000);
+    pttMaxTimer = setTimeout(() => {
+      if (pttRecording) void togglePtt();
+    }, 45000);
+  }
+
+  async function sendPttAudio(blob, ext) {
+    if (pttBusy || signal.aborted) return;
+    pttBusy = true;
+    try {
+      const qs = `ext=${encodeURIComponent(ext)}&speak=${speak ? "1" : "0"}&direct=${directTts ? "1" : "0"}`;
+      const res = await upload("POST", `/api/ptt?${qs}`, blob, { signal });
+      if (signal.aborted) return;
+      if (res.ok && res.text) {
+        toast(`«${res.text}»`);
+        stickToBottom = true;
+        followFeed();
+        void poll();
+        clearTimeout(pollTimer);
+        pollTimer = setTimeout(poll, 700);
+      } else {
+        toast(res.error || "Речь не распознана", true);
+      }
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      pttBusy = false;
+    }
+  }
 
   $effect(() => {
     if (rows.length) followFeed();
@@ -336,6 +469,17 @@
       data-tip={speak ? "Ответ прозвучит на колонке. Нажмите, чтобы отвечал только текстом" : "Ответ только текстом. Нажмите, чтобы читал вслух на колонке"}
       aria-label="Читать ответ вслух на колонке">{@html icon(speak ? "voice" : "mute")}</button>
   {/if}
+  <button
+    class="ib lg"
+    class:ptt-rec={pttRecording}
+    id="ptt-btn"
+    type="button"
+    disabled={pttBusy || sending}
+    aria-pressed={pttRecording}
+    onclick={togglePtt}
+    data-tip={pttRecording ? `Остановить запись (${pttSec}с) и отправить` : "Голос с этого устройства (браузер → Whisper)"}
+    aria-label={pttRecording ? "Остановить запись" : "Сказать с микрофона устройства"}
+  >{@html icon(pttRecording ? "stop" : "headset", pttRecording ? "solid" : "")}</button>
   {#if snapshot.talking}
     <button class="rb" id="stop" type="button" disabled={speakerActions.stop} onclick={() => controlSpeaker("stop")}
       data-tip="Оборвать разговор" aria-label="Стоп">{@html icon("stop", "solid")}</button>

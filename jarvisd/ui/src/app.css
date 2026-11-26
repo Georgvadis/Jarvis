@@ -2009,3 +2009,70 @@ input[type=range]::-moz-range-thumb {
   border: 1px solid var(--line); background: var(--bg0);
 }
 .step-fields { flex: 1; min-width: 0; display: grid; gap: 8px; }
+
+/* === CyberNotes Pro + Markdown расширения + Browser Push-to-Talk (lite2fix23) === */
+.md-h { margin: 4px 0 0; font-weight: 700; line-height: 1.3; color: var(--fg); }
+h3.md-h { font-size: 1.08em; }
+h4.md-h { font-size: 1em; }
+h5.md-h { font-size: .94em; color: var(--fg2); }
+.md-hr { border: 0; border-top: 1px solid var(--line); margin: 6px 0; }
+.md-quote {
+  margin: 0; padding: 6px 12px; border-left: 3px solid var(--acc);
+  background: var(--raise); border-radius: 0 8px 8px 0; color: var(--fg2); font-size: .95em;
+}
+
+.note-folder-sel { flex: 0 1 180px; width: auto; min-width: 120px; }
+.note-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.note-tag {
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg0); color: var(--fg2); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: border-color .15s, background-color .15s, color .15s;
+}
+.note-tag:hover { border-color: var(--acc); color: var(--fg); }
+.note-tag.on {
+  background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 55%, transparent); color: var(--acc-ink);
+}
+.note-open-title {
+  flex: 1; min-width: 0; padding: 0; border: 0; background: transparent;
+  text-align: left; color: inherit; font: inherit; cursor: pointer;
+}
+.note-open-title:hover b { color: var(--acc-ink); }
+.note-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0; }
+
+.note-modal-bg {
+  position: fixed; inset: 0; z-index: 60;
+  display: grid; place-items: center; padding: 20px;
+  background: rgb(0 0 0 / .62); backdrop-filter: blur(6px);
+}
+.note-modal {
+  width: min(760px, 100%); max-height: 86vh;
+  display: flex; flex-direction: column; gap: 12px; overflow: hidden;
+  padding: 20px 22px; margin: 0;
+}
+.note-modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.note-modal-head h2 { margin: 0 0 4px; font-size: 18px; }
+.note-modal-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.note-modal-spacer { flex: 1; }
+.note-md {
+  overflow-y: auto; display: grid; gap: 10px;
+  padding-right: 4px; font-size: 14px; line-height: 1.55; color: var(--fg);
+}
+.note-editor {
+  width: 100%; font-family: var(--mono); font-size: 13px; line-height: 1.5;
+  padding: 12px; border-radius: 12px; border: 1px solid var(--line2);
+  background: var(--bg0); color: var(--fg); resize: vertical;
+}
+
+.ptt-rec {
+  color: var(--bad) !important;
+  border-color: color-mix(in srgb, var(--bad) 70%, transparent) !important;
+  background: var(--bad-soft) !important;
+  animation: ptt-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ptt-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bad) 45%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
