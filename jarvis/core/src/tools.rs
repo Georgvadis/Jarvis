@@ -474,12 +474,12 @@ impl Tools {
         }
         if self.music.is_some() && self.host.provider("youtube").is_ok() {
             let who = if self.use_ch("yandexmusic") {
-                "Обычную музыку по названию включает Алиса. Но если просят YouTube, свои лайки/понравившиеся или плейлист (и не упомянули Яндекс/Алису), всегда используй play_music, а не alice_command."
+                "YouTube / YouTube Music — ОСНОВНОЙ музыкальный сервис по умолчанию. Любую просьбу «включи музыку», трек, песню, исполнителя, лайки, плейлист или «на YouTube / YouTube Music» ВСЕГДА включай через play_music (если просят просто «включи музыку» — подбери музыку сам или включи понравившиеся). В Яндекс Музыку (alice_command) отправляй ТОЛЬКО если хозяин явно упомянул «Яндекс», «Яндекс Музыка», «Алиса» или «Моя волна»."
             } else {
                 "Яндекс Музыка выключена в настройках: любую музыку, песню или радио включай только этим инструментом, сразу, запрос придумай сам, если не назвали."
             };
             defs.push(json!({"type": "function", "name": "play_music",
-                "description": format!("Найти по всему YouTube и включить звук видео, плейлиста или лайков аккаунта на колонке: любой ролик, кавер, ремикс, концерт, подкаст, песню, сохранённый/публичный плейлист или понравившиеся треки. {who} Если сказали только «включи на YouTube трек», сначала спроси название или исполнителя. Подбирай сам, когда об этом попросили. Не обещай «сейчас поищу» без вызова."),
+                "description": format!("Найти по всему YouTube / YouTube Music и включить звук видео, музыки, плейлиста или лайков аккаунта на колонке: любой ролик, трек, кавер, ремикс, концерт, подкаст, песню, сохранённый/публичный плейлист или понравившиеся треки. {who} Если сказали только «включи на YouTube трек», сначала спроси название или исполнителя. Подбирай сам, когда об этом попросили. Не обещай «сейчас поищу» без вызова."),
                 "parameters": {"type": "object", "properties": {
                     "query": {"type": "string", "description": "что искать или включить: исполнитель и название, «мои лайки» / «понравившиеся», или «плейлист <название>»"},
                     "queue": {"type": "boolean", "description": "true — не включать сразу, а добавить в очередь после того, что играет («добавь в очередь», «потом включи»)"},
@@ -500,7 +500,7 @@ impl Tools {
                 && let Some(desc) = alice_tool.get("description").and_then(Value::as_str)
             {
                 alice_tool["description"] = Value::String(format!(
-                    "{desc} Лайки и плейлисты YouTube не передавай сюда — для них используй play_music."
+                    "{desc} ВАЖНО: для музыки используй alice_command ТОЛЬКО если хозяин ЯВНО попросил Яндекс Музыку, Алису или Мою волну. Обычную музыку («включи музыку», треки, YouTube, YouTube Music, лайки, плейлисты) ВСЕГДА включай через play_music, НЕ через alice_command."
                 ));
             }
             defs.push(alice_tool);
@@ -650,6 +650,9 @@ impl Tools {
             if q.is_empty() {
                 return "Не понял, что включить.".into();
             }
+            if fastcmd::yandex_music_request(&q) && self.use_ch("alice") {
+                return "Хозяин явно попросил Яндекс Музыку / Алису — вызови alice_command вместо play_music.".into();
+            }
             if a.get("queue").and_then(Value::as_bool) == Some(true)
                 && let Some(mq) = &self.music_queue
             {
@@ -730,10 +733,16 @@ impl Tools {
             }
             if fastcmd::youtube_request(&cmd) {
                 return if self.host.provider("youtube").is_ok() {
-                    "Для просьбы включить с YouTube вызови play_music.".into()
+                    "Для просьбы включить с YouTube / YouTube Music вызови play_music.".into()
                 } else {
                     "Для этой команды нужен установленный и включённый плагин YouTube.".into()
                 };
+            }
+            if self.host.provider("youtube").is_ok() {
+                let bare = fastcmd::strip_lead(&fastcmd::norm_text(&cmd));
+                if fastcmd::alice_music_request(&bare) && !fastcmd::yandex_music_request(&bare) {
+                    return "Для обычной музыки и YouTube Music используй инструмент play_music, а не alice_command. Вызывай alice_command для музыки только если хозяин явно попросил Яндекс Музыку или Алису.".into();
+                }
             }
             let schedule = fastcmd::alice_schedule(&cmd);
             let c2 = cmd.clone();

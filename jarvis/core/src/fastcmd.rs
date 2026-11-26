@@ -34,7 +34,8 @@ re!(ALICE_THINGS, r"(таймер|будильник|напомни|напоми
 re!(MUSIC_PLAY, r"^(?:включи|поставь|заведи|запусти)(?:\s|$)");
 re!(MUSIC_WORDS, r"(музык|песн|трек|плейлист|радио|подкаст|альбом)");
 re!(NOT_MUSIC, r"(таймер|будильник|напомни|напоминани|разбуди|засеки|громкост|громче|потише|тише|пауз|блютуз|bluetooth)");
-re!(YOUTUBE, r"(?:^|\s)(?:ютуб(?:е|а)?|ютьюб(?:е|а)?|youtube|youtu be)(?:\s|$)");
+re!(YOUTUBE, r"(?:^|\s)(?:ютуб[а-я]*|ютьюб[а-я]*|ютюб[а-я]*|youtube|youtu\s+be|yt)(?:\s|$)");
+re!(YANDEX_MUSIC, r"(?:^|\s)(?:яндекс[а-я]*|алис[а-я]*|мо(?:я|ю)\s+волн[а-я]*)(?:\s|$)");
 re!(ALICE_SCHEDULE, r"^(?:(?:разбуди|напомни|засеки)(?:\s|$)|(?:(?:поставь|заведи|запусти|включи|установи|создай)\s+)?(?:будильник|таймер|напоминание)(?:\s|$))");
 re!(DURATION_WORD, r"^(?:(?:секунд|минут|час|день|дня|дней|недел|месяц|полминут|полчас)[а-я]*|сутки|суток)$");
 
@@ -47,6 +48,11 @@ pub fn youtube_request(text: &str) -> bool {
     MUSIC_PLAY.is_match(bare.strip_prefix("пожалуйста ").unwrap_or(&bare)) && YOUTUBE.is_match(&bare)
 }
 
+pub fn yandex_music_request(text: &str) -> bool {
+    let bare = strip_lead(&norm_text(text));
+    YANDEX_MUSIC.is_match(&bare)
+}
+
 pub fn clarification(text: &str) -> Option<&'static str> {
     let bare = strip_lead(&norm_text(text));
     if classify_schedule(&bare) == AliceSchedule::Pending {
@@ -56,8 +62,8 @@ pub fn clarification(text: &str) -> Option<&'static str> {
     let bare = bare.strip_suffix(" пожалуйста").unwrap_or(bare);
     if MUSIC_PLAY.is_match(bare) && YOUTUBE.is_match(bare)
         && bare.split_whitespace().skip(1).all(|word| matches!(word,
-            "на" | "в" | "с" | "из" | "ютуб" | "ютубе" | "ютуба" | "ютьюб" | "ютьюбе" | "ютьюба" | "youtube" |
-            "трек" | "песню" | "музыку" | "ролик" | "видео" | "клип" | "плейлист" | "альбом" | "подкаст"))
+            "на" | "в" | "с" | "из" | "ютуб" | "ютубе" | "ютуба" | "ютьюб" | "ютьюбе" | "ютьюба" | "ютюб" | "ютюбе" | "youtube" |
+            "трек" | "песню" | "ролик" | "видео" | "клип" | "плейлист" | "альбом" | "подкаст"))
     {
         return Some(YOUTUBE_QUESTION);
     }
@@ -190,12 +196,28 @@ pub fn alice_skill(text: &str) -> Option<String> {
     }
 }
 
-/// Как alice_skill, но если Яндекс Музыка выключена, музыку Алисе не отдаём: Джарвис включит с YouTube.
-pub fn alice_skill_for(text: &str, yandex_music: bool) -> Option<String> {
+/// Как alice_skill, но с чётким разделением YouTube Music и Яндекс Музыки:
+/// если подключён YouTube, обычные музыкальные просьбы («включи музыку», «включи трек») идут в YouTube;
+/// в Яндекс Музыку (Алисе) музыка уходит только при явном упоминании Яндекса / Алисы / Моей волны
+/// или если плагин YouTube отсутствует.
+pub fn alice_skill_for_ex(text: &str, yandex_music: bool, has_youtube: bool) -> Option<String> {
     if youtube_request(text) || clarification(text).is_some() {
         return None;
     }
-    alice_skill(text).filter(|b| yandex_music || !alice_music_request(b))
+    alice_skill(text).filter(|b| {
+        if !alice_music_request(b) {
+            return true;
+        }
+        if yandex_music_request(b) {
+            return true;
+        }
+        !has_youtube && yandex_music
+    })
+}
+
+/// Как alice_skill, но если Яндекс Музыка выключена, музыку Алисе не отдаём: Джарвис включит с YouTube.
+pub fn alice_skill_for(text: &str, yandex_music: bool) -> Option<String> {
+    alice_skill_for_ex(text, yandex_music, false)
 }
 
 /// Короткая команда умного дома без обращения к каталогу устройств — её можно отдать Алисе целиком.
@@ -364,6 +386,11 @@ mod tests {
         }
         assert!(home_command_local("включи на кухне свет").is_some());
         assert!(alice_skill_for("включи музыку", true).is_some());
+        assert!(alice_skill_for_ex("включи музыку", true, true).is_none());
+        assert!(alice_skill_for_ex("включи ютуб музыку", true, true).is_none());
+        assert!(alice_skill_for_ex("включи музыку на яндекс музыке", true, true).is_some());
+        assert!(alice_skill_for_ex("включи мою волну", true, true).is_some());
+        assert!(alice_skill_for_ex("поставь таймер на 5 минут", true, true).is_some());
         for text in ["Включи плейлист", "Джарвис, поставь мой плейлист"] {
             assert_eq!(clarification(text), Some(PLAYLIST_QUESTION), "{text}");
             assert!(alice_skill_for(text, true).is_none(), "{text}");

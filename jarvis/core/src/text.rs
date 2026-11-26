@@ -86,7 +86,8 @@ impl Engine {
                 if let Some(answer) = self.tools.smartlife_fast(command).await {
                     return Ok(answer);
                 }
-                if let Some(command) = fastcmd::alice_skill_for(command, s.use_home("yandexmusic")) {
+                let has_youtube = self.host.provider("youtube").is_ok();
+                if let Some(command) = fastcmd::alice_skill_for_ex(command, s.use_home("yandexmusic"), has_youtube) {
                     let answer = format!("Передал Алисе: {command}");
                     tokio::task::spawn_blocking(move || alice::text(&command, false))
                         .await

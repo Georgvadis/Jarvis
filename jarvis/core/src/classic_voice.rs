@@ -133,7 +133,8 @@ impl Classic {
                 let answer=control(command.to_string()).await;
                 if let Some(answer)=answer{self.dialog.on_bot(&answer);self.speak(context,&answer,generation,is_whisper).await?;self.dialog.finish_turn("");return Ok(());}
             }
-            if let Some(command)=crate::fastcmd::alice_skill_for(command,context.settings.use_home("yandexmusic")) {
+            let has_youtube = context.host.provider("youtube").is_ok();
+            if let Some(command)=crate::fastcmd::alice_skill_for_ex(command,context.settings.use_home("yandexmusic"),has_youtube) {
                 tokio::task::spawn_blocking(move||crate::alice::text(&command,false)).await.map_err(|e|e.to_string())??;
                 self.dialog.on_bot("Передал Алисе");self.dialog.finish_turn("");return Ok(());
             }

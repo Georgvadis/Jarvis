@@ -1514,7 +1514,8 @@ impl Engine {
         // таймеры, будильники, напоминания, музыка — умеет только штатная Алиса; команды умного дома
         // отдаём ей, если так выбрано в настройках
         let schedule = fastcmd::alice_schedule(&cmd);
-        let mut to_alice = fastcmd::alice_skill_for(&cmd, self.store.with(|s| s.use_home("yandexmusic")));
+        let has_youtube = self.host.provider("youtube").is_ok();
+        let mut to_alice = fastcmd::alice_skill_for_ex(&cmd, self.store.with(|s| s.use_home("yandexmusic")), has_youtube);
         if to_alice.is_none() && self.store.with(|s| s.use_home("alice")) {
             to_alice = rt.block_on(self.tools.home_command(&cmd));
         }

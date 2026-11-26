@@ -240,6 +240,12 @@ impl Music {
         youtube
     }
 
+    async fn pause_alice_if_playing(&self) {
+        if self.alice.lock().unwrap().playing() {
+            let _ = self.alice_control("pause", &Value::Null).await;
+        }
+    }
+
     pub async fn play(&self, host: &Host, query: &str, queue: bool) -> String {
         if let Some(intent) = parse_query_intent(query) {
             return match intent {
@@ -250,6 +256,9 @@ impl Music {
             };
         }
         let propose = recommendation(query);
+        if !queue && !propose {
+            self.pause_alice_if_playing().await;
+        }
         let result = self
             .call(
                 host,
@@ -274,6 +283,9 @@ impl Music {
     }
 
     pub async fn play_liked(&self, host: &Host, shuffle: bool, queue: bool) -> String {
+        if !queue {
+            self.pause_alice_if_playing().await;
+        }
         let args = json!({"shuffle": shuffle, "queue": queue});
         match self.call(host, "play_liked", args).await {
             Ok(v) => {
@@ -295,6 +307,9 @@ impl Music {
         shuffle: bool,
         queue: bool,
     ) -> String {
+        if !queue {
+            self.pause_alice_if_playing().await;
+        }
         let args = json!({"query": query, "shuffle": shuffle, "queue": queue});
         match self.call(host, "play_playlist", args).await {
             Ok(v) => {
