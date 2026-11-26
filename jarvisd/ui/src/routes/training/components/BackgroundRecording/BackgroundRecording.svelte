@@ -108,12 +108,23 @@
     }
   }
 
+  let confirmDisconnect = $state(false);
+
   function connect() {
+    confirmDisconnect = false;
     void change("PUT", cloudUrl, {});
   }
 
   function disconnect() {
-    if (result?.connected && !confirm("Отключить Яндекс Диск? Уже загруженные записи на Диске останутся.")) return;
+    if (result?.connected) {
+      confirmDisconnect = true;
+      return;
+    }
+    void change("DELETE", cloudUrl);
+  }
+
+  function confirmDisconnectCloud() {
+    confirmDisconnect = false;
     void change("DELETE", cloudUrl);
   }
 
@@ -149,7 +160,19 @@
       </div>
       {#if !result.running}
         <div class="row">
-          <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>Выйти</button>
+          {#if confirmDisconnect}
+            <div class="inline-confirm" role="alert">
+              <span>Отключить Яндекс Диск?</span>
+              <button type="button" class="btn danger sm" disabled={pending} onclick={confirmDisconnectCloud}>
+                {@html icon("check")}Отключить
+              </button>
+              <button type="button" class="btn ghost sm" disabled={pending} onclick={() => { confirmDisconnect = false; }}>
+                {@html icon("x")}Отмена
+              </button>
+            </div>
+          {:else}
+            <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>Выйти</button>
+          {/if}
         </div>
       {/if}
       <form class={styles.form} onsubmit={start}>

@@ -19,7 +19,7 @@
 <script>
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { api, toast, upload } from "#helpers/core.js";
+  import { api, icon, toast, upload } from "#helpers/core.js";
   import { reload } from "#state/panelState.js";
   import { PROFILES, loadWakeProfiles, modelLabel, recordWakeSample, selectWakeProfile, wakeSampleUrl } from "#helpers/wake-training.js";
   import styles from "./WakeTraining.module.css";
@@ -31,6 +31,7 @@
   let data = $state.raw(null);
   let loadError = $state("");
   let busy = $state("");
+  let confirmRemoveId = $state("");
   let phrase = $state(defaultPhrase);
   let phraseInput = $state();
   let samples = $state.raw([]);
@@ -80,7 +81,7 @@
   }
 
   function removeProfile(profile) {
-    if (!confirm(`Удалить модель «${profile.phrase}»?`)) return;
+    confirmRemoveId = "";
     void run("remove", async () => {
       await api("DELETE", PROFILES + "/" + encodeURIComponent(profile.id));
       if (signal.aborted) return;
@@ -199,7 +200,21 @@
               <span role="status">{results.get(profile.id) || ""}</span>
             {/if}
             {#if profile.id !== data.selected}
-              <button class="btn" type="button" disabled={!!busy} onclick={() => removeProfile(profile)}>Удалить</button>
+              {#if confirmRemoveId === profile.id}
+                <div class="inline-confirm" role="alert">
+                  <span>Удалить модель?</span>
+                  <button class="btn danger sm" type="button" disabled={!!busy} onclick={() => removeProfile(profile)}>
+                    {@html icon("check")}Удалить
+                  </button>
+                  <button class="btn ghost sm" type="button" disabled={!!busy} onclick={() => { confirmRemoveId = ""; }}>
+                    {@html icon("x")}Отмена
+                  </button>
+                </div>
+              {:else}
+                <button class="btn ghost danger" type="button" disabled={!!busy} onclick={() => { confirmRemoveId = profile.id; }}>
+                  {@html icon("trash")}Удалить
+                </button>
+              {/if}
             {/if}
           </div>
         {/each}

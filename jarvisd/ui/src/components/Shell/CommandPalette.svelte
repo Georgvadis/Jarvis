@@ -27,7 +27,7 @@
       { id: "nav-speaker", group: "Навигация", label: "Колонка", hint: "Звук, ПК, присутствие", icon: "speaker", action: () => goto("/speaker") },
       { id: "nav-speaker-int", group: "Навигация", label: "Колонка · Интеграции", hint: "ПК-компаньон, Home Assistant", icon: "link", action: () => goto("/speaker?tab=integrations") },
       { id: "nav-conn", group: "Навигация", label: "Подключения", hint: "Ключи и плагины", icon: "puzzle", action: () => goto("/connections") },
-      { id: "nav-charts", group: "Навигация", label: "Графики", hint: "CPU, память, температура", icon: "activity", action: () => goto("/charts") },
+      { id: "nav-charts", group: "Навигация", label: "Состояние стека и графики", hint: "Узлы, CPU, память, температура", icon: "activity", action: () => goto("/charts") },
       { id: "nav-logs", group: "Навигация", label: "Логи", hint: "Журнал событий", icon: "list", action: () => goto("/logs") },
       { id: "nav-sec", group: "Навигация", label: "Безопасность", hint: "Пароль и обновления", icon: "shield", action: () => goto("/security") },
 

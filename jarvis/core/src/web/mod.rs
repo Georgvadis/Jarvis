@@ -257,6 +257,7 @@ pub fn router(app: App) -> Router {
         .route("/api/notes/save", post(talk::notes_save))
         .route("/api/gpu-status", get(talk::gpu_status))
         .route("/api/gpu-unload", post(talk::gpu_unload))
+        .route("/api/stack-health", get(talk::stack_health))
         .route("/api/speaker/volume", post(talk::volume))
         .route("/api/music", get(music::get).post(music::post))
         .route("/api/youtube", put(music::set_cookies).delete(music::clear_cookies))

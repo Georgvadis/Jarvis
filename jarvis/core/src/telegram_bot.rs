@@ -530,7 +530,10 @@ async fn handle_message(
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
             return match res {
-                Ok(()) => format!("Громкость: {lvl}/10"),
+                Ok(()) => {
+                    crate::engine::flash_volume_clock(engine, lvl);
+                    format!("Громкость: {lvl}/10")
+                }
                 Err(e) => format!("Ошибка громкости: {e}"),
             };
         }

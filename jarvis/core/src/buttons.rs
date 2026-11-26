@@ -14,50 +14,100 @@ use std::{
 const KEY_VOLUME_DOWN: u16 = 114;
 const KEY_VOLUME_UP: u16 = 115;
 const RESET_PRESSES: usize = 8;
+const QUICK_SEQ: [u16; 4] = [KEY_VOLUME_DOWN, KEY_VOLUME_UP, KEY_VOLUME_UP, KEY_VOLUME_DOWN];
 
-/// Распознавание последовательности сброса по нажатиям.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gesture {
+    ResetPassword,
+    QuickAction,
+}
+
+/// Распознавание последовательностей нажатий кнопок.
 #[derive(Default)]
 pub struct Seq {
     keys: Vec<u16>,
     last: Option<Instant>,
+    quick: Vec<u16>,
+    quick_last: Option<Instant>,
 }
 
 impl Seq {
-    /// Нажатие в момент now; true — набрана последовательность сброса.
+    /// Нажатие в момент now; true — набрана последовательность сброса пароля.
     pub fn press(&mut self, k: u16, now: Instant) -> bool {
+        self.press_gesture(k, now) == Some(Gesture::ResetPassword)
+    }
+
+    pub fn press_gesture(&mut self, k: u16, now: Instant) -> Option<Gesture> {
         if k != KEY_VOLUME_UP && k != KEY_VOLUME_DOWN {
             self.keys.clear();
-            return false;
+            self.quick.clear();
+            return None;
         }
-        if self.last.is_none_or(|t| now.duration_since(t) > Duration::from_millis(1500)) || self.keys.last() == Some(&k) {
+
+        let mut hit = None;
+
+        // 1. Сброс пароля: + − + − + − + − (<= 1.5 с между нажатиями)
+        if self.last.is_none_or(|t| now.duration_since(t) > Duration::from_millis(1500))
+            || self.keys.last() == Some(&k)
+        {
             self.keys.clear();
         }
         self.last = Some(now);
-        if self.keys.is_empty() && k != KEY_VOLUME_UP {
-            return false; // начинается с «громче»
+        if !(self.keys.is_empty() && k != KEY_VOLUME_UP) {
+            self.keys.push(k);
+            if self.keys.len() >= RESET_PRESSES {
+                self.keys.clear();
+                hit = Some(Gesture::ResetPassword);
+            }
         }
-        self.keys.push(k);
-        if self.keys.len() >= RESET_PRESSES {
-            self.keys.clear();
-            return true;
+
+        // 2. Быстрый жест: − + + − (<= 1.0 с между нажатиями, нетто-громкость 0)
+        if self.quick_last.is_none_or(|t| now.duration_since(t) > Duration::from_millis(1000)) {
+            self.quick.clear();
         }
-        false
+        self.quick_last = Some(now);
+        let next_idx = self.quick.len();
+        if next_idx < QUICK_SEQ.len() && QUICK_SEQ[next_idx] == k {
+            self.quick.push(k);
+            if self.quick.len() == QUICK_SEQ.len() {
+                self.quick.clear();
+                if hit.is_none() {
+                    hit = Some(Gesture::QuickAction);
+                }
+            }
+        } else {
+            self.quick.clear();
+            if k == QUICK_SEQ[0] {
+                self.quick.push(k);
+            }
+        }
+
+        hit
     }
 }
 
 /// Следить за кнопками устройств ввода в одном потоке; on_reset — набрана последовательность сброса.
 pub fn watch(on_reset: impl Fn() + Send + 'static) {
+    watch_gestures(move |g| {
+        if g == Gesture::ResetPassword {
+            on_reset();
+        }
+    });
+}
+
+/// Следить за жестами кнопок громкости (сброс пароля и быстрый жест − + + −).
+pub fn watch_gestures(on_gesture: impl Fn(Gesture) + Send + 'static) {
     let devs: Vec<_> = std::fs::read_dir("/dev/input")
         .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("event"))).collect())
         .unwrap_or_default();
     if devs.is_empty() {
         return;
     }
-    watch_inner(devs, Box::new(on_reset));
+    watch_inner(devs, Box::new(on_gesture));
 }
 
 #[cfg(target_os = "linux")]
-fn watch_inner(devs: Vec<std::path::PathBuf>, on_reset: Box<dyn Fn() + Send + 'static>) {
+fn watch_inner(devs: Vec<std::path::PathBuf>, on_gesture: Box<dyn Fn(Gesture) + Send + 'static>) {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
@@ -142,8 +192,10 @@ fn watch_inner(devs: Vec<std::path::PathBuf>, on_reset: Box<dyn Fn() + Send + 's
                             let ev = &ev[size - 8..];
                             let (typ, code) = (u16::from_le_bytes([ev[0], ev[1]]), u16::from_le_bytes([ev[2], ev[3]]));
                             let val = i32::from_le_bytes([ev[4], ev[5], ev[6], ev[7]]);
-                            if typ == 1 && val == 1 && seq.press(code, Instant::now()) {
-                                on_reset();
+                            if typ == 1 && val == 1
+                                && let Some(g) = seq.press_gesture(code, Instant::now())
+                            {
+                                on_gesture(g);
                             }
                         }
                     }
@@ -158,7 +210,7 @@ fn watch_inner(devs: Vec<std::path::PathBuf>, on_reset: Box<dyn Fn() + Send + 's
 }
 
 #[cfg(not(target_os = "linux"))]
-fn watch_inner(devs: Vec<std::path::PathBuf>, on_reset: Box<dyn Fn() + Send + 'static>) {
+fn watch_inner(devs: Vec<std::path::PathBuf>, on_gesture: Box<dyn Fn(Gesture) + Send + 'static>) {
     let (tx, rx) = sync_channel::<u16>(16);
     for d in devs {
         let tx = tx.clone();
@@ -174,8 +226,8 @@ fn watch_inner(devs: Vec<std::path::PathBuf>, on_reset: Box<dyn Fn() + Send + 's
         .spawn(move || {
             let mut seq = Seq::default();
             for k in rx {
-                if seq.press(k, Instant::now()) {
-                    on_reset();
+                if let Some(g) = seq.press_gesture(k, Instant::now()) {
+                    on_gesture(g);
                 }
             }
         })
@@ -251,5 +303,33 @@ mod tests {
         // два «громче» подряд — сначала
         let mut s = Seq::default();
         assert!(!(0..8).any(|i| s.press(KEY_VOLUME_UP, at(i * 300))));
+    }
+
+    #[test]
+    fn quick_action_gesture_does_not_conflict_with_reset() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut s = Seq::default();
+        assert_eq!(s.press_gesture(KEY_VOLUME_DOWN, at(0)), None);
+        assert_eq!(s.press_gesture(KEY_VOLUME_UP, at(250)), None);
+        assert_eq!(s.press_gesture(KEY_VOLUME_UP, at(500)), None);
+        assert_eq!(s.press_gesture(KEY_VOLUME_DOWN, at(750)), Some(Gesture::QuickAction));
+
+        // Сброс пароля не срабатывает на быстром жесте, а 8 чередований не вызывают QuickAction
+        let mut s2 = Seq::default();
+        let mut got = Vec::new();
+        for i in 0..8 {
+            if let Some(g) = s2.press_gesture(if i % 2 == 0 { KEY_VOLUME_UP } else { KEY_VOLUME_DOWN }, at(i * 300)) {
+                got.push(g);
+            }
+        }
+        assert_eq!(got, vec![Gesture::ResetPassword]);
+
+        // Слишком медленный жест > 1 с не срабатывает
+        let mut s3 = Seq::default();
+        assert_eq!(s3.press_gesture(KEY_VOLUME_DOWN, at(0)), None);
+        assert_eq!(s3.press_gesture(KEY_VOLUME_UP, at(200)), None);
+        assert_eq!(s3.press_gesture(KEY_VOLUME_UP, at(1300)), None);
+        assert_eq!(s3.press_gesture(KEY_VOLUME_DOWN, at(1500)), None);
     }
 }

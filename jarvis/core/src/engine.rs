@@ -1869,6 +1869,18 @@ impl Engine {
 
     /// Журнал maind: штатный споттер «Алиса» — Джарвис уступает.
     fn watch_alice(self: &Arc<Self>) {
+        let maind_tail = read_log_tail(alice::MAIND_LOG, 256 * 1024);
+        let mediad_tail = read_log_tail("/data/quasar/daemons_logs/mediad.log", 256 * 1024);
+        let now_unix = jiff::Timestamp::now().as_second();
+        if let Some(id) = self.music.alice.lock().unwrap().recover_from_logs(&maind_tail, &mediad_tail, now_unix) {
+            log::info!("яндекс музыка: восстановлен трек {id}");
+            let e = Arc::clone(self);
+            self.rt.spawn(async move {
+                if let Some(track) = crate::alice_music::lookup(&id).await {
+                    e.music.alice.lock().unwrap().set_track(&id, track);
+                }
+            });
+        }
         let w1 = Arc::downgrade(self);
         let w2 = Arc::downgrade(self);
         alice::follow_logs(vec![
@@ -1897,6 +1909,33 @@ impl Engine {
                 if started { e.rt.block_on(e.music.alice_started(&e.host)); }
             })),
         ]);
+    }
+}
+
+fn read_log_tail(path: &str, max_bytes: usize) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    if len > max_bytes as u64 {
+        let _ = f.seek(SeekFrom::End(-(max_bytes as i64)));
+    }
+    let mut buf = Vec::with_capacity(len.min(max_bytes as u64) as usize);
+    let _ = f.read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+pub fn flash_volume_clock(engine: &Engine, lvl: i64) {
+    let focus_busy = engine.tools.focus.as_ref().is_some_and(|f| f.status()["running"] == true);
+    let games_busy = engine.tools.games.as_ref().is_some_and(|g| g.is_any_active());
+    let timers_busy = engine
+        .tools
+        .scheduler
+        .as_ref()
+        .is_some_and(|s| s.active_timers_json().as_array().is_some_and(|a| !a.is_empty()));
+    if !focus_busy && !games_busy && !timers_busy {
+        engine.leds.flash_clock_volume(lvl, engine.store.is_night());
     }
 }
 

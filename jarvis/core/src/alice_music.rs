@@ -50,6 +50,38 @@ fn track_id(id: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
+fn parse_log_unix_ts(line: &str) -> Option<i64> {
+    let mut rest = line;
+    while let Some((_, after)) = rest.split_once('[') {
+        let Some((inside, tail)) = after.split_once(']') else {
+            break;
+        };
+        let b = inside.as_bytes();
+        if b.len() >= 19
+            && b[4] == b'-'
+            && b[7] == b'-'
+            && b[10] == b' '
+            && b[13] == b':'
+            && b[16] == b':'
+            && let Ok(dt) = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", &inside[..19])
+            && let Ok(z) = dt.to_zoned(jiff::tz::TimeZone::UTC)
+        {
+            return Some(z.timestamp().as_second());
+        }
+        rest = tail;
+    }
+    None
+}
+
+fn mediad_stream_id(line: &str) -> Option<&str> {
+    let (_, stream) = line.split_once("[audio stream=")?;
+    let id = stream
+        .split(|c: char| !(c.is_ascii_digit() || c == ':'))
+        .next()
+        .unwrap_or("");
+    (!id.is_empty()).then_some(id)
+}
+
 impl AliceMusic {
     pub fn main_log(&mut self, line: &str) -> (bool, Option<String>) {
         #[derive(Deserialize)]
@@ -239,6 +271,51 @@ impl AliceMusic {
             self.track = track;
         }
     }
+
+    pub fn recover_from_logs(&mut self, maind_tail: &str, mediad_tail: &str, now_unix: i64) -> Option<String> {
+        let mut last_start_ts: Option<i64> = None;
+        for line in maind_tail.lines() {
+            let is_start = line.contains("event=track_start");
+            let is_finish = !is_start && line.contains("event=track_finished");
+            if !is_start && !is_finish {
+                continue;
+            }
+            let ts = parse_log_unix_ts(line);
+            if is_start && ts.is_some_and(|t| now_unix - t > 3600) {
+                continue;
+            }
+            let (started, _) = self.main_log(line);
+            if is_start && (started || self.playing()) {
+                last_start_ts = ts;
+            }
+        }
+        if !self.active() {
+            return None;
+        }
+        if let Some(ts) = last_start_ts {
+            self.pos = (now_unix - ts).clamp(0, 3600) as f64;
+        } else {
+            self.pos = 0.0;
+        }
+        let active_id = self.id.clone();
+        for line in mediad_tail.lines() {
+            if mediad_stream_id(line) != Some(active_id.as_str()) {
+                continue;
+            }
+            if let (Some(mts), Some(sts)) = (parse_log_unix_ts(line), last_start_ts)
+                && mts + 1 < sts
+            {
+                continue;
+            }
+            if line.contains("Notification: Stopped") || line.contains("Notification: End") {
+                self.playback = None;
+                self.pos = 0.0;
+            } else {
+                let _ = self.media_log(line);
+            }
+        }
+        self.active().then(|| self.id.clone())
+    }
 }
 
 pub async fn lookup(id: &str) -> Option<Track> {
@@ -301,5 +378,38 @@ mod tests {
         assert!(music.position() >= 12.0);
         music.main_log(r#"event=track_finished, payload={"id":"42","reason":"eof"}"#);
         assert!(!music.active());
+    }
+
+    #[test]
+    fn recovers_playing_paused_and_stopped_tracks_from_log_tails() {
+        let now = jiff::civil::date(2026, 11, 26)
+            .at(13, 20, 0, 0)
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .unwrap()
+            .timestamp()
+            .as_second();
+
+        // 1. Активный трек с расчётом pos из timestamp
+        let mut m1 = AliceMusic::default();
+        let main1 = r#"[1965:1998] [2026-11-26 13:19:11.471] [media] [info] event=track_start, payload={"id":"29035024"}"#;
+        let media1 = "[2143:8982] [2026-11-26 13:19:11.508] [media] [info] [audio stream=29035024 mark=Sh] Notification: Start";
+        assert_eq!(m1.recover_from_logs(main1, media1, now), Some("29035024".into()));
+        assert!(m1.playing());
+        assert!((m1.position() - 49.0).abs() < 2.0);
+
+        // 2. Трек на паузе — позиция из mediad.log
+        let mut m2 = AliceMusic::default();
+        let main2 = r#"[1965:1998] [2026-11-26 13:18:00.000] [media] event=track_start, payload={"id":"555"}"#;
+        let media2 = "[2143:1] [2026-11-26 13:18:45.000] [media] [audio stream=555 mark=Ab] pause (position 42000)";
+        assert_eq!(m2.recover_from_logs(main2, media2, now), Some("555".into()));
+        assert!(!m2.playing());
+        assert_eq!(m2.snapshot()["pos"], 42.0);
+
+        // 3. Остановленный трек — Notification: Stopped в mediad.log
+        let mut m3 = AliceMusic::default();
+        let main3 = r#"[1965:1998] [2026-11-26 13:17:00.000] [media] event=track_start, payload={"id":"777"}"#;
+        let media3 = "[2143:1] [2026-11-26 13:19:30.000] [media] [audio stream=777 mark=Xy] Notification: Stopped";
+        assert_eq!(m3.recover_from_logs(main3, media3, now), None);
+        assert!(!m3.active());
     }
 }

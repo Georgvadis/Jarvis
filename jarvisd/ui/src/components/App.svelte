@@ -36,6 +36,9 @@
 
   onMount(() => {
     initTheme();
+    if ("serviceWorker" in navigator) {
+      void navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
     const legacyPath = location.pathname === "/" ? legacyHashPath(location.hash) : "";
     if (legacyPath) void goto(legacyPath, { replaceState: true });
     const unsubscribeRoutes = routeRequests.subscribe(() => setDirty(false));

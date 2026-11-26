@@ -445,7 +445,36 @@ async fn run(f: Flags, store: settings::Store) {
     #[cfg(unix)]
     {
         let app = app.clone();
-        buttons::watch(move || web::buttons_reset(&app));
+        let rt = tokio::runtime::Handle::current();
+        buttons::watch_gestures(move |gesture| match gesture {
+            buttons::Gesture::ResetPassword => web::buttons_reset(&app),
+            buttons::Gesture::QuickAction => {
+                let busy = app.engine.talking()
+                    || app.engine.music.playing()
+                    || app.focus.status()["running"] == true
+                    || app.ambient.current_label().is_some()
+                    || app.reader.status()["running"] == true
+                    || !app.games.status()["active_game"].as_str().unwrap_or("").is_empty()
+                    || app.dj.status()["active"] == true
+                    || crate::debate::is_active();
+                if busy {
+                    log::info!("кнопки: быстрый жест — останавливаю всё");
+                    app.engine.tools.stop_all_activities(Some(&app.engine), true);
+                    if app.engine.music.playing() {
+                        let e = app.engine.clone();
+                        let p = app.plugins.clone();
+                        rt.spawn(async move {
+                            e.music.stop_all(&p).await;
+                        });
+                    }
+                    let e = app.engine.clone();
+                    rt.spawn_blocking(move || e.stop("кнопки колонки"));
+                } else {
+                    log::info!("кнопки: быстрый жест — активирую прослушивание");
+                    app.engine.trigger("кнопки колонки", 1.0);
+                }
+            }
+        });
     }
     tokio::spawn(counter::run(store.clone(), f.data.clone()));
     if let Err(e) = web::serve(app, &f.listen, f.listen_explicit).await {

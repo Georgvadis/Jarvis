@@ -10,7 +10,10 @@ use std::{
     f64::consts::PI,
     io::Write,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -110,6 +113,7 @@ struct Inner {
 
 pub struct Leds {
     inner: Arc<Inner>,
+    clock_flash_gen: AtomicU64,
 }
 
 impl Drop for Leds {
@@ -377,7 +381,10 @@ impl Leds {
             wake: Condvar::new(),
             source,
         });
-        let l = Arc::new(Leds { inner: inner.clone() });
+        let l = Arc::new(Leds {
+            inner: inner.clone(),
+            clock_flash_gen: AtomicU64::new(0),
+        });
         if inner.st.lock().unwrap().available() {
             std::thread::Builder::new()
                 .name("leds".into())
@@ -474,17 +481,6 @@ impl Leds {
     /// Отобразить 4 цифры MM:SS на переднем 7-сегментном дисплее (например, для таймера Фокус/Помодоро).
     /// При `None` дисплей возвращается под управление штатных часов.
     pub fn set_clock_digits(&self, digits: Option<[u8; 4]>, colon: bool) {
-        let mut st = self.inner.st.lock().unwrap();
-        if st.clock.is_empty() || st.mode != Mode::Off {
-            return;
-        }
-        let Some(d) = digits else {
-            // Сбросим last, чтобы следующий вызов maind спокойно перерисовал часы
-            for c in st.clock.iter_mut() {
-                c.last = -1;
-            }
-            return;
-        };
         const MASK: [u8; 10] = [
             0b0111111, // 0: a b c d e f
             0b0000110, // 1: b c
@@ -497,19 +493,64 @@ impl Leds {
             0b1111111, // 8: all
             0b1101111, // 9: a b c d f g
         ];
+        let masks = digits.map(|d| [
+            MASK[(d[0] % 10) as usize],
+            MASK[(d[1] % 10) as usize],
+            MASK[(d[2] % 10) as usize],
+            MASK[(d[3] % 10) as usize],
+        ]);
+        self.write_clock_masks(masks, colon, 0.45);
+    }
+
+    /// Кратко показать уровень громкости `U 06` / `U --` на LED-дисплее на 1,5 сек.
+    pub fn flash_clock_volume(self: &Arc<Self>, vol: i64, night: bool) {
+        const DIGIT: [u8; 10] = [
+            0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
+            0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
+        ];
+        let v = vol.clamp(0, 10) as usize;
+        let masks = if v == 0 {
+            [0b0111110, 0, 0b1000000, 0b1000000] // U  --
+        } else {
+            [0b0111110, 0, DIGIT[v / 10], DIGIT[v % 10]] // U  06
+        };
+        let bright = if night { 0.16 } else { 0.45 };
+        let gen_id = self.clock_flash_gen.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        self.write_clock_masks(Some(masks), false, bright);
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            if me.clock_flash_gen.load(Ordering::SeqCst) == gen_id {
+                me.write_clock_masks(None, false, 0.45);
+            }
+        });
+    }
+
+    fn write_clock_masks(&self, masks: Option<[u8; 4]>, colon: bool, brightness_ratio: f64) {
+        let mut st = self.inner.st.lock().unwrap();
+        if st.clock.is_empty() || st.mode != Mode::Off {
+            return;
+        }
+        let Some(m) = masks else {
+            // Сбросим last, чтобы следующий вызов maind спокойно перерисовал часы
+            for c in st.clock.iter_mut() {
+                c.last = -1;
+            }
+            return;
+        };
+        let ratio = brightness_ratio.clamp(0.05, 1.0);
         for c in st.clock.iter_mut() {
             let b = c.color.as_bytes();
             let on = if b.len() == 2 && (b'a'..=b'g').contains(&b[0]) && (b'0'..=b'3').contains(&b[1]) {
                 let pos = (b[1] - b'0') as usize;
                 let bit = (b[0] - b'a') as usize;
-                let digit = (d[pos] % 10) as usize;
-                (MASK[digit] >> bit) & 1 == 1
+                (m[pos] >> bit) & 1 == 1
             } else if c.color == "dh" || c.color == "dl" || c.color == "dm" {
                 colon
             } else {
                 false
             };
-            let v = if on { (c.max as f64 * 0.45) as i64 } else { 0 };
+            let v = if on { ((c.max as f64 * ratio).round() as i64).max(1) } else { 0 };
             write(&c.path, v);
             c.last = v;
         }

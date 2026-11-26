@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { api, icon, ring, toast } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
   import { activity, refreshActivity } from "#state/activity.js";
@@ -22,11 +22,22 @@
   let sayInput = $state();
   let animate = $state(false);
   let scrolledUp = $state(false);
+  let searchOpen = $state(false);
+  let searchQuery = $state("");
+  let searchInput = $state();
   let stickToBottom = true;
   let pollTimer;
   let confirmTimer;
 
   let rows = $derived(chatMessages(snapshot.turns, snapshot.phase));
+  let visibleRows = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      (row.kind === "message" || row.kind === "answer" || row.kind === "error")
+      && (row.text || row.answer || "").toLowerCase().includes(q)
+    );
+  });
   let status = $derived(snapshot.talking ? "говорит и слушает…"
     : snapshot.state.title.replace(/^Жду/, "ждёт").replace(/^Микрофон/, "микрофон"));
   let typing = $derived(draft.trim() !== "");
@@ -101,7 +112,17 @@
   }
 
   function followFeed() {
-    if (stickToBottom && feed?.isConnected) feed.scrollTop = feed.scrollHeight;
+    if (!searchQuery.trim() && stickToBottom && feed?.isConnected) feed.scrollTop = feed.scrollHeight;
+  }
+
+  async function toggleSearch() {
+    searchOpen = !searchOpen;
+    if (!searchOpen) {
+      searchQuery = "";
+      return;
+    }
+    await tick();
+    searchInput?.focus();
   }
 
   async function send(event) {
@@ -225,6 +246,7 @@
       {/each}
     </select>
   {/if}
+  <button class="ib lg" class:on={searchOpen} type="button" onclick={toggleSearch} title="Поиск по переписке" aria-label="Поиск по переписке">{@html icon("search")}</button>
   {#if rows.length}
     {#if confirmClear}
       <div class="tg-confirm" role="group" aria-label="Очистить переписку">
@@ -241,14 +263,39 @@
   {/if}
 </header>
 
+{#if searchOpen}
+  <div class="tg-search">
+    {@html icon("search")}
+    <input
+      type="search"
+      maxlength="120"
+      placeholder="Поиск по переписке…"
+      aria-label="Поиск по переписке"
+      bind:this={searchInput}
+      bind:value={searchQuery}
+    >
+    {#if searchQuery.trim()}
+      <span class="meta">{visibleRows.length}</span>
+    {/if}
+    <button class="ib" type="button" onclick={toggleSearch} aria-label="Закрыть поиск">
+      {@html icon("x")}
+    </button>
+  </div>
+{/if}
+
 <div class="tg-wrap">
   <div class="tg-body" id="feed" bind:this={feed} onscroll={onScroll}>
-    {#each rows as row (row.key)}
+    {#each visibleRows as row (row.key)}
       <Message {row} {animate} follow={followFeed} />
     {:else}
       <div class="tg-empty">
-        <b>Здесь будет переписка</b>
-        <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
+        {#if searchQuery.trim()}
+          <b>Ничего не найдено</b>
+          <span>Попробуйте другой запрос</span>
+        {:else}
+          <b>Здесь будет переписка</b>
+          <span>Скажите «{snapshot.wakeWord}, какая погода?» или напишите сообщение ниже</span>
+        {/if}
       </div>
     {/each}
   </div>

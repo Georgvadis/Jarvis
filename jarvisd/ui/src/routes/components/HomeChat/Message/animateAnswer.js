@@ -1,25 +1,34 @@
 import { Motion } from "#helpers/core.js";
+import { renderMarkdownInto } from "#helpers/markdown.js";
 
 // Ответ Джарвиса «печатается»: пузырь открывается из пилюли «Думаю» и растёт пружиной (260/26),
 // каждое новое слово поднимается и проясняется на своей пружине (340/26) с шагом 70 мс, а высота
 // пузыря идёт строка за строкой вслед за последним показанным словом. Если человек внизу переписки,
 // окно каждый кадр следует за растущим пузырём — текст не уходит за край.
 export function animateAnswer(node, options) {
-  const st = { el: node.parentElement, text: "", anim: null };
+  const st = { el: node.parentElement, body: node, text: "", formatted: false, anim: null };
 
   function update({ text, animate, follow, measure }) {
     if (text === st.text) return;
     if (!animate || Motion.reduce) {
       stopAnimation(st);
-      node.textContent = st.text = text;
+      st.text = text;
+      st.formatted = true;
+      renderMarkdownInto(node, text);
       return;
     }
     const old = measure();
     let added = text;
-    if (text.startsWith(st.text)) added = text.slice(st.text.length);
-    else {
+    if (text.startsWith(st.text)) {
+      added = text.slice(st.text.length);
+      if (st.formatted) {
+        node.textContent = st.text;
+        st.formatted = false;
+      }
+    } else {
       stopAnimation(st);
       node.replaceChildren();
+      st.formatted = false;
     }
     st.text = text;
     const words = [];
@@ -72,6 +81,8 @@ function feedMorph(st, old, spans, follow) {
   if (!a) {
     if (!spans.length && Math.abs(old.w - natural.w) < 1 && Math.abs(old.h - natural.h) < 1) {
       el.classList.remove("growing"); el.style.minWidth = "";
+      st.formatted = true;
+      renderMarkdownInto(st.body, st.text);
       return;
     }
     const cs = getComputedStyle(el);
@@ -106,7 +117,11 @@ function feedMorph(st, old, spans, follow) {
       done() {
         const fin = !el.isConnected || (a.words.every((w) => w.fin) && Motion.settled(a.W) && Motion.settled(a.H));
         if (fin) {
-          if (el.isConnected) clearStyles(el, a);
+          if (el.isConnected) {
+            clearStyles(el, a);
+            st.formatted = true;
+            renderMarkdownInto(st.body, st.text);
+          }
           if (st.anim === a) st.anim = null;
           follow();
         }

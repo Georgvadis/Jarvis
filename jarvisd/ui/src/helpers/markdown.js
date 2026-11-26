@@ -1,4 +1,4 @@
-import { esc } from "./core.js";
+import { copyText, esc, toast } from "./core.js";
 
 const FENCE_RE = /^\s{0,3}```/;
 const HR_RE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
@@ -8,10 +8,15 @@ const UL_RE = /^(\s*)[-*+]\s+(.*)$/;
 const OL_RE = /^(\s*)\d+[.)]\s+(.*)$/;
 
 function safeUrl(raw) {
-  const url = raw.trim();
+  const url = String(raw || "").trim();
   if (!/^https?:\/\//i.test(url)) return "";
   if (/[\u0000-\u0020\u007f]/.test(url)) return "";
-  return url;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.toString() : "";
+  } catch {
+    return "";
+  }
 }
 
 function formatText(src, codeTokens, tokens) {
@@ -162,4 +167,195 @@ export function renderMarkdown(markdown) {
   }
 
   return out.join("");
+}
+
+function appendInlineDom(parent, text) {
+  const tokenRe = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;!?])/g;
+  let last = 0;
+  let m;
+  while ((m = tokenRe.exec(text)) !== null) {
+    if (m.index > last) {
+      parent.append(document.createTextNode(text.slice(last, m.index)));
+    }
+    if (m[1] !== undefined) {
+      const code = document.createElement("code");
+      code.className = "md-code";
+      code.textContent = m[1];
+      parent.append(code);
+    } else if (m[2] !== undefined) {
+      const strong = document.createElement("strong");
+      strong.textContent = m[2];
+      parent.append(strong);
+    } else if (m[3] !== undefined) {
+      const em = document.createElement("em");
+      em.textContent = m[3];
+      parent.append(em);
+    } else if (m[4] !== undefined && m[5] !== undefined) {
+      const clean = safeUrl(m[5]);
+      if (clean) {
+        const a = document.createElement("a");
+        a.className = "md-link";
+        a.href = clean;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = m[4];
+        parent.append(a);
+      } else {
+        parent.append(document.createTextNode(m[0]));
+      }
+    } else if (m[6] !== undefined) {
+      const clean = safeUrl(m[6]);
+      if (clean) {
+        const a = document.createElement("a");
+        a.className = "md-link";
+        a.href = clean;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = m[6];
+        parent.append(a);
+      } else {
+        parent.append(document.createTextNode(m[6]));
+      }
+    }
+    last = tokenRe.lastIndex;
+  }
+  if (last < text.length) {
+    parent.append(document.createTextNode(text.slice(last)));
+  }
+}
+
+function makeCodeBlockDom(lines, lang) {
+  const wrap = document.createElement("div");
+  wrap.className = "md-codeblock";
+
+  const head = document.createElement("div");
+  head.className = "md-codehead";
+
+  const tag = document.createElement("span");
+  tag.textContent = lang || "код";
+
+  const codeText = lines.join("\n");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "md-copy";
+  btn.textContent = "Копировать";
+  btn.addEventListener("click", () => {
+    void copyText(codeText).then(
+      () => toast("Код скопирован"),
+      () => toast("Не удалось скопировать", true),
+    );
+  });
+
+  head.append(tag, btn);
+
+  const pre = document.createElement("pre");
+  pre.className = "md-pre";
+  const code = document.createElement("code");
+  code.textContent = codeText;
+  pre.append(code);
+
+  wrap.append(head, pre);
+  return wrap;
+}
+
+export function renderMarkdownInto(container, rawText) {
+  const text = String(rawText ?? "").replace(/\r\n?/g, "\n");
+  container.replaceChildren();
+  if (!text) return;
+
+  const lines = text.split("\n");
+  let inCode = false;
+  let codeLang = "";
+  let codeLines = [];
+  let paraLines = [];
+  let listEl = null;
+  let listTag = "";
+
+  function flushPara() {
+    if (!paraLines.length) return;
+    const p = document.createElement("p");
+    p.className = "md-p";
+    paraLines.forEach((line, idx) => {
+      if (idx > 0) p.append(document.createElement("br"));
+      appendInlineDom(p, line);
+    });
+    container.append(p);
+    paraLines = [];
+  }
+
+  function flushList() {
+    if (!listEl) return;
+    container.append(listEl);
+    listEl = null;
+    listTag = "";
+  }
+
+  for (const line of lines) {
+    const fence = line.match(/^\s{0,3}```([a-zA-Z0-9_+-]*)\s*$/);
+    if (fence) {
+      if (inCode) {
+        container.append(makeCodeBlockDom(codeLines, codeLang));
+        inCode = false;
+        codeLang = "";
+        codeLines = [];
+      } else {
+        flushPara();
+        flushList();
+        inCode = true;
+        codeLang = fence[1] || "";
+        codeLines = [];
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (!line.trim()) {
+      flushPara();
+      flushList();
+      continue;
+    }
+
+    const ulMatch = line.match(/^\s*[-*]\s+(.+)$/);
+    if (ulMatch) {
+      flushPara();
+      if (listTag !== "ul") {
+        flushList();
+        listTag = "ul";
+        listEl = document.createElement("ul");
+        listEl.className = "md-list";
+      }
+      const li = document.createElement("li");
+      appendInlineDom(li, ulMatch[1]);
+      listEl.append(li);
+      continue;
+    }
+
+    const olMatch = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (olMatch) {
+      flushPara();
+      if (listTag !== "ol") {
+        flushList();
+        listTag = "ol";
+        listEl = document.createElement("ol");
+        listEl.className = "md-list";
+      }
+      const li = document.createElement("li");
+      appendInlineDom(li, olMatch[1]);
+      listEl.append(li);
+      continue;
+    }
+
+    flushList();
+    paraLines.push(line);
+  }
+
+  if (inCode) {
+    container.append(makeCodeBlockDom(codeLines, codeLang));
+  }
+  flushPara();
+  flushList();
 }

@@ -414,13 +414,16 @@ pub async fn notify(
 }
 
 /// Громкость колонки 0..10 из панели.
-pub async fn volume(body: axum::body::Bytes) -> Response {
+pub async fn volume(State(app): State<App>, body: axum::body::Bytes) -> Response {
     let Some(lvl) = serde_json::from_slice::<serde_json::Value>(&body).ok().and_then(|v| v.get("level").or(v.get("Level")).and_then(|x| x.as_i64())) else {
         return super::bad("пустой запрос");
     };
     let lvl = lvl.clamp(0, 10);
     match tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(lvl)).await.unwrap_or_else(|e| Err(e.to_string())) {
-        Ok(()) => reply(StatusCode::OK, json!({"volume": lvl})),
+        Ok(()) => {
+            crate::engine::flash_volume_clock(&app.engine, lvl);
+            reply(StatusCode::OK, json!({"volume": lvl}))
+        }
         Err(e) => super::bad(e),
     }
 }
@@ -1056,4 +1059,115 @@ pub async fn notes_save(State(app): State<App>, axum::Json(value): axum::Json<se
         .send()
         .await;
     forward_voice_response(resp, "Не удалось сохранить заметку в CyberNotes").await
+}
+
+pub async fn stack_health(State(app): State<App>) -> Response {
+    let voice_base = local_voice_server(&app);
+    let (pc_url, pc_tok) = app.store.with(|s| (
+        s.pc_agent_url.trim().trim_end_matches('/').to_string(),
+        s.pc_agent_token.trim().to_string(),
+    ));
+    let tg_token = app.plugins.plugin_setting_str("telegram-sender", "bot_token");
+    let tg_chat = app.plugins.plugin_setting_str("telegram-sender", "chat_id");
+    let tg_configured = !tg_token.trim().is_empty() && !tg_chat.trim().is_empty();
+    let route = app.proxy.route("plugins");
+    let vpn_json = match route {
+        crate::vpn::Route::Direct => json!({"mode": "direct", "ok": true}),
+        crate::vpn::Route::Tunnel(t) => json!({"mode": "tunnel", "ok": true, "proxy": t.socks}),
+        crate::vpn::Route::Blocked(why) => json!({"mode": "blocked", "ok": false, "error": why}),
+    };
+
+    let client = crate::net::direct();
+    let voice_fut = async {
+        let t0 = std::time::Instant::now();
+        match client
+            .get(format!("{voice_base}/health"))
+            .timeout(std::time::Duration::from_millis(2500))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                let latency_ms = t0.elapsed().as_millis() as u64;
+                let v: serde_json::Value = r.json().await.unwrap_or_default();
+                json!({
+                    "ok": v["ok"].as_bool().unwrap_or(true),
+                    "latency_ms": latency_ms,
+                    "whisper_loaded": v["whisper_loaded"].as_bool().unwrap_or(false),
+                    "qwen_loaded": v["qwen_loaded"].as_bool().unwrap_or(false),
+                    "gpu": v["gpu"].as_str().unwrap_or(""),
+                })
+            }
+            Ok(r) => json!({"ok": false, "error": format!("HTTP {}", r.status())}),
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        }
+    };
+
+    let notes_fut = async {
+        match client
+            .get(format!("{voice_base}/notes/list?limit=1"))
+            .timeout(std::time::Duration::from_millis(2500))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                let v: serde_json::Value = r.json().await.unwrap_or_default();
+                json!({
+                    "ok": v["available"].as_bool().unwrap_or(false),
+                    "available": v["available"].as_bool().unwrap_or(false),
+                    "total_notes": v["total_notes"].as_u64().unwrap_or(0),
+                })
+            }
+            Ok(r) => json!({"ok": false, "available": false, "error": format!("HTTP {}", r.status())}),
+            Err(e) => json!({"ok": false, "available": false, "error": e.to_string()}),
+        }
+    };
+
+    let pc_fut = async {
+        if pc_url.is_empty() {
+            return json!({"configured": false});
+        }
+        let t0 = std::time::Instant::now();
+        match client
+            .get(format!("{pc_url}/health"))
+            .bearer_auth(&pc_tok)
+            .timeout(std::time::Duration::from_millis(2500))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                let latency_ms = t0.elapsed().as_millis() as u64;
+                let v: serde_json::Value = r.json().await.unwrap_or_default();
+                json!({
+                    "configured": true,
+                    "ok": true,
+                    "latency_ms": latency_ms,
+                    "host": v["host"].as_str().unwrap_or(""),
+                    "os": v["os"].as_str().unwrap_or(""),
+                })
+            }
+            Ok(r) => json!({"configured": true, "ok": false, "error": format!("HTTP {}", r.status())}),
+            Err(e) => json!({"configured": true, "ok": false, "error": e.to_string()}),
+        }
+    };
+
+    let (voice_gpu, cybernotes, pc_companion) = tokio::join!(voice_fut, notes_fut, pc_fut);
+    let active_profile = app.store.with(|s| s.active_profile().name);
+    reply(
+        StatusCode::OK,
+        json!({
+            "speaker": {
+                "ok": true,
+                "version": crate::version(),
+                "mic": app.engine.mic.online(),
+                "uptime_s": app.started.elapsed().as_secs(),
+                "night": app.store.is_night(),
+                "profile": active_profile,
+            },
+            "voice_gpu": voice_gpu,
+            "cybernotes": cybernotes,
+            "pc_companion": pc_companion,
+            "telegram": {"configured": tg_configured},
+            "vpn": vpn_json,
+        }),
+    )
 }

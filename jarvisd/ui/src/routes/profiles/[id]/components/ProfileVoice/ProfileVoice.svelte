@@ -271,7 +271,8 @@
   }
 
   async function deleteVoice(id) {
-    if (savingVoice || !confirm("Удалить этот голос из списка?")) return;
+    if (savingVoice) return;
+    confirmDeleteId = "";
     savingVoice = true;
     try {
       await api("DELETE", "/api/voices?id=" + encodeURIComponent(id), undefined, { signal });
@@ -436,10 +437,21 @@
           {/if}
         </button>
         {#if item.custom}
-          <button class="ib {styles.action}" type="button" data-delv={item.id} title="Удалить голос"
-            aria-label={"Удалить голос " + item.name} disabled={savingVoice} onclick={() => deleteVoice(item.id)}>
-            {@html icon("x")}
-          </button>
+          {#if confirmDeleteId === "c:" + item.id}
+            <button class="ib danger {styles.action}" type="button" title="Подтвердить удаление"
+              aria-label={"Подтвердить удаление " + item.name} disabled={savingVoice} onclick={() => deleteVoice(item.id)}>
+              {@html icon("check")}
+            </button>
+            <button class="ib {styles.action}" type="button" title="Отмена"
+              aria-label="Отменить удаление" disabled={savingVoice} onclick={() => { confirmDeleteId = ""; }}>
+              {@html icon("x")}
+            </button>
+          {:else}
+            <button class="ib {styles.action}" type="button" data-delv={item.id} title="Удалить голос"
+              aria-label={"Удалить голос " + item.name} disabled={savingVoice} onclick={() => { confirmDeleteId = "c:" + item.id; }}>
+              {@html icon("trash")}
+            </button>
+          {/if}
         {:else if isLocalQwen}
           {#if confirmDeleteId === item.id}
             <button class="ib danger {styles.action}" type="button" title="Подтвердить удаление"

@@ -21,7 +21,7 @@
 
 <script>
   import { onMount } from "svelte";
-  import { api } from "#helpers/core.js";
+  import { api, icon, toast } from "#helpers/core.js";
   import { getPanel } from "#state/panelContext.js";
   import { S } from "#state/panelState.js";
   import Chart from "./Chart/Chart.svelte";
@@ -33,16 +33,99 @@
   let animation = $state(0);
   let loading = $state(true);
   let loadError = $state("");
+  let health = $state.raw(null);
+  let healthBusy = $state(false);
   let lastRequest = 0;
   let request;
+  let healthController = new AbortController();
   const { onPoll } = getPanel();
+
+  function formatUptime(sec) {
+    const s = Math.max(0, Math.floor(sec || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (h > 0) return `${h}ч ${m}м`;
+    if (m > 0) return `${m}м`;
+    return `${s}с`;
+  }
+
+  let healthTiles = $derived.by(() => {
+    if (!health) return [];
+    const sp = health.speaker || {};
+    const gpu = health.voice_gpu || {};
+    const cn = health.cybernotes || {};
+    const pc = health.pc_companion || {};
+    const tg = health.telegram || {};
+    const vpn = health.vpn || {};
+
+    const loadedModels = [gpu.whisper_loaded && "Whisper", gpu.qwen_loaded && "Qwen"].filter(Boolean).join("+");
+    return [
+      {
+        id: "speaker",
+        label: "Колонка",
+        ic: "speaker",
+        tone: sp.ok ? (sp.mic ? "ok" : "warn") : "bad",
+        detail: sp.ok ? `${sp.version || ""} · аптайм ${formatUptime(sp.uptime_s)}${sp.night ? " · ночь" : ""}` : "Офлайн",
+      },
+      {
+        id: "gpu",
+        label: "GPU-сервер",
+        ic: "cpu",
+        tone: gpu.ok ? "ok" : "bad",
+        detail: gpu.ok ? `${gpu.latency_ms ?? 0} мс · ${loadedModels || "готов"}` : (gpu.error || "Недоступен"),
+      },
+      {
+        id: "notes",
+        label: "CyberNotes",
+        ic: "note",
+        tone: cn.available ? "ok" : "bad",
+        detail: cn.available ? `Доступно · ${cn.total_notes ?? 0} заметок` : "Каталог недоступен",
+      },
+      {
+        id: "pc",
+        label: "ПК-компаньон",
+        ic: "monitor",
+        tone: !pc.configured ? "off" : pc.ok ? "ok" : "bad",
+        detail: !pc.configured ? "Не настроен" : pc.ok ? `${pc.latency_ms ?? 0} мс · ${pc.host || pc.os || "онлайн"}` : (pc.error || "Офлайн"),
+      },
+      {
+        id: "tg",
+        label: "Telegram-бот",
+        ic: "send",
+        tone: tg.configured ? "ok" : "off",
+        detail: tg.configured ? "Подключён" : "Не настроен",
+      },
+      {
+        id: "vpn",
+        label: "Сеть / VPN",
+        ic: "globe",
+        tone: vpn.ok ? "ok" : "bad",
+        detail: vpn.mode === "tunnel" ? "VPN-туннель" : vpn.mode === "blocked" ? (vpn.error || "Заблокирован") : "Напрямую",
+      },
+    ];
+  });
+
+  async function loadHealth(notify = false) {
+    if (healthBusy) return;
+    healthBusy = true;
+    try {
+      health = await api("GET", "/api/stack-health", undefined, { signal: healthController.signal });
+      if (notify) toast("Состояние стека обновлено");
+    } catch (error) {
+      if (!healthController.signal.aborted && notify) toast(error.message, true);
+    } finally {
+      healthBusy = false;
+    }
+  }
 
   onMount(() => {
     const unsubscribe = onPoll(refresh);
     void refresh(true);
+    void loadHealth(false);
     return () => {
       unsubscribe();
       request?.abort();
+      healthController.abort();
     };
   });
 
@@ -98,6 +181,32 @@
 {#if loadError}
   <p class="err" role="alert">{loadError}</p>
 {/if}
+
+<section class="card health-card" aria-label="Состояние стека">
+  <div class="card-head">
+    <h2>{@html icon("cpu")} Состояние стека</h2>
+    <button type="button" class="btn sm ghost" disabled={healthBusy} onclick={() => void loadHealth(true)}>
+      {@html icon("refresh")} Проверить
+    </button>
+  </div>
+  {#if healthTiles.length}
+    <div class="health-grid">
+      {#each healthTiles as tile (tile.id)}
+        <div class="health-tile">
+          <div class="health-top">
+            <span class="health-ic">{@html icon(tile.ic)}</span>
+            <b>{tile.label}</b>
+            <span class="health-dot" data-tone={tile.tone} aria-hidden="true"></span>
+          </div>
+          <small>{tile.detail}</small>
+        </div>
+      {/each}
+    </div>
+  {:else}
+    <p class="empty-msg">Проверяю узлы…</p>
+  {/if}
+</section>
+
 <div class={[styles.charts, "stagger"]} aria-busy={loading}>
   {#each metrics as metric (metric.key)}
     <Chart {metric} {points} {animation} ready={!loading && !loadError}

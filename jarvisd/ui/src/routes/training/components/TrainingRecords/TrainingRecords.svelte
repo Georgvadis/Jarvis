@@ -152,16 +152,16 @@
   }
 
   function clearRecords() {
-    const prompt = hasCloud
-      ? "Удалить все записи с колонки и из папки YaJarvis на Яндекс Диске? Сначала лучше скачать архив."
-      : "Удалить все записи для обучения? Сначала лучше скачать архив.";
-    if (busy || !confirm(prompt)) return;
+    confirmClear = false;
+    if (busy) return;
     void run(async () => {
       await api("DELETE", recordsUrl, undefined, { signal });
       toast("Записи удалены");
       await refresh(true);
     });
   }
+
+  let confirmClear = $state(false);
 
   function restoreModel() {
     void run(async () => {
@@ -288,9 +288,20 @@
           <button class="btn sm ghost" type="button" disabled={busy} onclick={() => run(() => refresh(true))}>Обновить</button>
         {/if}
         {#if clips.length}
-          <button class="btn sm ghost danger" type="button" disabled={busy} onclick={clearRecords}>Удалить все</button>
+          <button class="btn sm ghost danger" type="button" disabled={busy} onclick={() => { confirmClear = true; }}>{@html icon("trash")}Удалить все</button>
         {/if}
       </div>
+      {#if confirmClear && clips.length}
+        <div class="inline-confirm" role="alert">
+          <span>{hasCloud ? "Удалить все записи с колонки и Яндекс Диска?" : "Удалить все записи для обучения?"}</span>
+          <button class="btn danger sm" type="button" disabled={busy} onclick={clearRecords}>
+            {@html icon("check")}Удалить все
+          </button>
+          <button class="btn ghost sm" type="button" disabled={busy} onclick={() => { confirmClear = false; }}>
+            {@html icon("x")}Отмена
+          </button>
+        </div>
+      {/if}
       <div class={styles.list}>
         {#each visibleClips.slice(0, view.limit) as clip (clipKey(clip))}
           {@const playing = selectedKey === clipKey(clip) && archivePlaying}
