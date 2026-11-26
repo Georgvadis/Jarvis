@@ -17,9 +17,17 @@ fn def(name: &str) -> Value {
 pub type MusicFn = Arc<dyn Fn(String) -> crate::plugins::BoxFut<String> + Send + Sync>;
 pub type MusicFastFn=Arc<dyn Fn(String)->crate::plugins::BoxFut<Option<String>>+Send+Sync>;
 
+pub fn local_voice_url(host: &Host) -> String {
+    let url = host.plugin_setting_str("local-rvc-voice", "server_url");
+    let u = if url.is_empty() { "http://192.168.1.3:8768" } else { url.as_str() };
+    u.trim_end_matches('/').to_string()
+}
+
 pub struct Tools {
     pub host: Arc<Host>,
     pub store: Store,
+    /// Слабая ссылка на движок для интерактивных модулей (книги, игры, AI-DJ, подкаст).
+    pub engine: std::sync::OnceLock<std::sync::Weak<crate::engine::Engine>>,
     /// Включить с YouTube (None — нельзя).
     pub music: Option<MusicFn>,
     /// Управлять тем, что играет с YouTube.
@@ -39,8 +47,14 @@ pub struct Tools {
     pub on_debate: Option<Arc<dyn Fn(String) + Send + Sync>>,
     /// Фокус-режим (Помодоро) голосом.
     pub on_focus: Option<Arc<dyn Fn(&str) -> Option<String> + Send + Sync>>,
-    /// Интерактивные режимы (переводчик, RPG-квест, викторина).
+    /// Интерактивные режимы (переводчик, RPG-квест, викторина, игры).
     pub modes: Option<Arc<crate::modes::ModeManager>>,
+    /// Голосовые игры (Угадай мелодию, Нуарный детектив, Ведущий Мафии/Бункера).
+    pub games: Option<Arc<crate::games::GameManager>>,
+    /// Читалка книг и ранобэ.
+    pub reader: Option<Arc<crate::reader::BookReader>>,
+    /// Персональный AI-DJ.
+    pub dj: Option<Arc<crate::dj::AiDj>>,
 }
 
 const DAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -61,7 +75,29 @@ fn as_str(v: &Value) -> String {
 
 impl Tools {
     pub fn new(host: Arc<Host>, store: Store) -> Tools {
-        Tools { host, store, music: None, music_ctl: None, music_fast:None, music_queue: None, music_cancel: None, memory: None, leds: None, ambient: None, on_debate: None, on_focus: None, modes: None }
+        Tools {
+            host,
+            store,
+            engine: std::sync::OnceLock::new(),
+            music: None,
+            music_ctl: None,
+            music_fast: None,
+            music_queue: None,
+            music_cancel: None,
+            memory: None,
+            leds: None,
+            ambient: None,
+            on_debate: None,
+            on_focus: None,
+            modes: None,
+            games: None,
+            reader: None,
+            dj: None,
+        }
+    }
+
+    pub fn engine(&self) -> Option<Arc<crate::engine::Engine>> {
+        self.engine.get().and_then(|w| w.upgrade())
     }
     pub async fn cancel_loading_music(&self) {
         if let Some(cancel) = &self.music_cancel {
@@ -128,7 +164,7 @@ impl Tools {
         }
     }
 
-    /// Мгновенные встроенные команды YaJarvis (Фокус, Фон/Радио, Спор) без обращения к Алисе и облаку.
+    /// Мгновенные встроенные команды YaJarvis (Фокус, Фон/Радио, Читалка, Игры, AI-DJ, Спор) без обращения к Алисе и облаку.
     pub fn fast_local(&self, text: &str) -> Option<String> {
         if let Some(on_focus) = &self.on_focus
             && let Some(ans) = on_focus(text)
@@ -139,6 +175,48 @@ impl Tools {
             && let Some(ans) = amb.fast_command(text)
         {
             return Some(ans);
+        }
+        if let Some(eng) = self.engine() {
+            if let Some(reader) = &self.reader
+                && let Some(ans) = reader.fast_command(&eng, text)
+            {
+                return Some(ans);
+            }
+            if let Some(games) = &self.games
+                && let Some(ans) = crate::games::fast_game_command(games, &eng, text)
+            {
+                return Some(ans);
+            }
+            if let Some(dj) = &self.dj {
+                let low = text.trim().to_lowercase();
+                if dj.is_active() && (low.contains("диджей стоп") || low.contains("выключи дидже") || low.contains("останови дидже")) {
+                    dj.stop(Some(&eng));
+                    return Some("Выключаю AI-DJ.".into());
+                }
+                if dj.is_active() && (low == "дальше" || low.contains("следующий трек")) {
+                    dj.next();
+                    return Some("Переключаю на следующий трек подборки.".into());
+                }
+                for pat in ["поставь вайб ", "включи вайб ", "диджей поставь ", "диджей включи ", "режим диджея "] {
+                    if let Some(pos) = low.find(pat) {
+                        let trimmed = text.trim();
+                        let tail = if trimmed.len() == low.len() {
+                            trimmed[pos + pat.len()..].trim()
+                        } else {
+                            low[pos + pat.len()..].trim()
+                        };
+                        if !tail.is_empty() {
+                            let dj_c = dj.clone();
+                            let eng_c = eng.clone();
+                            let mood = tail.to_string();
+                            tokio::spawn(async move {
+                                let _ = dj_c.start(eng_c, mood);
+                            });
+                            return Some(format!("Запускаю AI-DJ с вайбом «{tail}»!"));
+                        }
+                    }
+                }
+            }
         }
         if let Some(on_debate) = &self.on_debate {
             let trimmed = text.trim();
@@ -335,6 +413,92 @@ impl Tools {
         if self.has_token() && self.use_ch("yandex") && self.has_catalog().await {
             defs.push(def("smart_home"));
         }
+        let s_snap = self.store.get();
+        if !s_snap.pc_agent_url.trim().is_empty() {
+            defs.push(json!({
+                "type": "function",
+                "name": "look_at_screen",
+                "description": "Посмотреть на экран компьютера хозяина (через PC-компаньон и Vision-модель) и ответить на его вопрос по изображению («посмотри на экран», «что тут за ошибка», «кто этот персонаж на экране»).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "что именно нужно увидеть или объяснить на экране"}
+                    },
+                    "required": ["question"]
+                }
+            }));
+            defs.push(json!({
+                "type": "function",
+                "name": "pc_control",
+                "description": "Выполнить безопасную команду на компьютере хозяина (через PC-компаньон): медиа пауза/далее/назад, громкость ПК, скриншот, блокировка экрана, таймер выключения, узнать активное окно.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["media_play_pause", "media_next", "media_prev", "volume_up", "volume_down", "volume_mute", "lock_screen", "sleep_timer", "cancel_sleep", "screenshot_save", "active_window"]
+                        },
+                        "minutes": {"type": "integer", "description": "минуты до выключения (только для sleep_timer)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        if s_snap.cybernotes_enabled {
+            defs.push(json!({
+                "type": "function",
+                "name": "save_note",
+                "description": "Сохранить мысль, идею, задачу или заметку в личную базу знаний CyberNotes («запиши идею», «сохрани заметку про...»).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "короткий чёткий заголовок заметки"},
+                        "content": {"type": "string", "description": "подробный текст заметки"},
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "1–3 коротких тега без #"}
+                    },
+                    "required": ["title", "content"]
+                }
+            }));
+            defs.push(json!({
+                "type": "function",
+                "name": "search_notes",
+                "description": "Найти информацию в заметках хозяина в CyberNotes («что я записывал про...», «найди в моих заметках»).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "поисковый запрос или ключевые слова"}
+                    },
+                    "required": ["query"]
+                }
+            }));
+        }
+        if self.dj.is_some() && self.music.is_some() && self.host.provider("youtube").is_ok() {
+            defs.push(json!({
+                "type": "function",
+                "name": "start_ai_dj",
+                "description": "Запустить персонального AI-DJ: колонка подберёт тематическую волну на YouTube под нужное настроение/вайб и будет делать короткие радио-подводки между треками.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mood": {"type": "string", "description": "описание вайба/настроения, например «ночной Токио синтвейв» или «чилл аниме OST»"}
+                    },
+                    "required": ["mood"]
+                }
+            }));
+        }
+        defs.push(json!({
+            "type": "function",
+            "name": "start_notebook_podcast",
+            "description": "Запустить подкаст-обсуждение двумя голосами (Локальный NotebookLM) по ссылке на статью/YouTube или тексту/теме.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "ссылка на статью или YouTube (если указана)"},
+                    "text": {"type": "string", "description": "тема или текст материала для обсуждения"},
+                    "title": {"type": "string", "description": "краткое название выпуска"}
+                }
+            }
+        }));
         defs
     }
 
@@ -463,6 +627,71 @@ impl Tools {
                 }
             };
         }
+        if name == "look_at_screen" {
+            let question = field("question");
+            let q = if question.is_empty() { "Что сейчас на экране?" } else { question.as_str() };
+            return match capture_and_describe_screen(&self.host, &self.store, q).await {
+                Ok(ans) => ans,
+                Err(e) => format!("Не получилось посмотреть экран: {e}"),
+            };
+        }
+        if name == "pc_control" {
+            let action = field("action");
+            let mins = a.get("minutes").and_then(Value::as_i64).unwrap_or(30);
+            return match call_pc_action(&self.store, &action, mins).await {
+                Ok(msg) => msg,
+                Err(e) => format!("Не удалось выполнить команду на ПК: {e}"),
+            };
+        }
+        if name == "save_note" {
+            let title = field("title");
+            let content = field("content");
+            let tags: Vec<String> = a
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|xs| xs.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            return match save_cybernote(&self.host, &title, &content, &tags, "Голосовые заметки").await {
+                Ok(path) => format!("Записал заметку «{path}» в CyberNotes."),
+                Err(e) => format!("Не удалось сохранить заметку: {e}"),
+            };
+        }
+        if name == "search_notes" {
+            let q = field("query");
+            return match search_cybernotes(&self.host, &q).await {
+                Ok(summary) => summary,
+                Err(e) => format!("Не удалось поискать в заметках: {e}"),
+            };
+        }
+        if name == "start_ai_dj"
+            && let Some(dj) = &self.dj
+            && let Some(eng) = self.engine()
+        {
+            let mood = field("mood");
+            return match dj.start(eng, mood.clone()) {
+                Ok(st) => format!("Запускаю волну «{}»!", st["station"].as_str().unwrap_or(&mood)),
+                Err(e) => e,
+            };
+        }
+        if name == "start_notebook_podcast"
+            && let Some(eng) = self.engine()
+        {
+            let url = field("url");
+            let text = field("text");
+            let title = field("title");
+            crate::debate::spawn_notebook(
+                eng,
+                crate::debate::NotebookParams {
+                    url,
+                    text,
+                    title,
+                    p1_id: None,
+                    p2_id: None,
+                    turns: 6,
+                },
+            );
+            return "Запускаю подкаст-разбор двумя голосами!".into();
+        }
         if name != "smart_home" {
             if let Some(res) = self.host.call_tool(name, args).await {
                 log::info!("инструмент плагина {name} → {}", crate::plugins::clip(&res, 200));
@@ -559,6 +788,100 @@ fn device_matches_command(text: &str, device: &Value) -> bool {
         }
     }
     false
+}
+
+pub async fn capture_and_describe_screen(host: &Host, store: &Store, question: &str) -> Result<String, String> {
+    let s = store.get();
+    let url = s.pc_agent_url.trim().trim_end_matches('/').to_string();
+    let tok = s.pc_agent_token.trim().to_string();
+    if url.is_empty() {
+        return Err("URL ПК-компаньона не указан в разделе «Колонка»".into());
+    }
+    let resp = crate::net::direct()
+        .get(format!("{url}/screenshot?max_width=1280&quality=75"))
+        .bearer_auth(&tok)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("ПК-компаньон вернул HTTP {}", resp.status()));
+    }
+    let jpg = resp.bytes().await.map_err(|e| e.to_string())?;
+    if jpg.len() < 100 {
+        return Err("ПК-компаньон прислал пустой скриншот".into());
+    }
+    let p = s.active_profile();
+    let voice_srv = local_voice_url(host);
+    crate::llm::ask_vision(host, &s, &p, &voice_srv, question, &jpg).await
+}
+
+pub async fn call_pc_action(store: &Store, action: &str, minutes: i64) -> Result<String, String> {
+    let s = store.get();
+    let url = s.pc_agent_url.trim().trim_end_matches('/').to_string();
+    let tok = s.pc_agent_token.trim().to_string();
+    if url.is_empty() {
+        return Err("ПК-компаньон не настроен".into());
+    }
+    let resp = crate::net::direct()
+        .post(format!("{url}/action"))
+        .bearer_auth(&tok)
+        .json(&json!({"action": action, "minutes": minutes}))
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("ПК-компаньон не отвечает: {e}"))?;
+    let status = resp.status();
+    let data: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(data["error"].as_str().unwrap_or("Ошибка команды ПК").to_string());
+    }
+    Ok(data["message"].as_str().unwrap_or("Готово.").to_string())
+}
+
+pub async fn save_cybernote(host: &Host, title: &str, content: &str, tags: &[String], folder: &str) -> Result<String, String> {
+    let srv = local_voice_url(host);
+    let resp = crate::net::direct()
+        .post(format!("{srv}/notes/save"))
+        .json(&json!({"title": title, "content": content, "tags": tags, "folder": folder}))
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("Сервер заметок недоступен: {e}"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(v["detail"].as_str().unwrap_or("Ошибка записи заметки").to_string());
+    }
+    Ok(v["path"].as_str().unwrap_or(title).to_string())
+}
+
+pub async fn search_cybernotes(host: &Host, query: &str) -> Result<String, String> {
+    let srv = local_voice_url(host);
+    let resp = crate::net::direct()
+        .get(format!("{srv}/notes/search"))
+        .query(&[("q", query), ("limit", "5")])
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("Сервер заметок недоступен: {e}"))?;
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    let hits = v["hits"].as_array().cloned().unwrap_or_default();
+    if hits.is_empty() {
+        return Ok("По этому запросу в заметках CyberNotes ничего не нашлось.".into());
+    }
+    let lines: Vec<String> = hits
+        .iter()
+        .map(|h| {
+            format!(
+                "• «{}» ({}): {}",
+                h["title"].as_str().unwrap_or(""),
+                h["path"].as_str().unwrap_or(""),
+                h["snippet"].as_str().unwrap_or("")
+            )
+        })
+        .collect();
+    Ok(format!("Найдено в CyberNotes:\n{}", lines.join("\n")))
 }
 
 #[cfg(test)]

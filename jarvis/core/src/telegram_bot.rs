@@ -335,14 +335,27 @@ async fn handle_message(
 • Любой текст или /say <текст> — озвучить на колонке (/say! — даже ночью)\n\
 • Голосовое сообщение — проиграть интеркомом (подпись /ask — спросить Джарвиса)\n\
 • /ask <вопрос> — спросить Джарвиса с ответом сюда (/ask! — также озвучить вслух)\n\
+• /podcast <ссылка|текст> — подкаст двумя голосами (YouTube / статья / текст)\n\
+• /dj <вайб|next|stop> — AI-DJ под настроение\n\
+• /note <текст> — сохранить быструю заметку в CyberNotes\n\
+• /book [play|stop|recap] — читалка книг\n\
 • /focus [мин|off] — таймер Помодоро на дисплее\n\
 • /ambient <rain|fireplace|ocean|white|lofi|jazz|chill|vol N|off> — фон/радио\n\
 • /vol <0-10> — громкость колонки\n\
-• /stop — остановить речь, фон и режимы\n\
+• /stop — остановить речь, игры, книгу, фон и режимы\n\
 • /status — статус колонки".into();
     }
 
     if cmd == "/stop" || lower == "стоп" {
+        if let Some(reader) = &engine.tools.reader {
+            reader.stop();
+        }
+        if let Some(dj) = &engine.tools.dj {
+            dj.stop(Some(engine));
+        }
+        if let Some(games) = &engine.tools.games {
+            games.stop_all(Some(engine));
+        }
         if let Some(modes) = &engine.tools.modes {
             modes.reset(Some(ambient));
         }
@@ -429,6 +442,86 @@ async fn handle_message(
         return match ambient.start(&arg) {
             Ok(label) => format!("Включил: {label}"),
             Err(e) => e,
+        };
+    }
+
+    if cmd == "/podcast" {
+        if rest.is_empty() {
+            return "Укажите ссылку (YouTube/статья) или текст после /podcast".into();
+        }
+        if crate::debate::is_active() {
+            return "Подкаст или спор уже запущен.".into();
+        }
+        let is_url = rest.starts_with("http://") || rest.starts_with("https://");
+        crate::debate::spawn_notebook(
+            engine.clone(),
+            crate::debate::NotebookParams {
+                url: if is_url { rest.to_string() } else { String::new() },
+                text: if is_url { String::new() } else { rest.to_string() },
+                title: String::new(),
+                p1_id: None,
+                p2_id: None,
+                turns: 6,
+            },
+        );
+        return "🎙 Запускаю подкаст двумя голосами!".into();
+    }
+
+    if cmd == "/dj" {
+        let Some(dj) = &engine.tools.dj else {
+            return "Модуль AI-DJ недоступен.".into();
+        };
+        let arg = rest.trim().to_lowercase();
+        if arg == "stop" || arg == "off" || arg == "стоп" {
+            dj.stop(Some(engine));
+            return "AI-DJ остановлен.".into();
+        }
+        if arg == "next" || arg == "дальше" {
+            dj.next();
+            return "Переключаю следующий трек DJ.".into();
+        }
+        if arg == "like" || arg == "лайк" {
+            return dj.like(engine).await;
+        }
+        let mood = if rest.is_empty() { "ночной Токио синтвейв" } else { rest };
+        return match dj.start(engine.clone(), mood.to_string()) {
+            Ok(st) => format!("🎧 Волна «{}» запущена!", st["station"].as_str().unwrap_or(mood)),
+            Err(e) => format!("Ошибка AI-DJ: {e}"),
+        };
+    }
+
+    if cmd == "/note" {
+        if rest.is_empty() {
+            return "Напишите текст заметки после /note".into();
+        }
+        let (title, content) = match rest.split_once('\n') {
+            Some((t, b)) if !t.trim().is_empty() && !b.trim().is_empty() => (t.trim(), b.trim()),
+            _ => ("", rest),
+        };
+        return match crate::tools::save_cybernote(&engine.host, title, content, &[], "Голосовые заметки").await {
+            Ok(path) => format!("📝 Сохранено в CyberNotes: {path}"),
+            Err(e) => format!("Ошибка CyberNotes: {e}"),
+        };
+    }
+
+    if cmd == "/book" {
+        let Some(reader) = &engine.tools.reader else {
+            return "Читалка недоступна.".into();
+        };
+        let arg = rest.trim().to_lowercase();
+        if arg == "stop" || arg == "pause" || arg == "стоп" {
+            reader.stop();
+            return "Чтение книги остановлено.".into();
+        }
+        if arg == "recap" || arg == "пересказ" {
+            return match reader.recap(engine.clone()).await {
+                Ok(t) => format!("📖 На чём остановились:\n\n{t}"),
+                Err(e) => format!("Ошибка пересказа: {e}"),
+            };
+        }
+        return match reader.start(engine.clone(), None, None).await {
+            Ok(_) => "📖 Продолжаю чтение книги с закладки!".into(),
+            Err(e) => format!("Не удалось запустить книгу: {e}"),
         };
     }
 

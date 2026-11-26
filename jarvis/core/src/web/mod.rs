@@ -54,6 +54,10 @@ pub struct Web {
     pub ambient: Arc<crate::ambient::Ambient>,
     pub focus: Arc<crate::focus::Focus>,
     pub modes: Arc<crate::modes::ModeManager>,
+    pub reader: Arc<crate::reader::BookReader>,
+    pub games: Arc<crate::games::GameManager>,
+    pub dj: Arc<crate::dj::AiDj>,
+    pub presence: Arc<crate::presence::Presence>,
     pub data_dir: PathBuf,
     pub started: Instant,
     pub telemetry: Arc<crate::telemetry::Telemetry>,
@@ -76,10 +80,14 @@ impl Web {
         ambient: Arc<crate::ambient::Ambient>,
         focus: Arc<crate::focus::Focus>,
         modes: Arc<crate::modes::ModeManager>,
+        reader: Arc<crate::reader::BookReader>,
+        games: Arc<crate::games::GameManager>,
+        dj: Arc<crate::dj::AiDj>,
+        presence: Arc<crate::presence::Presence>,
     ) -> App {
         let telemetry=crate::telemetry::Telemetry::start(data_dir.clone());
         let updater = crate::updates::Updater::new(data_dir.clone(), store.clone(), plugins.clone());
-        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
+        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, reader, games, dj, presence, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
     }
 }
 
@@ -181,6 +189,12 @@ pub fn router(app: App) -> Router {
         .route("/api/local-voices/upload", post(talk::local_voice_upload).layer(DefaultBodyLimit::max(32 << 20)))
         .route("/api/local-voices/upload-raw", post(talk::local_voice_upload_raw).layer(DefaultBodyLimit::max(16 << 20)))
         .route("/api/local-voices/{id}", delete(talk::local_voice_delete))
+        .route(
+            "/api/local-voices/{id}/emotions/{emotion}",
+            post(talk::local_voice_emotion_upload)
+                .layer(DefaultBodyLimit::max(16 << 20))
+                .delete(talk::local_voice_emotion_delete),
+        )
         .route("/api/ambient", get(talk::ambient_get).post(talk::ambient_set))
         .route("/api/ambient/stations", post(talk::ambient_station_add))
         .route("/api/ambient/stations/{id}", delete(talk::ambient_station_delete))
@@ -195,6 +209,33 @@ pub fn router(app: App) -> Router {
         .route("/api/journal", get(talk::journal))
         .route("/api/journal/clear", post(talk::journal_clear))
         .route("/api/debate", post(talk::debate_start))
+        .route("/api/notebook", post(talk::notebook_start))
+        .route("/api/notebook/upload", post(talk::notebook_upload).layer(DefaultBodyLimit::max(23 << 20)))
+        .route("/api/books", get(talk::books_list))
+        .route("/api/books/upload", post(talk::books_upload).layer(DefaultBodyLimit::max(26 << 20)))
+        .route("/api/books/url", post(talk::books_url))
+        .route("/api/books/play", post(talk::books_play))
+        .route("/api/books/stop", post(talk::books_stop))
+        .route("/api/books/nav", post(talk::books_nav))
+        .route("/api/books/recap", post(talk::books_recap))
+        .route("/api/books/{id}", delete(talk::books_delete))
+        .route("/api/games", get(talk::games_status))
+        .route("/api/games/melody", post(talk::games_melody))
+        .route("/api/games/detective", post(talk::games_detective))
+        .route("/api/games/party/start", post(talk::games_party_start))
+        .route("/api/games/party/next", post(talk::games_party_next))
+        .route("/api/games/stop", post(talk::games_stop))
+        .route("/api/dj", get(talk::dj_status))
+        .route("/api/dj/start", post(talk::dj_start))
+        .route("/api/dj/next", post(talk::dj_next))
+        .route("/api/dj/like", post(talk::dj_like))
+        .route("/api/dj/vibe", post(talk::dj_vibe))
+        .route("/api/dj/stop", post(talk::dj_stop))
+        .route("/api/pc/ping", get(talk::pc_ping))
+        .route("/api/pc/screen", post(talk::pc_screen))
+        .route("/api/presence", get(talk::presence_status))
+        .route("/api/presence/test", post(talk::presence_test))
+        .route("/api/notes/status", get(talk::notes_status))
         .route("/api/gpu-status", get(talk::gpu_status))
         .route("/api/gpu-unload", post(talk::gpu_unload))
         .route("/api/speaker/volume", post(talk::volume))

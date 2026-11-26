@@ -3,8 +3,9 @@
 
 use crate::{
     engine::Engine,
-    settings::{LedSettings, Profile},
+    settings::{LedSettings, Profile, Settings},
 };
+use serde_json::json;
 use std::{
     sync::{
         Arc,
@@ -20,6 +21,15 @@ pub struct DebateParams {
     pub p1_id: Option<String>,
     pub p2_id: Option<String>,
     pub rounds: usize,
+}
+
+pub struct NotebookParams {
+    pub url: String,
+    pub text: String,
+    pub title: String,
+    pub p1_id: Option<String>,
+    pub p2_id: Option<String>,
+    pub turns: usize,
 }
 
 impl DebateParams {
@@ -46,6 +56,15 @@ pub fn spawn_debate(engine: Arc<Engine>, params: DebateParams) {
     });
 }
 
+pub fn spawn_notebook(engine: Arc<Engine>, params: NotebookParams) {
+    tokio::spawn(async move {
+        if let Err(e) = run_notebook(engine.clone(), params).await {
+            log::warn!("notebooklm: {e}");
+            engine.journal.fail(&format!("Подкаст по источнику не запустился: {e}"));
+        }
+    });
+}
+
 fn effective_voice(p: &Profile) -> &str {
     if !p.tts_voice.is_empty() {
         p.tts_voice.as_str()
@@ -54,43 +73,27 @@ fn effective_voice(p: &Profile) -> &str {
     }
 }
 
-pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(), String> {
-    let topic = params.topic.trim().to_string();
-    if topic.is_empty() {
-        return Err("Укажите тему спора".into());
-    }
-    if DEBATE_ACTIVE
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
-        .is_err()
-    {
-        return Err("Спор уже идёт".into());
-    }
-    struct ActiveGuard;
-    impl Drop for ActiveGuard {
-        fn drop(&mut self) {
-            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
-        }
-    }
-    let _active_guard = ActiveGuard;
-
-    let s = engine.store.get();
-    let p1 = params
-        .p1_id
-        .as_deref()
+/// Подобрать пару отличающихся голосов/профилей и LED-цветов для 2 ведущих (спор, NotebookLM, книга).
+pub async fn resolve_duo(
+    engine: &Engine,
+    s: &Settings,
+    p1_id: Option<&str>,
+    p2_id: Option<&str>,
+    alt_fallback_name: &str,
+) -> (Profile, Profile) {
+    let p1 = p1_id
         .and_then(|id| s.profiles.iter().find(|p| p.id == id))
         .cloned()
         .unwrap_or_else(|| s.active_profile());
 
-    let mut p2: Profile = params
-        .p2_id
-        .as_deref()
+    let mut p2: Profile = p2_id
         .and_then(|id| s.profiles.iter().find(|p| p.id == id))
         .filter(|p| p.id != p1.id)
         .or_else(|| s.profiles.iter().find(|p| p.id != p1.id))
         .cloned()
         .unwrap_or_else(|| {
             let mut alt = p1.clone();
-            alt.name = format!("Оппонент {}", p1.name);
+            alt.name = alt_fallback_name.to_string();
             alt
         });
 
@@ -119,7 +122,7 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
                 }
             }
             if !switched {
-                p2.tts_speed = if p1.tts_speed < 1.05 { 1.16 } else { 0.88 };
+                p2.tts_speed = if p1.tts_speed < 1.05 { 1.15 } else { 0.89 };
             }
         }
     }
@@ -133,6 +136,37 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
             speaking: "#38bdf8".into(),
         });
     }
+    (p1, p2)
+}
+
+pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(), String> {
+    let topic = params.topic.trim().to_string();
+    if topic.is_empty() {
+        return Err("Укажите тему спора".into());
+    }
+    if DEBATE_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err("Спор уже идёт".into());
+    }
+    struct ActiveGuard;
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
+    let _active_guard = ActiveGuard;
+
+    let s = engine.store.get();
+    let (p1, p2) = resolve_duo(
+        &engine,
+        &s,
+        params.p1_id.as_deref(),
+        params.p2_id.as_deref(),
+        "Оппонент",
+    )
+    .await;
 
     let p1_prompt = s
         .prompts
@@ -210,14 +244,155 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
             break;
         }
 
-        engine.journal.note("подкаст", "", &format!("{}: {reply}", prof.name));
-        transcript.push((prof.name.clone(), reply.clone()));
+        let clean = crate::sfx::strip_tags(&reply);
+        engine.journal.note("подкаст", "", &format!("{}: {clean}", prof.name));
+        transcript.push((prof.name.clone(), clean));
 
         let e = engine.clone();
         let line = reply.clone();
         let prof_clone = prof.clone();
         let res = tokio::task::spawn_blocking(move || {
             e.say_aloud_opts(&line, Duration::from_secs(40), Some(&prof_clone), false)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if res.is_err() {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Локальный NotebookLM: превратить YouTube-видео, статью или документ в живой подкаст двух ведущих.
+pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result<(), String> {
+    if DEBATE_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err("Подкаст или спор уже запущен".into());
+    }
+    struct ActiveGuard;
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            DEBATE_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
+    let _active_guard = ActiveGuard;
+
+    let mut source_title = params.title.trim().to_string();
+    let mut source_text = params.text.trim().to_string();
+
+    if source_text.is_empty() {
+        let url = params.url.trim();
+        if url.is_empty() {
+            return Err("Укажите ссылку или текст для разбора".into());
+        }
+        engine.journal.note("подкаст", &format!("Извлекаю материал: {url}"), "");
+        let srv = crate::tools::local_voice_url(&engine.host);
+        let resp = crate::net::direct()
+            .post(format!("{srv}/extract"))
+            .json(&json!({"url": url, "max_chars": 12000}))
+            .timeout(Duration::from_secs(48))
+            .send()
+            .await
+            .map_err(|e| format!("Сервер jarvis-voice недоступен: {e}"))?;
+        let status = resp.status();
+        let data: serde_json::Value = resp.json().await.unwrap_or_default();
+        if !status.is_success() {
+            let msg = data["detail"].as_str().unwrap_or("Не удалось извлечь материал");
+            return Err(msg.to_string());
+        }
+        source_text = data["text"].as_str().unwrap_or("").trim().to_string();
+        if source_title.is_empty() {
+            source_title = data["title"].as_str().unwrap_or("Материал").trim().to_string();
+        }
+    }
+    if source_text.is_empty() {
+        return Err("Не удалось получить текст источника".into());
+    }
+    if source_title.is_empty() {
+        source_title = "Разбор материала".into();
+    }
+    let clipped_source: String = source_text.chars().take(9000).collect();
+
+    let s = engine.store.get();
+    let (p1, p2) = resolve_duo(
+        &engine,
+        &s,
+        params.p1_id.as_deref(),
+        params.p2_id.as_deref(),
+        "Соведущий",
+    )
+    .await;
+
+    let p1_prompt = s.prompt_text(&p1.prompt);
+    let p2_prompt = if p2.id != p1.id {
+        s.prompt_text(&p2.prompt)
+    } else {
+        "Ты любопытный соведущий подкаста: задаёшь точные вопросы, подмечаешь неожиданные детали и шутишь к месту.".into()
+    };
+
+    engine.journal.note("подкаст", &format!("NotebookLM: {source_title}"), "");
+    let turns = params.turns.clamp(4, 10);
+    let epoch = engine.speech_epoch_now();
+    let mut dialogue: Vec<(String, String)> = Vec::new();
+
+    for idx in 0..turns {
+        if engine.speech_epoch_now() != epoch {
+            break;
+        }
+        let is_first = idx % 2 == 0;
+        let (prof, base_prompt) = if is_first { (&p1, p1_prompt.as_str()) } else { (&p2, p2_prompt.as_str()) };
+        let phase_hint = if idx == 0 {
+            "Поприветствуй слушателей и коротко представь тему выпуска по материалу ниже, сразу зацепив главным фактом. Можешь начать с [sfx:chime] [happy]."
+        } else if idx + 1 == turns {
+            "Подведи яркий, запоминающийся итог выпуска и попрощайся до следующего раза."
+        } else if is_first {
+            "Развей мысль, объясни ключевой тезис из материала простым живым языком и передай слово."
+        } else {
+            "Живо отреагируй на реплику коллеги, выдели самую интересную деталь из материала или задай короткий уточняющий вопрос."
+        };
+
+        let prev_block = if dialogue.is_empty() {
+            String::new()
+        } else {
+            let lines: Vec<String> = dialogue.iter().map(|(w, t)| format!("{w}: {t}")).collect();
+            format!("\n\nУже сказано в подкасте:\n{}", lines.join("\n"))
+        };
+
+        let instructions = format!(
+            "{base_prompt}\n\nТы соведущий увлекательного голосового подкаста-разбора (в духе NotebookLM). {phase_hint}\n\
+            Говори по-русски, живо, естественно, 2–3 предложения (до 45 слов), БЕЗ Markdown и списков.\n\n\
+            === ИСТОЧНИК: {source_title} ===\n{clipped_source}{prev_block}"
+        );
+        let user_msg = format!("Реплика {} из {} подкаста «{}».", idx + 1, turns, source_title);
+
+        let reply = crate::llm::ask_with_pool(
+            &engine.host,
+            &s,
+            prof,
+            &instructions,
+            &user_msg,
+            &engine.tools,
+            Vec::new(),
+            Some(&engine.gemini_pool),
+        )
+        .await?;
+        let reply = reply.trim().to_string();
+        if reply.is_empty() || engine.speech_epoch_now() != epoch {
+            break;
+        }
+
+        let clean = crate::sfx::strip_tags(&reply);
+        engine.journal.note("подкаст", "", &format!("{}: {clean}", prof.name));
+        dialogue.push((prof.name.clone(), clean));
+
+        let e = engine.clone();
+        let line = reply.clone();
+        let prof_clone = prof.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            e.say_aloud_opts(&line, Duration::from_secs(55), Some(&prof_clone), false)
         })
         .await
         .map_err(|e| e.to_string())?;

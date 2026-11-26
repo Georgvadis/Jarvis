@@ -6,8 +6,13 @@ mod alice;
 mod alice_music;
 mod ambient;
 mod debate;
+mod dj;
 mod focus;
+mod games;
 mod modes;
+mod presence;
+mod reader;
+mod sfx;
 mod telegram_bot;
 mod launchpatch;
 mod audio;
@@ -304,12 +309,22 @@ async fn run(f: Flags, store: settings::Store) {
     let ambient = ambient::Ambient::new(host.clone(), store.clone());
     let focus = focus::Focus::new(leds.clone(), ambient.clone());
     let modes = modes::ModeManager::new();
+    let games = games::GameManager::new(modes.clone(), ambient.clone());
+    let reader = reader::BookReader::new();
+    let dj = dj::AiDj::new();
+    let presence = presence::Presence::new();
     {
         let host = host.clone();
         let ambient = ambient.clone();
         let focus = focus.clone();
+        let reader = reader.clone();
+        let dj = dj.clone();
+        let games = games.clone();
         tokio::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
+            reader.stop();
+            dj.stop(None);
+            games.stop_all(None);
             focus.stop();
             ambient.stop();
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -322,10 +337,16 @@ async fn run(f: Flags, store: settings::Store) {
         let host = host.clone();
         let ambient = ambient.clone();
         let focus = focus.clone();
+        let reader = reader.clone();
+        let dj = dj.clone();
+        let games = games.clone();
         tokio::spawn(async move {
             if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
                 s.recv().await;
                 log::info!("завершаюсь: останавливаю плагины");
+                reader.stop();
+                dj.stop(None);
+                games.stop_all(None);
                 focus.stop();
                 ambient.stop();
                 tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -339,6 +360,9 @@ async fn run(f: Flags, store: settings::Store) {
     tools.leds = Some(leds.clone());
     tools.ambient = Some(ambient.clone());
     tools.modes = Some(modes.clone());
+    tools.games = Some(games.clone());
+    tools.reader = Some(reader.clone());
+    tools.dj = Some(dj.clone());
     {
         let ec = engine_cell.clone();
         tools.on_debate = Some(Arc::new(move |topic: String| {
@@ -398,6 +422,7 @@ async fn run(f: Flags, store: settings::Store) {
     #[cfg(unix)]
     speakervol::watch_night(store.clone(), engine.leds.clone());
     let _ = engine_cell.set(Arc::downgrade(&engine));
+    let _ = engine.tools.engine.set(Arc::downgrade(&engine));
     {
         let e = Arc::downgrade(&engine);
         let amb = ambient.clone();
@@ -409,8 +434,9 @@ async fn run(f: Flags, store: settings::Store) {
     }
     memory.set_summarizer(Some(engine.summarizer()));
     engine.run(det);
+    presence.clone().spawn(engine.clone());
     telegram_bot::spawn(engine.clone(), host.clone(), proxy.clone(), ambient.clone(), focus.clone());
-    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes);
+    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes, reader, games, dj, presence);
     #[cfg(unix)]
     {
         let app = app.clone();

@@ -12,6 +12,15 @@ pub enum SpecialMode {
     Translator(String),
     Rpg,
     Quiz,
+    Melody,
+    Detective,
+    PartyHost,
+}
+
+impl SpecialMode {
+    pub fn is_game(&self) -> bool {
+        matches!(self, SpecialMode::Melody | SpecialMode::Detective | SpecialMode::PartyHost)
+    }
 }
 
 #[derive(Default)]
@@ -43,6 +52,23 @@ impl ModeManager {
             SpecialMode::Rpg => json!({"mode": "rpg", "lang": ""}),
             SpecialMode::Quiz => json!({"mode": "quiz", "lang": ""}),
             SpecialMode::Translator(lang) => json!({"mode": "translator", "lang": lang}),
+            SpecialMode::Melody => json!({"mode": "melody", "lang": ""}),
+            SpecialMode::Detective => json!({"mode": "detective", "lang": ""}),
+            SpecialMode::PartyHost => json!({"mode": "party", "lang": ""}),
+        }
+    }
+
+    pub fn set_mode(&self, mode: SpecialMode, ambient: Option<&Ambient>) {
+        let prev_started = {
+            let mut g = self.inner.lock().unwrap();
+            let prev_started = g.started_ambient;
+            g.mode = mode.clone();
+            g.history.clear();
+            g.started_ambient = false;
+            prev_started
+        };
+        if prev_started && !mode.is_game() && let Some(amb) = ambient {
+            amb.stop();
         }
     }
 
@@ -74,9 +100,14 @@ impl ModeManager {
                         started_amb = amb.start("fireplace").is_ok();
                     }
                 }
-                SpecialMode::Quiz => {
+                SpecialMode::Quiz | SpecialMode::Melody | SpecialMode::PartyHost => {
                     if amb.current_id().is_none() || prev_started {
                         started_amb = amb.start("chill").is_ok();
+                    }
+                }
+                SpecialMode::Detective => {
+                    if amb.current_id().is_none() || prev_started {
+                        started_amb = amb.start("jazz").is_ok();
                     }
                 }
                 SpecialMode::Normal | SpecialMode::Translator(_) => {
@@ -91,8 +122,11 @@ impl ModeManager {
             SpecialMode::Translator(lang) => {
                 format!("Режим переводчика на {lang} включён. Говорите фразу — я сразу переведу.")
             }
-            SpecialMode::Rpg => "Квест начался! Ты стоишь у входа в старую таверну на краю тёмного леса, внутри трещит камин, а у двери прибита записка с твоим именем. Зайдёшь внутрь или сначала прочтёшь записку?".into(),
-            SpecialMode::Quiz => "Викторина запущена! Назови любую тему или скажи «обо всём», и поехали к первому вопросу.".into(),
+            SpecialMode::Rpg => "[sfx:door] Квест начался! Ты стоишь у входа в старую таверну на краю тёмного леса, внутри трещит камин, а у двери прибита записка с твоим именем. Зайдёшь внутрь или сначала прочтёшь записку?".into(),
+            SpecialMode::Quiz => "[sfx:chime] Викторина запущена! Назови любую тему или скажи «обо всём», и поехали к первому вопросу.".into(),
+            SpecialMode::Melody => "Музыкальная игра «Угадай мелодию» запущена!".into(),
+            SpecialMode::Detective => "[sfx:thunder] Нуарный детектив запущен!".into(),
+            SpecialMode::PartyHost => "Режим ведущего игры запущен!".into(),
         };
         {
             let mut g = self.inner.lock().unwrap();
@@ -219,11 +253,12 @@ impl ModeManager {
                 "Ты синхронный голосовой переводчик между русским и языком «{lang}». Если фраза на русском — переведи на «{lang}». Если фраза на «{lang}» — переведи на русский. Отвечай ТОЛЬКО готовым переводом, без кавычек, пояснений и лишних слов."
             ),
             SpecialMode::Rpg => format!(
-                "Ты мастер атмосферного голосового RPG-квеста. Веди короткое захватывающее фэнтези-приключение: описывай сцену живо в 2–3 предложения и предлагай 2–3 ярких варианта действий. Не используй Markdown и списки.{whisper_hint}"
+                "Ты мастер атмосферного многоголосого RPG-спектакля. Веди захватывающее приключение в 2–4 коротких предложения. Когда говорит NPC, пиши с новой строки в формате [Имя NPC]: [эмоция] Реплика (эмоции: happy, sarcastic, whisper, excited, sad). По ситуации добавляй короткие эффекты [sfx:door], [sfx:thunder], [sfx:magic], [sfx:coin], [sfx:bell] или смену обстановки [scene:tavern|forest|storm|ocean]. В конце дай 2–3 ярких выбора действий, без Markdown и списков.{whisper_hint}"
             ),
             SpecialMode::Quiz => format!(
-                "Ты бодрый ведущий голосовой викторины. Задавай интересные короткие вопросы (по одному за раз), проверяй ответ игрока, веди счёт и подбадривай. Отвечай живо в 2 предложения, без Markdown.{whisper_hint}"
+                "Ты бодрый ведущий голосовой викторины. Задавай интересные короткие вопросы (по одному за раз), проверяй ответ игрока, веди счёт и подбадривай. Отвечай живо в 2 предложения (можешь вставлять [sfx:fanfare] за верный ответ и [sfx:buzz] за ошибку), без Markdown.{whisper_hint}"
             ),
+            SpecialMode::Melody | SpecialMode::Detective | SpecialMode::PartyHost => base.to_string(),
         }
     }
 }

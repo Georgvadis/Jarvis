@@ -69,6 +69,13 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "night",
         "radio",
         "ambient_volume",
+        "expressive_mode",
+        "pc_agent_url",
+        "pc_agent_token",
+        "presence_phone_ip",
+        "presence_away_min",
+        "presence_greeting",
+        "cybernotes_enabled",
     ];
     let mut out = serde_json::to_value(&*s)?;
     for (k, v) in input {
@@ -140,6 +147,22 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
     next.train_limit_mb = next.train_limit_mb.clamp(1, MAX_TRAIN_LIMIT_MB);
     next.city = next.city.trim().into();
     next.speaker_room = next.speaker_room.trim().into();
+    next.pc_agent_url = next.pc_agent_url.trim().trim_end_matches('/').to_string();
+    if !next.pc_agent_url.is_empty()
+        && (!next.pc_agent_url.starts_with("http://") && !next.pc_agent_url.starts_with("https://") || next.pc_agent_url.len() > 160)
+    {
+        return Err(invalid("URL ПК-компаньона должен начинаться с http:// или https://"));
+    }
+    next.pc_agent_token = next.pc_agent_token.trim().to_string();
+    if next.pc_agent_token.len() > 256 {
+        return Err(invalid("Слишком длинный токен ПК-компаньона"));
+    }
+    next.presence_phone_ip = next.presence_phone_ip.trim().to_string();
+    if !next.presence_phone_ip.is_empty() && crate::presence::valid_lan_ipv4(&next.presence_phone_ip).is_none() {
+        return Err(invalid("IP телефона должен быть локальным IPv4 (например, 192.168.1.50)"));
+    }
+    next.presence_away_min = next.presence_away_min.clamp(5, 240);
+    next.presence_greeting = next.presence_greeting.trim().chars().take(200).collect();
     for time in [&next.night.from, &next.night.to] {
         if !time.is_empty() && crate::settings::hhmm(time).is_none() {
             return Err(invalid("Время ночного режима — HH:MM"));

@@ -527,7 +527,11 @@ pub async fn ask_codex_with_history_detail(host: &Host, auth: Value, p: &Profile
             let name = c.get("name").and_then(Value::as_str).unwrap_or("");
             if !defs.iter().any(|d|d["name"]==name){return Err("Модель вызвала необъявленный инструмент".into());}
             let args = c.get("arguments").and_then(Value::as_str).unwrap_or("");
-            let limit = if name == "play_music" { 35 } else { 15 };
+            let limit = match name {
+                "play_music" => 35,
+                "look_at_screen" | "start_notebook_podcast" => 40,
+                _ => 15,
+            };
             let result = match tokio::time::timeout(Duration::from_secs(limit), tools.call(name, args)).await {
                 Ok(result) => result,
                 Err(_) => {

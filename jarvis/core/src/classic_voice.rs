@@ -104,7 +104,7 @@ impl Classic {
         if let Some(modes) = &context.tools.modes
             && let Some(mode_reply) = modes.try_command(command, context.tools.ambient.as_deref())
         {
-            self.dialog.on_bot(&mode_reply);
+            self.dialog.on_bot(&crate::sfx::strip_tags(&mode_reply));
             self.speak(context, &mode_reply, generation, is_whisper).await?;
             self.dialog.finish_turn("");
             return Ok(());
@@ -114,6 +114,16 @@ impl Classic {
         }
         let is_bedtime = ModeManager::is_bedtime_command(command);
         let active_mode = context.tools.modes.as_ref().map(|m| m.current()).unwrap_or_default();
+        if active_mode.is_game()
+            && let Some(games) = &context.tools.games
+            && let Some(eng) = context.tools.engine()
+            && let Some(game_reply) = games.handle_turn(&eng, command).await
+        {
+            self.dialog.on_bot(&crate::sfx::strip_tags(&game_reply));
+            self.speak(context, &game_reply, generation, is_whisper).await?;
+            self.dialog.finish_turn("");
+            return Ok(());
+        }
         if !is_bedtime && active_mode == SpecialMode::Normal {
             if let Some(answer) = context.tools.fast_local(command) {
                 self.dialog.on_bot(&answer);
@@ -157,6 +167,8 @@ impl Classic {
                 "\n[Режим «История на ночь»: расскажи уютную, спокойную, убаюкивающую историю на 5–7 неспешных предложений, без Markdown и без вопросов в конце.]"
             } else if is_whisper {
                 "\n[Хозяин говорит шёпотом — ответь максимально коротко, тихо и спокойно.]"
+            } else if context.settings.expressive_mode {
+                "\n[При уместности можешь начинать фразу тегом эмоции [happy], [sarcastic], [whisper], [excited], [sad] или вставить короткий эффект [sfx:chime], [sfx:bell], [sfx:sigh], [sfx:thunder], [sfx:magic], но не злоупотребляй.]"
             } else {
                 ""
             };
@@ -174,20 +186,21 @@ impl Classic {
             };
             self.dialog.set_timings(None, Some(t_llm0.elapsed().as_millis() as u64), None);
             close_after = active_mode == SpecialMode::Normal && reply.close_dialog && !crate::music::wants_keep_talking(text);
+            let display_reply = crate::sfx::strip_tags(&reply.text);
             if self.generation.load(Ordering::SeqCst)==generation{
                 if active_mode == SpecialMode::Normal {
                     let mut h=context.history.lock().unwrap();
                     h.push(crate::llm::Turn{role:"user",content:text.to_owned()});
-                    h.push(crate::llm::Turn{role:"assistant",content:reply.text.clone()});
+                    h.push(crate::llm::Turn{role:"assistant",content:display_reply.clone()});
                     if h.len()>12{let drop_n=h.len()-12;h.drain(..drop_n);}
                 } else if let Some(modes) = &context.tools.modes {
-                    modes.push_turn(text, &reply.text);
+                    modes.push_turn(text, &display_reply);
                 }
             }
             reply.text
         };
         if self.generation.load(Ordering::SeqCst)!=generation{return Ok(());}
-        self.dialog.on_bot(&answer);
+        self.dialog.on_bot(&crate::sfx::strip_tags(&answer));
         if close_after {
             self.dialog.finish_turn("");
             self.dialog.request_close();
@@ -195,7 +208,7 @@ impl Classic {
         }
         self.speak(context,&answer,generation,is_whisper).await?;self.dialog.finish_turn("");Ok(())
     }
-    async fn synthesize_provider(&self,context:&Context,provider:&str,voice:&str,model:&str,text:&str)->Result<Vec<i16>,String>{
+    async fn synthesize_provider(&self,context:&Context,provider:&str,voice:&str,model:&str,text:&str,emotion:Option<&str>)->Result<Vec<i16>,String>{
         let result=match provider {
             "openai"=>{
                 let model=if model.is_empty(){"gpt-4o-mini-tts"}else{model};
@@ -208,7 +221,7 @@ impl Classic {
                 let body=json!({"text":text,"model_id":model});
                 context.host.provider("elevenlabs")?.request("elevenlabs",json!({"op":"tts","key":&context.settings.elevenlabs_key,"voice":voice,"body":body}),Duration::from_secs(60)).await?
             },
-            id=>context.host.plugin_tts(id,json!({"text":text,"voice":voice,"model":model,"language":context.settings.language})).await?,
+            id=>context.host.plugin_tts(id,json!({"text":text,"voice":voice,"model":model,"language":context.settings.language,"emotion":emotion.unwrap_or("")})).await?,
         };
         let b64=result["audio"].as_str().or_else(||result["audio_b64"].as_str()).ok_or("Нет голоса TTS")?;
         let bytes=B64.decode(b64).map_err(|_|"Неверный голос TTS")?;
@@ -217,11 +230,11 @@ impl Classic {
         let samples:Vec<i16>=bytes.chunks_exact(2).map(|b|i16::from_le_bytes([b[0],b[1]])).collect();
         Ok(resample_pcm(&samples,rate,24000))
     }
-    async fn synthesize_one(&self,context:&Context,text:&str)->Result<Vec<i16>,String>{
+    async fn synthesize_one(&self,context:&Context,text:&str,emotion:Option<&str>)->Result<Vec<i16>,String>{
         let provider=context.profile.effective_tts_engine();
         let voice=if !context.profile.tts_voice.is_empty(){context.profile.tts_voice.as_str()}else if !context.profile.voice.is_empty(){context.profile.voice.as_str()}else if provider=="openai"{"alloy"}else{""};
         let cache_key = if text.chars().count() <= 60 {
-            Some(tts_cache_key(provider, voice, &context.profile.tts_model, text))
+            Some(tts_cache_key(provider, voice, &context.profile.tts_model, emotion.unwrap_or(""), text))
         } else {
             None
         };
@@ -230,7 +243,7 @@ impl Classic {
         {
             return Ok(cached);
         }
-        match self.synthesize_provider(context, provider, voice, &context.profile.tts_model, text).await {
+        match self.synthesize_provider(context, provider, voice, &context.profile.tts_model, text, emotion).await {
             Ok(pcm) => {
                 if let Some(ref key) = cache_key {
                     tts_cache_put(key, &pcm);
@@ -241,7 +254,7 @@ impl Classic {
                 let fallback = context.profile.tts_fallback_engine.trim();
                 if !fallback.is_empty() && fallback != provider {
                     log::warn!("TTS: основной провайдер «{provider}» не ответил ({primary_err}), пробую резервный «{fallback}»");
-                    match self.synthesize_provider(context, fallback, "", "", text).await {
+                    match self.synthesize_provider(context, fallback, "", "", text, emotion).await {
                         Ok(pcm) => return Ok(pcm),
                         Err(fb_err) => {
                             log::warn!("TTS: резервный «{fallback}» тоже не ответил: {fb_err}");
@@ -255,57 +268,119 @@ impl Classic {
             }
         }
     }
+    async fn send_pcm_samples(&self, samples: &[i16], generation: u64) -> Result<(), String> {
+        for chunk in samples.chunks(1200) {
+            let mut pcm = chunk.to_vec();
+            loop {
+                if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                    return Ok(());
+                }
+                let tx = self.out.lock().unwrap().clone().ok_or("Разговор закрыт")?;
+                match tx.try_send(pcm) {
+                    Ok(()) => break,
+                    Err(std::sync::mpsc::TrySendError::Full(data)) => pcm = data,
+                    Err(_) => return Ok(()),
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        Ok(())
+    }
     async fn speak(self: &Arc<Self>,context:&Arc<Context>,text:&str,generation:u64,whisper:bool)->Result<(),String>{
-        let cleaned = clean_for_tts(text);
-        let sentences = split_sentences(&cleaned);
-        if sentences.is_empty() { return Ok(()); }
+        let segments = crate::sfx::parse_segments(text);
+        if segments.is_empty() { return Ok(()); }
         let t_tts0 = std::time::Instant::now();
-        let mut next_fut: Option<tokio::task::JoinHandle<Result<Vec<i16>, String>>> = {
-            let me = self.clone();
-            let ctx = context.clone();
-            let s0 = sentences[0].clone();
-            Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s0).await }))
-        };
-        for i in 0..sentences.len() {
-            if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst)!=generation {
-                if let Some(h) = next_fut.take() { h.abort(); }
+        let mut recorded_timing = false;
+
+        for seg in segments {
+            if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
                 return Ok(());
             }
-            let current_fut = next_fut.take().unwrap();
-            let mut samples = match current_fut.await {
-                Ok(Ok(s)) => s,
-                Ok(Err(e)) => return Err(e),
-                Err(_) => return Ok(()),
-            };
-            let speed = context.profile.tts_speed.clamp(0.75, 1.35);
-            if (speed - 1.0).abs() > 0.02 {
-                samples = time_stretch_pcm(&samples, speed);
-            }
-            if whisper {
-                for s in &mut samples {
-                    *s = ((*s as i32 * 32) / 100) as i16;
-                }
-            }
-            if i == 0 {
-                self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
-            }
-            // Prefetch sentence i+1 in parallel while sentence i plays
-            if i + 1 < sentences.len() {
-                let me = self.clone();
-                let ctx = context.clone();
-                let s_next = sentences[i + 1].clone();
-                next_fut = Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s_next).await }));
-            }
-            for chunk in samples.chunks(1200){
-                let mut pcm=chunk.to_vec();
-                loop {
-                    if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst)!=generation{
-                        if let Some(h) = next_fut.take() { h.abort(); }
-                        return Ok(());
+            match seg {
+                crate::sfx::Segment::Scene(scene) => {
+                    if let Some(amb) = &context.tools.ambient {
+                        let mapped = match scene.as_str() {
+                            "tavern" | "fireplace" | "таверна" => Some("fireplace"),
+                            "storm" | "rain" | "forest" | "шторм" | "лес" => Some("rain"),
+                            "ocean" | "sea" | "океан" => Some("ocean"),
+                            "noir" | "jazz" | "нуар" => Some("jazz"),
+                            "chill" => Some("chill"),
+                            _ => None,
+                        };
+                        if let Some(id) = mapped {
+                            let _ = amb.start(id);
+                        }
                     }
-                    let tx=self.out.lock().unwrap().clone().ok_or("Разговор закрыт")?;
-                    match tx.try_send(pcm){Ok(())=>break,Err(std::sync::mpsc::TrySendError::Full(data))=>pcm=data,Err(_)=>return Ok(())}
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                crate::sfx::Segment::Sfx(name) => {
+                    if let Some(pcm) = crate::sfx::generate_sfx(&name) {
+                        self.send_pcm_samples(&pcm, generation).await?;
+                    }
+                }
+                crate::sfx::Segment::Speech { text: seg_text, emotion, speaker } => {
+                    let cleaned = clean_for_tts(&seg_text);
+                    let sentences = split_sentences(&cleaned);
+                    if sentences.is_empty() { continue; }
+
+                    let emo_ref = emotion.as_deref();
+                    let (emo_speed, emo_gain) = emo_ref.map(crate::sfx::emotion_speed_gain).unwrap_or((1.0, 1.0));
+                    let (spk_speed, spk_color) = speaker.as_deref().map(crate::sfx::speaker_style).unwrap_or((1.0, ""));
+                    if let Some(leds) = &context.tools.leds {
+                        if let Some(c) = emo_ref.and_then(crate::sfx::emotion_led_color).or_else(|| (!spk_color.is_empty()).then_some(spk_color)) {
+                            let bright = context.settings.led.brightness.max(35);
+                            leds.show(crate::led::Mode::Speaking, c, bright, Duration::from_secs(4));
+                        }
+                    }
+
+                    let emo_owned = emotion.clone();
+                    let mut next_fut: Option<tokio::task::JoinHandle<Result<Vec<i16>, String>>> = {
+                        let me = self.clone();
+                        let ctx = context.clone();
+                        let s0 = sentences[0].clone();
+                        let em = emo_owned.clone();
+                        Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s0, em.as_deref()).await }))
+                    };
+                    for i in 0..sentences.len() {
+                        if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                            if let Some(h) = next_fut.take() { h.abort(); }
+                            return Ok(());
+                        }
+                        let current_fut = next_fut.take().unwrap();
+                        let mut samples = match current_fut.await {
+                            Ok(Ok(s)) => s,
+                            Ok(Err(e)) => return Err(e),
+                            Err(_) => return Ok(()),
+                        };
+                        let speed = (context.profile.tts_speed * emo_speed * spk_speed).clamp(0.75, 1.35);
+                        if (speed - 1.0).abs() > 0.02 {
+                            samples = time_stretch_pcm(&samples, speed);
+                        }
+                        let mul = if whisper || emo_ref == Some("whisper") {
+                            0.35_f32
+                        } else {
+                            emo_gain
+                        };
+                        if (mul - 1.0).abs() > 0.02 {
+                            for s in &mut samples {
+                                *s = ((*s as f32) * mul).clamp(-32767.0, 32767.0) as i16;
+                            }
+                        }
+                        if !recorded_timing {
+                            recorded_timing = true;
+                            self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
+                        }
+                        if i + 1 < sentences.len() {
+                            let me = self.clone();
+                            let ctx = context.clone();
+                            let s_next = sentences[i + 1].clone();
+                            let em = emo_owned.clone();
+                            next_fut = Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s_next, em.as_deref()).await }));
+                        }
+                        if let Err(e) = self.send_pcm_samples(&samples, generation).await {
+                            if let Some(h) = next_fut.take() { h.abort(); }
+                            return Err(e);
+                        }
+                    }
                 }
             }
         }
@@ -536,7 +611,7 @@ fn clean_for_tts(input: &str) -> String {
     out.trim().to_string()
 }
 
-fn tts_cache_key(provider: &str, voice: &str, model: &str, text: &str) -> String {
+fn tts_cache_key(provider: &str, voice: &str, model: &str, emotion: &str, text: &str) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(provider.as_bytes());
@@ -544,6 +619,8 @@ fn tts_cache_key(provider: &str, voice: &str, model: &str, text: &str) -> String
     h.update(voice.as_bytes());
     h.update(b"|");
     h.update(model.as_bytes());
+    h.update(b"|");
+    h.update(emotion.as_bytes());
     h.update(b"|");
     h.update(text.trim().to_lowercase().as_bytes());
     hex::encode(&h.finalize()[..12])

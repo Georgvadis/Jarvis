@@ -231,7 +231,11 @@ async fn run_tool(tools: &Tools, defs: &[Value], call: &Call) -> Result<String, 
     if !defs.iter().any(|def| def["name"] == call.name) {
         return Err("Модель вызвала необъявленный инструмент".into());
     }
-    let limit = if call.name == "play_music" { 35 } else { 15 };
+    let limit = match call.name.as_str() {
+        "play_music" => 35,
+        "look_at_screen" | "start_notebook_podcast" => 40,
+        _ => 15,
+    };
     Ok(match tokio::time::timeout(Duration::from_secs(limit), tools.call(&call.name, &call.arguments)).await {
         Ok(result) => result,
         Err(_) => {
@@ -298,6 +302,182 @@ async fn ask_plugin(host: &Host, id: &str, model: &str, instructions: &str, hist
 }
 
 struct Call {name:String,arguments:String,id:String}
+
+/// Анализ скриншота экрана: сначала через активный облачный VLM (OpenAI/Gemini/ChatGPT),
+/// при отсутствии ключа или ошибке — автоматический локальный фолбэк на `jarvis-voice /vision` (Ollama VLM).
+pub async fn ask_vision(
+    host: &Host,
+    s: &Settings,
+    p: &Profile,
+    voice_srv: &str,
+    question: &str,
+    jpeg_bytes: &[u8],
+) -> Result<String, String> {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(jpeg_bytes);
+    let data_url = format!("data:image/jpeg;base64,{b64}");
+    let prompt = format!(
+        "Ты голосовой помощник и видишь скриншот экрана компьютера хозяина. Ответь коротко, по-русски и по сути (2–3 предложения, без Markdown). Запрос: {}",
+        question.trim()
+    );
+
+    let preferred = p.effective_llm_engine();
+    let mut order: Vec<&str> = Vec::new();
+    if matches!(preferred, "openai" | "gemini" | "chatgpt") {
+        order.push(preferred);
+    }
+    for cand in ["openai", "gemini", "chatgpt"] {
+        if !order.contains(&cand) {
+            order.push(cand);
+        }
+    }
+
+    for prov_id in order {
+        let ready = if prov_id == "chatgpt" {
+            crate::chatgpt::signed_in(&s.chatgpt) && host.provider("chatgpt").is_ok()
+        } else {
+            !configured(s, prov_id).is_empty() && host.provider(prov_id).is_ok()
+        };
+        if !ready {
+            continue;
+        }
+        let attempt: Result<String, String> = match prov_id {
+            "gemini" => {
+                let model = if p.effective_llm_model().starts_with("gemini-") {
+                    p.effective_llm_model()
+                } else {
+                    GEMINI_TEXT_MODEL
+                };
+                let body = json!({
+                    "contents": [{
+                        "role": "user",
+                        "parts": [
+                            {"text": &prompt},
+                            {"inlineData": {"mimeType": "image/jpeg", "data": &b64}}
+                        ]
+                    }]
+                });
+                match host
+                    .provider("gemini")?
+                    .request(
+                        "gemini",
+                        json!({"op": "text", "key": configured(s, "gemini"), "model": model, "body": body}),
+                        Duration::from_secs(30),
+                    )
+                    .await
+                {
+                    Ok(v) => decode("gemini", &v).map(|(ans, _)| ans),
+                    Err(e) => Err(e),
+                }
+            }
+            "openai" => {
+                let requested = p.effective_llm_model();
+                let model = if requested.is_empty() || requested.starts_with("gpt-6") {
+                    "gpt-4o-mini"
+                } else {
+                    requested
+                };
+                let body = json!({
+                    "model": model,
+                    "input": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": &prompt},
+                            {"type": "input_image", "image_url": &data_url}
+                        ]
+                    }],
+                    "store": false,
+                    "stream": false
+                });
+                match host
+                    .provider("openai")?
+                    .request(
+                        "openai",
+                        json!({"op": "text", "key": &s.openai_key, "model": model, "body": body}),
+                        Duration::from_secs(30),
+                    )
+                    .await
+                {
+                    Ok(v) => decode("openai", &v).map(|(ans, _)| ans),
+                    Err(e) => Err(e),
+                }
+            }
+            "chatgpt" => {
+                let auth = host
+                    .provider("chatgpt")?
+                    .request("auth.token", Value::Null, Duration::from_secs(15))
+                    .await;
+                if let Ok(auth_val) = auth {
+                    let model = if p.effective_llm_model().is_empty() {
+                        crate::settings::BACKEND_MODELS[0]
+                    } else {
+                        p.effective_llm_model()
+                    };
+                    let body = json!({
+                        "model": model,
+                        "instructions": "Ответь коротко и по-русски на вопрос по скриншоту экрана.",
+                        "input": [{
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": &prompt},
+                                {"type": "input_image", "image_url": &data_url}
+                            ]
+                        }],
+                        "tools": [],
+                        "tool_choice": "none",
+                        "parallel_tool_calls": false,
+                        "reasoning": {"effort": crate::chatgpt::effort(model, &p.effort)},
+                        "store": false,
+                        "stream": true,
+                        "include": []
+                    });
+                    match host
+                        .provider("chatgpt")?
+                        .request(
+                            "codex.request",
+                            json!({"auth": auth_val, "session": crate::chatgpt::new_id(), "body": body}),
+                            Duration::from_secs(35),
+                        )
+                        .await
+                    {
+                        Ok(r) => Ok(r.get("answer").or(r.get("Answer")).and_then(Value::as_str).unwrap_or("").trim().to_string()),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    Err("ChatGPT auth unavailable".into())
+                }
+            }
+            _ => Err("unsupported".into()),
+        };
+        if let Ok(ans) = attempt
+            && !ans.trim().is_empty()
+        {
+            return Ok(ans.trim().to_string());
+        }
+    }
+
+    // Локальный GPU-фолбэк (Ollama Vision в jarvis-voice)
+    let resp = crate::net::direct()
+        .post(format!("{}/vision", voice_srv.trim_end_matches('/')))
+        .json(&json!({"image_b64": b64, "prompt": prompt}))
+        .timeout(Duration::from_secs(45))
+        .send()
+        .await
+        .map_err(|e| format!("Vision недоступен: {e}"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        let msg = v["detail"].as_str().unwrap_or("Локальная vision-модель не смогла проанализировать экран");
+        return Err(msg.to_string());
+    }
+    let ans = v["text"].as_str().unwrap_or("").trim().to_string();
+    if ans.is_empty() {
+        Err("Пустой ответ от vision-модели".into())
+    } else {
+        Ok(ans)
+    }
+}
 fn decode(id:&str,response:&Value)->Result<(String,Vec<Call>),String>{
     let mut answer=String::new();let mut calls=vec![];
     let field=|v:&Value,k:&str|v[k].as_str().unwrap_or("").to_string();

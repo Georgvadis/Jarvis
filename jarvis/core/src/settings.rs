@@ -285,6 +285,9 @@ fn default_sound_theme() -> String {
 fn default_ambient_volume() -> i64 {
     70
 }
+fn default_presence_away_min() -> i64 {
+    30
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -378,6 +381,20 @@ pub struct Settings {
     pub radio_off: bool,
     #[serde(default = "default_ambient_volume")]
     pub ambient_volume: i64,
+    #[serde(default = "default_true")]
+    pub expressive_mode: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pc_agent_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pc_agent_token: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub presence_phone_ip: String,
+    #[serde(default = "default_presence_away_min")]
+    pub presence_away_min: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub presence_greeting: String,
+    #[serde(default = "default_true")]
+    pub cybernotes_enabled: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(deserialize_with = "nd")]
     pub custom_radios: Vec<CustomRadio>,
@@ -472,6 +489,13 @@ impl Default for Settings {
             language: "ru".into(),
             radio_off: false,
             ambient_volume: default_ambient_volume(),
+            expressive_mode: true,
+            pc_agent_url: String::new(),
+            pc_agent_token: String::new(),
+            presence_phone_ip: String::new(),
+            presence_away_min: default_presence_away_min(),
+            presence_greeting: String::new(),
+            cybernotes_enabled: true,
             custom_radios: vec![],
             night: NightSettings::default(),
             train_mode: false,

@@ -68,7 +68,7 @@
 </script>
 
 <script>
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { api, copyText, icon, jelly, tip, toast } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
@@ -92,6 +92,15 @@
   let wakeTimer = null;
   let micPeak = $state(0);
   let micTimer = null;
+  let pcUrlInput = $state(untrack(() => S.settings.pc_agent_url || ""));
+  let pcTokenInput = $state("");
+  let pcStatus = $state("");
+  let pcScreenText = $state("");
+  let phoneIpInput = $state(untrack(() => S.settings.presence_phone_ip || ""));
+  let awayMinInput = $state(untrack(() => S.settings.presence_away_min || 30));
+  let greetingInput = $state(untrack(() => S.settings.presence_greeting || ""));
+  let presenceInfo = $state({ state: "unknown" });
+  let notesInfo = $state({ available: false, total_notes: 0 });
   let settings = $derived(state.settings);
   let vadThreshold = $derived(rangesInEdit.vad_threshold ?? settings.vad_threshold ?? 600);
   let word = $derived(profiles?.find((profile) => profile.id === selected)?.phrase || settings.wake_word || "Джарвис");
@@ -142,12 +151,26 @@
       if (!signal.aborted) micTimer = setTimeout(() => void pollMic(), 250);
     };
     micTimer = setTimeout(() => void pollMic(), 250);
+    void loadExtraStatuses();
     return () => {
       stopWakePoll();
       clearTimeout(micTimer);
       controller.abort();
     };
   });
+
+  async function loadExtraStatuses() {
+    try {
+      const [pr, ns] = await Promise.all([
+        api("GET", "/api/presence", undefined, { signal }),
+        api("GET", "/api/notes/status", undefined, { signal }),
+      ]);
+      if (!signal.aborted) {
+        if (pr) presenceInfo = pr;
+        if (ns) notesInfo = ns;
+      }
+    } catch { /* ignore */ }
+  }
 
   async function refresh() {
     await reload();
@@ -309,6 +332,54 @@
       toast("Команда curl скопирована");
     } catch {
       toast("Не удалось скопировать", true);
+    }
+  }
+
+  async function savePcSettings() {
+    const body = { pc_agent_url: pcUrlInput.trim() };
+    if (pcTokenInput.trim()) body.pc_agent_token = pcTokenInput.trim();
+    await save("pc_agent", () => body, "Настройки ПК-компаньона сохранены");
+    pcTokenInput = "";
+  }
+
+  async function pingPc() {
+    pcStatus = "Проверяю…";
+    try {
+      const r = await api("GET", "/api/pc/ping", undefined, { signal });
+      pcStatus = `${r.host || "ПК"} (${r.os || ""}) · ${r.capture_backend || "ok"}`;
+      toast("ПК на связи");
+    } catch (e) {
+      pcStatus = "";
+      toast(e.message, true);
+    }
+  }
+
+  async function testPcScreen() {
+    pcScreenText = "Анализирую экран…";
+    try {
+      const r = await api("POST", "/api/pc/screen", {}, { signal });
+      pcScreenText = r.text || "";
+    } catch (e) {
+      pcScreenText = "";
+      toast(e.message, true);
+    }
+  }
+
+  async function savePresence() {
+    await save("presence", () => ({
+      presence_phone_ip: phoneIpInput.trim(),
+      presence_away_min: Number(awayMinInput) || 30,
+      presence_greeting: greetingInput.trim(),
+    }), "Присутствие сохранено");
+    void loadExtraStatuses();
+  }
+
+  async function testPresence() {
+    try {
+      await api("POST", "/api/presence/test", {}, { signal });
+      toast("Приветствие озвучено");
+    } catch (e) {
+      toast(e.message, true);
     }
   }
 </script>
@@ -487,6 +558,9 @@
   {@render toggle("Авто-режим «Шёпот»", "whisper_mode", settings.whisper_mode !== false,
     (value) => saveToggle("whisper_mode", value, "Авто-режим «Шёпот» включён", "Авто-режим «Шёпот» выключен"),
     "Если вы говорите тихо или шёпотом, Джарвис сам приглушает ответ и отвечает коротко и спокойно.")}
+  {@render toggle("Живые эмоции и SFX", "expressive_mode", settings.expressive_mode !== false,
+    (value) => saveToggle("expressive_mode", value, "Эмоции и эффекты включены", "Эмоции и эффекты выключены"),
+    "Интонации персонажей и короткие звуковые эффекты (звонок, фанфары, гром) в живой речи.")}
   {@render toggle("Озвучивать ошибки Алисой", "voice_error_alice", settings.voice_error_alice !== false,
     (value) => saveToggle("voice_error_alice", value, "Алиса сообщит, если голосовой ИИ не ответит", "Голосовые уведомления об ошибках выключены"),
     "Если голосовой движок не смог подключиться или упёрся в лимит после всех автопереключений, штатная Алиса коротко назовёт причину. Ночью и при команде «Стоп» не срабатывает.")}
@@ -559,3 +633,67 @@
 {@render settingSection("HTTP-уведомления",
   "Вебхук для озвучки событий из домашней сети",
   notifyFields, "broadcast")}
+
+{#snippet pcFields()}
+  <div class="grid g2">
+    <div class="f">
+      <label for="s-pc-url">URL агента на ПК</label>
+      <input id="s-pc-url" type="text" maxlength="160" placeholder="http://192.168.1.50:8770" bind:value={pcUrlInput}>
+    </div>
+    <div class="f">
+      <label for="s-pc-tok">Токен доступа</label>
+      <input id="s-pc-tok" type="password" maxlength="256" placeholder={settings.pc_agent_token_hint || "Токен из jarvis_pc.py"} bind:value={pcTokenInput}>
+    </div>
+  </div>
+  <div class="row">
+    <button type="button" class="btn primary" disabled={pending.has("pc_agent")} onclick={savePcSettings}>{@html icon("save")}Сохранить</button>
+    <button type="button" class="btn" disabled={!settings.pc_agent_url} onclick={pingPc}>{@html icon("refresh")}Проверить</button>
+    <button type="button" class="btn" disabled={!settings.pc_agent_url} onclick={testPcScreen}>{@html icon("eye")}Экран</button>
+  </div>
+  {#if pcStatus}<p class="note">{pcStatus}</p>{/if}
+  {#if pcScreenText}<p class="note">{pcScreenText}</p>{/if}
+{/snippet}
+{@render settingSection("ПК-компаньон (Экран)",
+  "Зрение на экран и голосовые макросы через jarvis_pc.py",
+  pcFields, "monitor")}
+
+{#snippet presenceFields()}
+  <div class="grid g2">
+    <div class="f">
+      <label for="s-pres-ip">IP телефона в Wi-Fi</label>
+      <input id="s-pres-ip" type="text" maxlength="40" placeholder="192.168.1.50" bind:value={phoneIpInput}>
+    </div>
+    <div class="f">
+      <label for="s-pres-min">Порог ухода (мин)</label>
+      <input id="s-pres-min" type="number" min="5" max="240" bind:value={awayMinInput}>
+    </div>
+  </div>
+  <div class="f">
+    <label for="s-pres-greet">Своя фраза приветствия (пусто — сгенерирует ИИ)</label>
+    <input id="s-pres-greet" type="text" maxlength="200" placeholder="С возвращением домой!" bind:value={greetingInput}>
+  </div>
+  <div class="row">
+    <button type="button" class="btn primary" disabled={pending.has("presence")} onclick={savePresence}>{@html icon("save")}Сохранить</button>
+    <button type="button" class="btn" onclick={testPresence}>{@html icon("play", "solid")}Тест</button>
+    {#if presenceInfo.configured}
+      <span class="pill-stat" class:on={presenceInfo.state === "home"}>
+        {presenceInfo.state === "home" ? "Дома" : presenceInfo.state === "away" ? "Не дома" : "Проверка"}
+      </span>
+    {/if}
+  </div>
+{/snippet}
+{@render settingSection("Живое присутствие",
+  "Автоприветствие при возвращении домой без датчиков",
+  presenceFields, "radar")}
+
+{#snippet cybernotesFields()}
+  {@render toggle("Голосовые заметки CyberNotes", "cybernotes_enabled", settings.cybernotes_enabled !== false,
+    (value) => saveToggle("cybernotes_enabled", value, "Интеграция с CyberNotes включена", "Интеграция с CyberNotes выключена"),
+    "Команды «запиши идею...» и поиск по вашей базе знаний.")}
+  <p class="note">
+    {notesInfo.available ? `Подключено · заметок в базе: ${notesInfo.total_notes}` : "Каталог CyberNotes недоступен через jarvis-voice"}
+  </p>
+{/snippet}
+{@render settingSection("CyberNotes",
+  "База знаний и заметки голосом",
+  cybernotesFields, "note")}

@@ -70,9 +70,35 @@ pub async fn mic_level(State(app): State<App>) -> Response {
 }
 
 fn local_voice_server(app: &App) -> String {
-    let url = app.plugins.plugin_setting_str("local-rvc-voice", "server_url");
-    let u = if url.is_empty() { "http://192.168.1.3:8768" } else { url.as_str() };
-    u.trim_end_matches('/').to_string()
+    crate::tools::local_voice_url(&app.plugins)
+}
+
+fn valid_id_segment(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+async fn forward_voice_response(
+    resp: Result<reqwest::Response, reqwest::Error>,
+    default_err: &str,
+) -> Response {
+    match resp {
+        Ok(r) => {
+            let status = r.status();
+            let data: serde_json::Value = r.json().await.unwrap_or_else(|_| json!({}));
+            if status.is_success() {
+                reply(StatusCode::OK, data)
+            } else {
+                let msg = data["detail"]
+                    .as_str()
+                    .or(data["error"].as_str())
+                    .unwrap_or(default_err);
+                super::bad(msg)
+            }
+        }
+        Err(e) => super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    }
 }
 
 pub async fn local_voice_upload(State(app): State<App>, axum::Json(body): axum::Json<serde_json::Value>) -> Response {
@@ -175,6 +201,9 @@ pub async fn talk(State(app): State<App>) -> Response {
 }
 
 pub async fn stop(State(app): State<App>) -> Response {
+    app.reader.stop();
+    app.dj.stop(Some(&app.engine));
+    app.games.stop_all(Some(&app.engine));
     app.modes.reset(Some(&app.ambient));
     app.focus.stop();
     app.ambient.stop();
@@ -451,4 +480,365 @@ pub async fn journal(State(app): State<App>) -> Response {
         json!({"items": e.journal.items(50), "mic": e.mic.online(), "mic_why": e.mic.why(), "talking": talking, "phase": phase,
                "sys": sys, "volume": vol, "version": crate::version()}),
     )
+}
+
+
+pub async fn local_voice_emotion_upload(
+    State(app): State<App>,
+    axum::extract::Path((id, emotion)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if !valid_id_segment(&id) || !valid_id_segment(&emotion) {
+        return super::bad("Неверный ID голоса или эмоции");
+    }
+    if body.is_empty() || body.len() > 15 * 1024 * 1024 {
+        return super::bad("Аудиофайл должен быть от 1 байта до 15 МБ");
+    }
+    let filename = query.get("filename").map(String::as_str).unwrap_or("emotion.wav");
+    let ref_text = query.get("ref_text").map(String::as_str).unwrap_or("");
+    let url = format!("{}/voices/{}/emotions/{}", local_voice_server(&app), id, emotion);
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = client
+        .post(&url)
+        .query(&[("filename", filename), ("ref_text", ref_text)])
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(body.to_vec())
+        .send()
+        .await;
+    forward_voice_response(resp, "Ошибка загрузки эмоционального образца").await
+}
+
+pub async fn local_voice_emotion_delete(
+    State(app): State<App>,
+    axum::extract::Path((id, emotion)): axum::extract::Path<(String, String)>,
+) -> Response {
+    if !valid_id_segment(&id) || !valid_id_segment(&emotion) {
+        return super::bad("Неверный ID голоса или эмоции");
+    }
+    let url = format!("{}/voices/{}/emotions/{}", local_voice_server(&app), id, emotion);
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = client.delete(&url).send().await;
+    forward_voice_response(resp, "Не удалось удалить эмоцию").await
+}
+
+pub async fn notebook_start(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    if crate::debate::is_active() {
+        return super::bad("Подкаст или спор уже запущен");
+    }
+    let url = value["url"].as_str().unwrap_or("").trim().to_string();
+    let text = value["text"].as_str().unwrap_or("").trim().to_string();
+    let title = value["title"].as_str().unwrap_or("").trim().to_string();
+    if url.is_empty() && text.is_empty() {
+        return super::bad("Укажите URL (YouTube / статья) или вставьте текст");
+    }
+    let p1_id = value["p1_id"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let p2_id = value["p2_id"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let turns = value["turns"].as_u64().unwrap_or(6) as usize;
+    crate::debate::spawn_notebook(
+        app.engine.clone(),
+        crate::debate::NotebookParams { url, text, title, p1_id, p2_id, turns },
+    );
+    ok()
+}
+
+pub async fn notebook_upload(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if crate::debate::is_active() {
+        return super::bad("Подкаст или спор уже запущен");
+    }
+    if body.is_empty() || body.len() > 22 * 1024 * 1024 {
+        return super::bad("Файл должен быть от 1 байта до 22 МБ");
+    }
+    let filename = query.get("filename").map(String::as_str).unwrap_or("document.txt");
+    let url = format!("{}/extract-file", local_voice_server(&app));
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = match client
+        .post(&url)
+        .query(&[("filename", filename), ("max_chars", "12000")])
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(body.to_vec())
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    let status = resp.status();
+    let data: serde_json::Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() {
+        return super::bad(data["detail"].as_str().unwrap_or("Не удалось прочитать документ"));
+    }
+    let text = data["text"].as_str().unwrap_or("").trim().to_string();
+    let title = data["title"].as_str().unwrap_or(filename).trim().to_string();
+    let p1_id = query.get("p1_id").map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+    let p2_id = query.get("p2_id").map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+    crate::debate::spawn_notebook(
+        app.engine.clone(),
+        crate::debate::NotebookParams {
+            url: String::new(),
+            text,
+            title: title.clone(),
+            p1_id,
+            p2_id,
+            turns: 6,
+        },
+    );
+    reply(StatusCode::OK, json!({"ok": true, "title": title}))
+}
+
+pub async fn books_list(State(app): State<App>) -> Response {
+    let url = format!("{}/books", local_voice_server(&app));
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(6)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let mut base = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.unwrap_or_else(|_| json!({"books": []})),
+        _ => json!({"ok": false, "books": []}),
+    };
+    if let Some(obj) = base.as_object_mut() {
+        obj.insert("reader".into(), app.reader.status());
+    }
+    reply(StatusCode::OK, base)
+}
+
+pub async fn books_upload(
+    State(app): State<App>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> Response {
+    if body.is_empty() || body.len() > 25 * 1024 * 1024 {
+        return super::bad("Книга должна быть от 1 байта до 25 МБ");
+    }
+    let filename = query.get("filename").map(String::as_str).unwrap_or("book.txt");
+    let title = query.get("title").map(String::as_str).unwrap_or("");
+    let url = format!("{}/books/upload-raw", local_voice_server(&app));
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = client
+        .post(&url)
+        .query(&[("filename", filename), ("title", title)])
+        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+        .body(body.to_vec())
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось загрузить книгу").await
+}
+
+pub async fn books_url(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let url = format!("{}/books/from-url", local_voice_server(&app));
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(45)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = client.post(&url).json(&value).send().await;
+    forward_voice_response(resp, "Не удалось загрузить книгу по ссылке").await
+}
+
+pub async fn books_play(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let book_id = value["book_id"].as_str().map(str::to_string);
+    let multi_voice = value["multi_voice"].as_bool();
+    match app.reader.start(app.engine.clone(), book_id, multi_voice).await {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn books_stop(State(app): State<App>) -> Response {
+    app.reader.stop();
+    let e = app.engine.clone();
+    tokio::task::spawn_blocking(move || e.end_chat("пауза книги"));
+    reply(StatusCode::OK, app.reader.status())
+}
+
+pub async fn books_nav(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let delta = value["delta"].as_i64().unwrap_or(1) as i32;
+    match app.reader.step_chapter(app.engine.clone(), delta.clamp(-1, 1)).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg, "reader": app.reader.status()})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn books_recap(State(app): State<App>) -> Response {
+    match app.reader.recap(app.engine.clone()).await {
+        Ok(msg) => {
+            app.engine.journal.note("книга", "Пересказ", &msg);
+            let e = app.engine.clone();
+            let line = msg.clone();
+            tokio::task::spawn_blocking(move || e.say_text(&line));
+            reply(StatusCode::OK, json!({"ok": true, "text": msg}))
+        }
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn books_delete(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID книги");
+    }
+    if app.reader.status()["book_id"].as_str() == Some(id.as_str()) {
+        app.reader.stop();
+    }
+    let url = format!("{}/books/{}", local_voice_server(&app), id);
+    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
+        Ok(c) => c,
+        Err(e) => return super::bad(e.to_string()),
+    };
+    let resp = client.delete(&url).send().await;
+    forward_voice_response(resp, "Не удалось удалить книгу").await
+}
+
+pub async fn games_status(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.games.status())
+}
+
+pub async fn games_melody(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let theme = value["theme"].as_str().unwrap_or("аниме опенинги").to_string();
+    match app.games.start_melody(app.engine.clone(), theme).await {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn games_detective(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let theme = value["theme"].as_str().unwrap_or("").to_string();
+    match app.games.start_detective(app.engine.clone(), theme).await {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn games_party_start(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let game = value["game"].as_str().unwrap_or("mafia").to_string();
+    let discussion_s = value["discussion_s"].as_u64().unwrap_or(60);
+    let players: Vec<crate::games::PartyPlayer> = match serde_json::from_value(value["players"].clone()) {
+        Ok(p) => p,
+        Err(_) => return super::bad("Укажите список игроков"),
+    };
+    match app.games.start_party(app.engine.clone(), game, players, discussion_s).await {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn games_party_next(State(app): State<App>) -> Response {
+    match app.games.party_next_phase(&app.engine).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg, "games": app.games.status()})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn games_stop(State(app): State<App>) -> Response {
+    app.games.stop_all(Some(&app.engine));
+    reply(StatusCode::OK, app.games.status())
+}
+
+pub async fn dj_status(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.dj.status())
+}
+
+pub async fn dj_start(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let mood = value["mood"].as_str().unwrap_or("ночной Токио синтвейв").to_string();
+    match app.dj.start(app.engine.clone(), mood) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn dj_next(State(app): State<App>) -> Response {
+    app.dj.next();
+    reply(StatusCode::OK, app.dj.status())
+}
+
+pub async fn dj_like(State(app): State<App>) -> Response {
+    let msg = app.dj.like(&app.engine).await;
+    reply(StatusCode::OK, json!({"ok": true, "message": msg, "dj": app.dj.status()}))
+}
+
+pub async fn dj_vibe(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let hint = value["hint"].as_str().unwrap_or("").to_string();
+    match app.dj.adjust_vibe(app.engine.clone(), hint) {
+        Ok(st) => reply(StatusCode::OK, st),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn dj_stop(State(app): State<App>) -> Response {
+    app.dj.stop(Some(&app.engine));
+    reply(StatusCode::OK, app.dj.status())
+}
+
+pub async fn pc_ping(State(app): State<App>) -> Response {
+    let (url, tok) = app.store.with(|s| (s.pc_agent_url.trim().trim_end_matches('/').to_string(), s.pc_agent_token.clone()));
+    if url.is_empty() {
+        return super::bad("URL ПК-компаньона не задан");
+    }
+    match crate::net::direct()
+        .get(format!("{url}/health"))
+        .bearer_auth(tok.trim())
+        .timeout(std::time::Duration::from_secs(4))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let v: serde_json::Value = r.json().await.unwrap_or_default();
+            reply(StatusCode::OK, v)
+        }
+        Ok(r) => super::bad(format!("ПК-компаньон ответил HTTP {}", r.status())),
+        Err(e) => super::bad(format!("ПК-компаньон недоступен: {e}")),
+    }
+}
+
+pub async fn pc_screen(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let q = value["question"].as_str().unwrap_or("Кратко опиши, что сейчас на экране.");
+    match crate::tools::capture_and_describe_screen(&app.plugins, &app.store, q).await {
+        Ok(ans) => {
+            app.engine.journal.note("экран", q, &ans);
+            reply(StatusCode::OK, json!({"ok": true, "text": ans}))
+        }
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn presence_status(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.presence.status(&app.store))
+}
+
+pub async fn presence_test(State(app): State<App>) -> Response {
+    app.presence.greet_home(&app.engine).await;
+    ok()
+}
+
+pub async fn notes_status(State(app): State<App>) -> Response {
+    let url = format!("{}/notes/list?limit=5", local_voice_server(&app));
+    match crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(4))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let v: serde_json::Value = r.json().await.unwrap_or_default();
+            reply(StatusCode::OK, v)
+        }
+        _ => reply(StatusCode::OK, json!({"ok": false, "available": false, "total_notes": 0})),
+    }
 }

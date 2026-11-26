@@ -60,6 +60,12 @@ impl Engine {
             {
                 return Ok(ans);
             }
+            if active_mode.is_game()
+                && let Some(games) = &self.tools.games
+                && let Some(ans) = games.handle_turn(&self, command).await
+            {
+                return Ok(ans);
+            }
             if let Some(question) = fastcmd::clarification(command) {
                 return Ok(question.into());
             }
@@ -104,6 +110,8 @@ impl Engine {
             };
             let whisper_hint = if is_bedtime {
                 "\n[Режим «История на ночь»: расскажи уютную, спокойную, убаюкивающую историю на 5–7 неспешных предложений, без Markdown и без вопросов в конце.]"
+            } else if s.expressive_mode {
+                "\n[При уместности можешь начинать фразу тегом эмоции [happy], [sarcastic], [whisper], [excited], [sad] или вставить короткий эффект [sfx:chime], [sfx:bell], [sfx:sigh], но не злоупотребляй.]"
             } else {
                 ""
             };
@@ -162,9 +170,11 @@ impl Engine {
                 }
             }=>Err("Запрос отменён".into()),
         };
+        let result = result.map(|raw| raw);
+        let display_result = result.as_ref().map(|ans| crate::sfx::strip_tags(ans)).map_err(|e| e.clone());
         self.journal.update(id, |t| {
             t.live = false;
-            match &result {
+            match &display_result {
                 Ok(answer) => t.answer = answer.clone(),
                 Err(error) => t.error = error.clone(),
             }
@@ -177,6 +187,6 @@ impl Engine {
                 let _ = tokio::task::spawn_blocking(move || eng.say_text_whisper(&ans, is_bedtime)).await;
             }
         }
-        result
+        display_result
     }
 }

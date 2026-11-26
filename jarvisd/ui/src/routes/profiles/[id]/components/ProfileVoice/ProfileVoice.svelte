@@ -51,6 +51,14 @@
   let qwenFile = $state(null);
   let qwenUploading = $state(false);
   let confirmDeleteId = $state("");
+  let emoBusy = $state("");
+  const emotionDefs = [
+    ["happy", "Радость"],
+    ["sarcastic", "Сарказм"],
+    ["whisper", "Шёпот"],
+    ["excited", "Восторг"],
+    ["sad", "Грусть"],
+  ];
   let volSlider;
   let speedSlider;
   let lastVol = untrack(() => draft.volume);
@@ -156,7 +164,14 @@
       const items = new Map();
       for (const item of voices || []) {
         const id = item.id || item.voice_id || item.ID;
-        if (id) items.set(id, { id, name: item.name || id, note: item.note || item.Note });
+        if (id) {
+          items.set(id, {
+            id,
+            name: item.name || id,
+            note: item.note || item.Note,
+            emotions: Array.isArray(item.emotions) ? item.emotions : [],
+          });
+        }
       }
       pluginVoices.set(provider, { items: [...items.values()] });
     } catch (error) {
@@ -361,6 +376,43 @@
       qwenUploading = false;
     }
   }
+
+  let selectedVoiceItem = $derived(
+    (pluginVoicesState?.items || []).find((item) => item.id === selected) || null
+  );
+
+  async function uploadEmotion(emo, event) {
+    const file = event.currentTarget.files?.[0];
+    if (!file || !selected || emoBusy) return;
+    emoBusy = emo;
+    try {
+      const qs = new URLSearchParams({ filename: file.name || `${emo}.wav` }).toString();
+      await upload("POST", `/api/local-voices/${encodeURIComponent(selected)}/emotions/${encodeURIComponent(emo)}?${qs}`, file, { signal });
+      event.currentTarget.value = "";
+      toast(`Эмоция «${emo}» загружена`);
+      pluginVoices.delete(ttsProvider);
+      await loadPluginVoices(ttsProvider);
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      emoBusy = "";
+    }
+  }
+
+  async function deleteEmotion(emo) {
+    if (!selected || emoBusy) return;
+    emoBusy = emo;
+    try {
+      await api("DELETE", `/api/local-voices/${encodeURIComponent(selected)}/emotions/${encodeURIComponent(emo)}`, undefined, { signal });
+      toast(`Эмоция «${emo}» удалена`);
+      pluginVoices.delete(ttsProvider);
+      await loadPluginVoices(ttsProvider);
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      emoBusy = "";
+    }
+  }
 </script>
 
 {#snippet options(items)}
@@ -469,6 +521,31 @@
       </div>
     {/if}
     {#if isLocalQwen}
+      {#if selected && selectedVoiceItem}
+        <details class="qwen-upload">
+          <summary>{@html icon("smile")} Эмоции голоса «{selectedVoiceItem.name}»</summary>
+          <div class="inner emo-grid">
+            {#each emotionDefs as [emoId, emoLabel] (emoId)}
+              {@const active = (selectedVoiceItem.emotions || []).includes(emoId)}
+              <div class="emo-row" class:on={active}>
+                <span>{emoLabel}</span>
+                <div class="dj-actions">
+                  <label class="ib" title="Загрузить сэмпл">
+                    {@html icon("upload")}
+                    <input type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a" hidden disabled={!!emoBusy} onchange={(e) => uploadEmotion(emoId, e)}>
+                  </label>
+                  {#if active}
+                    <button type="button" class="ib danger" title="Удалить эмоцию" aria-label={"Удалить эмоцию " + emoLabel}
+                      disabled={!!emoBusy} onclick={() => deleteEmotion(emoId)}>
+                      {@html icon("trash")}
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </details>
+      {/if}
       <details class="qwen-upload">
         <summary>{@html icon("upload")} Клонировать свой голос (Qwen3-TTS)</summary>
         <form class="inner" onsubmit={uploadQwenVoice}>
