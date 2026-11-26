@@ -271,10 +271,10 @@ fn is_zero(v: &i64) -> bool {
     *v == 0
 }
 fn default_vad_threshold() -> i64 {
-    600
+    380
 }
 fn default_vad_silence_ms() -> i64 {
-    1000
+    850
 }
 fn default_tts_speed() -> f64 {
     1.0

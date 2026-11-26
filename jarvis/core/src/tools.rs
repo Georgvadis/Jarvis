@@ -66,6 +66,10 @@ pub struct Tools {
 }
 
 const DAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+const MONTHS_GEN: [&str; 12] = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+];
 
 fn room_line(room: &str) -> String {
     format!(
@@ -270,6 +274,15 @@ impl Tools {
         {
             return Some(ans);
         }
+        if let Some(ans) = self.fast_time_date_command(text) {
+            return Some(ans);
+        }
+        if let Some(ans) = self.fast_volume_command(text) {
+            return Some(ans);
+        }
+        if let Some(ans) = self.fast_sleep_sound_command(text) {
+            return Some(ans);
+        }
         if let Some(amb) = &self.ambient
             && let Some(ans) = amb.fast_command(text)
         {
@@ -335,6 +348,48 @@ impl Tools {
             }
         }
         None
+    }
+
+    fn fast_time_date_command(&self, text: &str) -> Option<String> {
+        let now = self.store.with(|s| s.now());
+        format_time_date_reply(text, &now)
+    }
+
+    fn fast_volume_command(&self, text: &str) -> Option<String> {
+        let intent = parse_volume_intent(text)?;
+        let cur = crate::speakervol::speaker_volume().unwrap_or(5);
+        let target = match intent {
+            VolumeIntent::Up(step) => (cur + step).min(10),
+            VolumeIntent::Down(step) => (cur - step).max(1),
+            VolumeIntent::Set(level) => level.clamp(0, 10),
+        };
+        if let Some(eng) = self.engine() {
+            crate::engine::flash_volume_clock(&eng, target);
+        }
+        match crate::speakervol::set_alice_volume(target) {
+            Ok(()) => Some(if target == 0 {
+                "Выключил звук.".into()
+            } else {
+                format!("Поставил громкость {target} из 10.")
+            }),
+            Err(e) => Some(format!("Не удалось изменить громкость: {e}")),
+        }
+    }
+
+    fn fast_sleep_sound_command(&self, text: &str) -> Option<String> {
+        let preset = parse_sleep_sound_intent(text)?;
+        let amb = self.ambient.as_ref()?;
+        match amb.start(preset) {
+            Ok(_) => {
+                amb.set_sleep(45);
+                Some(if preset == "white" {
+                    "Включаю мягкий шум для сна на 45 минут.".into()
+                } else {
+                    "Включаю спокойный ночной океан для сна на 45 минут.".into()
+                })
+            }
+            Err(e) => Some(format!("Не получилось включить звук для сна: {e}")),
+        }
     }
 
     /// Быстрая команда Яндекс Умного дома без модели.
@@ -2366,6 +2421,199 @@ fn handle_manage_list(data_dir: &std::path::Path, list_key: &str, action: &str, 
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VolumeIntent {
+    Up(i64),
+    Down(i64),
+    Set(i64),
+}
+
+fn format_time_date_reply(text: &str, now: &jiff::Zoned) -> Option<String> {
+    let n = fastcmd::norm_text(text);
+    let bare = fastcmd::strip_lead(&n);
+    let bare = bare.strip_prefix("пожалуйста ").unwrap_or(&bare);
+    let bare = bare.strip_suffix(" пожалуйста").unwrap_or(bare);
+    let wc = bare.split_whitespace().count();
+    if wc == 0 || wc > 6 {
+        return None;
+    }
+    if matches!(
+        bare,
+        "сколько времени"
+            | "который час"
+            | "сколько сейчас времени"
+            | "подскажи время"
+            | "скажи время"
+            | "сколько время"
+            | "текущее время"
+            | "время сейчас"
+    ) || (bare.starts_with("сколько ") && bare.ends_with(" времени"))
+        || bare.contains("который час")
+    {
+        return Some(format!("Сейчас {:02}:{:02}.", now.hour(), now.minute()));
+    }
+    if matches!(
+        bare,
+        "какое сегодня число"
+            | "какая сегодня дата"
+            | "какой сегодня день"
+            | "какой сегодня день недели"
+            | "сегодняшняя дата"
+            | "какое число сегодня"
+            | "какое число"
+            | "день недели"
+    ) {
+        let month = MONTHS_GEN[now.month() as usize - 1];
+        let wd = DAYS[now.weekday().to_sunday_zero_offset() as usize];
+        return Some(format!("Сегодня {} {month}, {wd}.", now.day()));
+    }
+    None
+}
+
+fn parse_volume_intent(text: &str) -> Option<VolumeIntent> {
+    let n = fastcmd::norm_text(text);
+    let bare = fastcmd::strip_lead(&n);
+    let bare = bare.strip_prefix("пожалуйста ").unwrap_or(&bare);
+    let bare = bare.strip_suffix(" пожалуйста").unwrap_or(bare);
+    let wc = bare.split_whitespace().count();
+    if wc == 0 || wc > 6 {
+        return None;
+    }
+    if bare.contains("фон")
+        || bare.contains("камин")
+        || bare.contains("дожд")
+        || bare.contains("океан")
+        || bare.contains("радио")
+        || bare.contains("микрофон")
+        || bare.contains("подсветк")
+        || bare.contains("ярк")
+        || bare.contains("реч")
+        || bare.contains("говор")
+        || bare.contains("комп")
+        || bare.contains("пк")
+    {
+        return None;
+    }
+    if matches!(
+        bare,
+        "громче"
+            | "сделай громче"
+            | "погромче"
+            | "сделай погромче"
+            | "прибавь звук"
+            | "прибавь громкость"
+            | "увеличь громкость"
+            | "чуть громче"
+            | "немного громче"
+    ) {
+        let step = if bare.contains("чуть") || bare.contains("немного") { 1 } else { 2 };
+        return Some(VolumeIntent::Up(step));
+    }
+    if matches!(
+        bare,
+        "тише"
+            | "потише"
+            | "сделай тише"
+            | "сделай потише"
+            | "убавь звук"
+            | "убавь громкость"
+            | "уменьши громкость"
+            | "чуть тише"
+            | "чуть потише"
+            | "немного тише"
+            | "немного потише"
+    ) {
+        let step = if bare.contains("чуть") || bare.contains("немного") { 1 } else { 2 };
+        return Some(VolumeIntent::Down(step));
+    }
+    if matches!(bare, "выключи звук" | "без звука" | "заглуши" | "убери звук") {
+        return Some(VolumeIntent::Set(0));
+    }
+    if bare.contains("громкост") || bare.contains("звук") {
+        let mut num: Option<i64> = None;
+        for tok in bare.split_whitespace() {
+            if let Ok(v) = tok.parse::<i64>() {
+                num = Some(v);
+                break;
+            }
+            let word_num = match tok {
+                "ноль" => Some(0),
+                "один" | "единицу" => Some(1),
+                "два" | "двойку" => Some(2),
+                "три" | "тройку" => Some(3),
+                "четыре" | "четверку" => Some(4),
+                "пять" | "пятерку" => Some(5),
+                "шесть" => Some(6),
+                "семь" => Some(7),
+                "восемь" => Some(8),
+                "девять" => Some(9),
+                "десять" | "максимум" => Some(10),
+                _ => None,
+            };
+            if word_num.is_some() {
+                num = word_num;
+                break;
+            }
+        }
+        if let Some(raw_n) = num
+            && (bare.contains("поставь")
+                || bare.contains("сделай")
+                || bare.contains("установи")
+                || bare.contains("включи")
+                || bare.starts_with("громкость "))
+        {
+            let lvl = if raw_n > 10 && raw_n <= 100 {
+                (raw_n + 5) / 10
+            } else {
+                raw_n
+            };
+            return Some(VolumeIntent::Set(lvl.clamp(0, 10)));
+        }
+    }
+    None
+}
+
+fn parse_sleep_sound_intent(text: &str) -> Option<&'static str> {
+    let n = fastcmd::norm_text(text);
+    let bare = fastcmd::strip_lead(&n);
+    let bare = bare.strip_prefix("пожалуйста ").unwrap_or(&bare);
+    let bare = bare.strip_suffix(" пожалуйста").unwrap_or(bare);
+    let wc = bare.split_whitespace().count();
+    if wc == 0 || wc > 6 {
+        return None;
+    }
+    if bare.contains("ютуб")
+        || bare.contains("youtube")
+        || bare.contains("яндекс")
+        || bare.contains("минут")
+        || bare.contains("час")
+        || bare.contains("через")
+    {
+        return None;
+    }
+    let wants_on = bare.starts_with("включи ")
+        || bare.starts_with("поставь ")
+        || bare.starts_with("запусти ")
+        || bare == "музыка для сна"
+        || bare == "звуки для сна"
+        || bare == "шум для сна";
+    if !wants_on {
+        return None;
+    }
+    if bare.contains("шум для сна") || (bare.contains("белый шум") && bare.contains("сна")) {
+        return Some("white");
+    }
+    if bare.contains("музыку для сна")
+        || bare.contains("музыка для сна")
+        || bare.contains("звуки для сна")
+        || bare.contains("звук для сна")
+        || bare.contains("фон для сна")
+    {
+        return Some("ocean");
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2423,5 +2671,27 @@ mod tests {
         assert_eq!(valid_http_url("file:///etc/passwd"), None);
         assert_eq!(valid_http_url("https://"), None);
         assert_eq!(valid_http_url("https://bad host.com"), None);
+    }
+
+    #[test]
+    fn fast_local_parsers_handle_time_volume_and_sleep_sounds_without_false_positives() {
+        let dt = jiff::civil::date(2026, 11, 26)
+            .at(21, 5, 0, 0)
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .unwrap();
+        assert_eq!(format_time_date_reply("Джарвис, сколько времени?", &dt).as_deref(), Some("Сейчас 21:05."));
+        assert_eq!(format_time_date_reply("который час", &dt).as_deref(), Some("Сейчас 21:05."));
+        assert_eq!(format_time_date_reply("какое сегодня число", &dt).as_deref(), Some("Сегодня 26 ноября, четверг."));
+        assert_eq!(format_time_date_reply("сколько времени лететь до токио", &dt), None);
+
+        assert_eq!(parse_volume_intent("сделай потише"), Some(VolumeIntent::Down(2)));
+        assert_eq!(parse_volume_intent("чуть громче"), Some(VolumeIntent::Up(1)));
+        assert_eq!(parse_volume_intent("поставь громкость на 6"), Some(VolumeIntent::Set(6)));
+        assert_eq!(parse_volume_intent("громкость фона на 50"), None);
+        assert_eq!(parse_volume_intent("говори чуть быстрее"), None);
+
+        assert_eq!(parse_sleep_sound_intent("включи музыку для сна"), Some("ocean"));
+        assert_eq!(parse_sleep_sound_intent("включи шум для сна"), Some("white"));
+        assert_eq!(parse_sleep_sound_intent("включи музыку для сна на ютубе"), None);
     }
 }

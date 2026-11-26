@@ -894,22 +894,52 @@ fn amount(w: &str) -> Option<f64> {
 pub fn volume_loop(music: Arc<Music>, host: Arc<Host>, duck: impl Fn() -> bool + Send + 'static) {
     tokio::spawn(async move {
         let mut rx = music.playing_tx.subscribe();
-        let mut last = -1.0;
+        let mut last_yt = -1.0_f64;
+        let mut alice_saved_vol: Option<i64> = None;
         loop {
-            while !*rx.borrow_and_update() {
-                last = -1.0;
-                if rx.changed().await.is_err() {
-                    return;
+            let is_duck = duck();
+            let yt_playing = *rx.borrow_and_update();
+            let alice_playing = !yt_playing && music.alice.lock().unwrap().playing();
+
+            if yt_playing {
+                let v = if is_duck { 0.10 } else { 0.95 };
+                if v != last_yt
+                    && let Ok(n) = host.provider("youtube")
+                    && n.notify("volume", json!({"v": v})).await.is_ok()
+                {
+                    last_yt = v;
+                }
+            } else {
+                last_yt = -1.0;
+            }
+
+            if alice_playing && is_duck && alice_saved_vol.is_none() {
+                if let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
+                    && cur > 2
+                {
+                    alice_saved_vol = Some(cur);
+                    let _ = tokio::task::spawn_blocking(|| crate::speakervol::set_alice_volume(2)).await;
+                }
+            } else if !is_duck
+                && let Some(saved) = alice_saved_vol.take()
+                && let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
+                && cur <= 2
+            {
+                let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(saved)).await;
+            }
+
+            if yt_playing || alice_playing || is_duck || alice_saved_vol.is_some() {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            } else {
+                tokio::select! {
+                    res = rx.changed() => {
+                        if res.is_err() {
+                            return;
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(80)) => {}
                 }
             }
-            let v = if duck() { 0.18 } else { 0.95 };
-            if v != last
-                && let Ok(n) = host.provider("youtube")
-                && n.notify("volume", json!({"v": v})).await.is_ok()
-            {
-                last = v;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     });
 }

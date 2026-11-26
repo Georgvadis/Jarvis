@@ -204,6 +204,7 @@ fn handoff_initial_audio(
         let before = match engine {
             "chatgpt" => preroll.len().saturating_sub(RATE / 4),
             "gemini" => preroll.len().saturating_sub(RATE * 4 / 5),
+            "classic" => preroll.len().saturating_sub(RATE / 5),
             _ => 0,
         };
         &preroll[before..]
@@ -217,7 +218,10 @@ fn handoff_initial_audio(
         session.dialog().heard_input(Instant::now());
     }
     if !first.is_empty() {
-        session.feed(&boost(&first, mic_boost_db));
+        let boosted = boost(&first, mic_boost_db);
+        for chunk in boosted.chunks(320) {
+            session.feed(chunk);
+        }
     }
 
     let stats = InitialAudioStats {
@@ -380,6 +384,43 @@ pub fn boost(pcm: &[i16], db: i64) -> Vec<i16> {
     }
     let k = 10f64.powf(db as f64 / 20.0);
     pcm.iter().map(|&v| (v as f64 * k).clamp(-32767.0, 32767.0) as i16).collect()
+}
+
+fn wake_ack_chime(theme: &str, rate: usize) -> Vec<i16> {
+    if rate == 0 {
+        return Vec::new();
+    }
+    let total = (rate * 68 / 1000).max(1);
+    let r = rate as f32;
+    let mut out = Vec::with_capacity(total + rate / 50);
+    for i in 0..total {
+        let t = i as f32 / r;
+        let p = i as f32 / total as f32;
+        let env = (std::f32::consts::PI * p).sin().powf(0.85);
+        let s = match theme {
+            "minimal" => (std::f32::consts::TAU * 880.0 * t).sin() * env * 1400.0,
+            "retro" => {
+                let f = if p < 0.45 { 784.0 } else { 1046.5 };
+                let sq = if (std::f32::consts::TAU * f * t).sin() >= 0.0 { 1.0 } else { -1.0 };
+                sq * env * 1100.0
+            }
+            "soft" => {
+                let f = 587.33 + 220.0 * p;
+                (std::f32::consts::TAU * f * t).sin() * env * 1800.0
+            }
+            _ => {
+                let f1 = if p < 0.42 { 587.33 } else { 880.0 };
+                let f2 = if p < 0.42 { 880.0 } else { 1174.66 };
+                ((std::f32::consts::TAU * f1 * t).sin() * 0.65
+                    + (std::f32::consts::TAU * f2 * t).sin() * 0.35)
+                    * env
+                    * 1900.0
+            }
+        };
+        out.push(s as i16);
+    }
+    out.resize(total + rate / 50, 0);
+    out
 }
 
 fn short(e: &str) -> String {
@@ -1219,11 +1260,12 @@ impl Engine {
                 // Network setup is already in progress while giving a joined phrase a head start.
                 std::thread::sleep(wake_reply::FOLLOW_ON_GAP);
             }
+            let handoff_engine = if p.is_classic() { "classic" } else { p.engine.as_str() };
             let (play_reply, init_stats) = {
                 let mut st = self.st.lock().unwrap();
                 handoff_initial_audio(
                     &mut st,
-                    &p.engine,
+                    handoff_engine,
                     &preroll,
                     opening_at,
                     s.mic_boost_db,
@@ -1275,6 +1317,22 @@ impl Engine {
                     None,
                     false,
                 )));
+            }
+            if by_word && sure && !init_stats.heard_input && !play_reply {
+                let mut chime = wake_ack_chime(&s.sound_theme, x.rate());
+                if s.is_night() {
+                    for sample in &mut chime {
+                        *sample = (*sample as f32 * 0.4) as i16;
+                    }
+                }
+                if !chime.is_empty() && self.player.write(&chime).is_ok() {
+                    self.st.lock().unwrap().echo.played_with_tail(
+                        Instant::now(),
+                        &chime,
+                        x.rate(),
+                        Duration::from_millis(220),
+                    );
+                }
             }
             *out = x.take_audio();
             *ready_at = Instant::now();
@@ -2239,6 +2297,7 @@ mod tests {
         for (engine, expected_preroll) in [
             ("chatgpt", super::RATE / 4),
             ("gemini", super::RATE * 4 / 5),
+            ("classic", super::RATE / 5),
             ("openai", preroll.len()),
         ] {
             let mut st = super::St {

@@ -1385,7 +1385,7 @@ fn sanitize_audio_ext(raw: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn build_audio_multipart(boundary: &str, filename: &str, mime: &str, lang: &str, data: &[u8]) -> Vec<u8> {
+pub(crate) fn build_audio_multipart(boundary: &str, filename: &str, mime: &str, lang: &str, data: &[u8]) -> Vec<u8> {
     let mut body = Vec::with_capacity(data.len() + 512);
     body.extend_from_slice(
         format!(

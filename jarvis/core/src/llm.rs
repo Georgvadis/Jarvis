@@ -164,14 +164,15 @@ async fn ask_primary(host:&Host,s:&Settings,p:&Profile,instructions:&str,history
     messages.push(json!({"role":"user","content":text}));
     let mut music_turn = crate::music::MusicTurnTracker::default();
     for _ in 0..5 {
+        let use_web = p.web_search && crate::chatgpt::should_use_web_search(text);
         let body=match id {
             "gemini"=>{
                 let declarations=crate::gemini::declarations(defs);
                 let mut body=json!({"contents":contents,"systemInstruction":{"parts":[{"text":instructions}]}});
-                let mut tools=vec![];if !declarations.is_empty(){tools.push(json!({"functionDeclarations":declarations}));}if p.web_search{tools.push(json!({"googleSearch":{}}));}if !tools.is_empty(){body["tools"]=tools.into();}body
+                let mut tools=vec![];if !declarations.is_empty(){tools.push(json!({"functionDeclarations":declarations}));}if use_web{tools.push(json!({"googleSearch":{}}));}if !tools.is_empty(){body["tools"]=tools.into();}body
             },
             "grok"=>{let tools:Vec<_>=defs.iter().filter(|d|d["type"]=="function").map(|d|json!({"type":"function","function":{"name":d["name"],"description":d["description"],"parameters":d["parameters"]}})).collect();let mut body=json!({"model":model,"messages":messages,"stream":false});if !tools.is_empty(){body["tools"]=tools.into();}body},
-            _=>{let mut tools=defs.to_vec();if p.web_search{tools.push(json!({"type":"web_search"}));}json!({"model":model,"instructions":instructions,"input":input,"tools":tools,"reasoning":{"effort":crate::chatgpt::effort(model,&p.effort)},"store":false,"stream":false})},
+            _=>{let mut tools=defs.to_vec();if use_web{tools.push(json!({"type":"web_search"}));}json!({"model":model,"instructions":instructions,"input":input,"tools":tools,"reasoning":{"effort":crate::chatgpt::effort(model,&p.effort)},"store":false,"stream":false})},
         };
         let response = if id == "gemini" {
             let tz = jiff::tz::TimeZone::get(&s.timezone).unwrap_or(jiff::tz::TimeZone::UTC);

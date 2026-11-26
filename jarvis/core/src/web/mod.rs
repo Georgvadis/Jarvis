@@ -22,7 +22,7 @@ mod memory;
 mod music;
 mod plugins;
 pub mod state;
-mod talk;
+pub(crate) mod talk;
 mod ui;
 mod update;
 mod vpn;

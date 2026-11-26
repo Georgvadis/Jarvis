@@ -158,6 +158,26 @@ impl Dialog {
         }
     }
 
+    /// Полная замена текущего текста реплики человека (для склейки прерванных фрагментов без дублей).
+    pub fn set_user(&self, full: &str) {
+        let mut st = self.st.lock().unwrap();
+        let now = Instant::now();
+        st.last_activity = Some(now);
+        st.user_end = Some(now);
+        if st.turn == 0 || st.turn_complete || st.turn_bot_t0.is_some_and(|t| now - t > Duration::from_millis(1500)) {
+            self.next_turn(&mut st);
+        }
+        if st.turn_user.is_empty() {
+            st.user_turns += 1;
+        }
+        st.turn_user = full.to_owned();
+        let text = st.turn_user.trim().to_string();
+        self.journal.update(st.turn, |t| t.text = text);
+        if st.muted && st.muted_at.is_some_and(|m| now - m > Duration::from_millis(600)) {
+            st.muted = false;
+        }
+    }
+
     pub fn provider_turn_complete(&self) {
         // Keep the text visible to the command handler until the next input arrives.
         self.st.lock().unwrap().turn_complete = true;

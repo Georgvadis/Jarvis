@@ -444,6 +444,13 @@ async fn run(f: Flags, store: settings::Store) {
     }
     memory.set_summarizer(Some(engine.summarizer()));
     engine.run(det);
+    {
+        let e = engine.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(12)).await;
+            let _ = tokio::task::spawn_blocking(move || e.ensure_wake_replies_warm()).await;
+        });
+    }
     presence.clone().spawn(engine.clone());
     scheduler.clone().spawn(engine.clone());
     telegram_bot::spawn(engine.clone(), host.clone(), proxy.clone(), ambient.clone(), focus.clone());

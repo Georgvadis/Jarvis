@@ -25,8 +25,9 @@ pub(super) const PHRASES: &[&str] = &[
     "Хм?",
 ];
 pub(super) const FOLLOW_ON_GAP: Duration = Duration::from_millis(70);
-const MAX_REPLY: Duration = Duration::from_millis(900);
+const MAX_REPLY: Duration = Duration::from_millis(1150);
 const CACHE_BUDGET: u64 = 2 << 20;
+const WARM_PRIORITY_PHRASES: &[&str] = &["Да?", "Слушаю.", "Я тут.", "Говори.", "На связи.", "М?"];
 
 #[derive(Default)]
 struct ManagerState {
@@ -247,6 +248,91 @@ impl Engine {
 
     pub fn cancel_wake_reply_generation(&self) {
         self.wake_replies.generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Тихий автопрогрев первых коротких откликов в кеше после старта колонки, чтобы при оклике
+    /// с паузой голосовой отклик «Да?» / «Слушаю.» звучал мгновенно без обращения к сети.
+    pub fn ensure_wake_replies_warm(self: &Arc<Self>) {
+        let settings = self.store.get();
+        if !settings.wake_reply_enabled || self.talking() || self.player.playing() {
+            return;
+        }
+        let profile = settings.active_profile();
+        if !profile.is_classic()
+            || !matches!(profile.effective_tts_engine(), "fish-audio-tts" | "local-rvc-voice")
+            || !crate::engine::tts_missing(&self.host, &settings, &profile).is_empty()
+        {
+            return;
+        }
+        let directory = self.data.join("wake-replies");
+        if count_ready(&directory, &profile) >= 4 {
+            return;
+        }
+        let pending: Vec<(&'static str, std::path::PathBuf)> = WARM_PRIORITY_PHRASES
+            .iter()
+            .filter_map(|&phrase| {
+                let path = directory.join(reply_name(&profile, phrase));
+                let ok = voice_preview::Sample::read(&path).is_some_and(|s| short_enough(&s));
+                (!ok).then_some((phrase, path))
+            })
+            .take(6)
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        if self
+            .wake_replies
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+        struct RunGuard<'a>(&'a Engine);
+        impl Drop for RunGuard<'_> {
+            fn drop(&mut self) {
+                self.0.wake_replies.running.store(false, Ordering::Release);
+            }
+        }
+        let _guard = RunGuard(self);
+        let gen_id = self.wake_replies.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let id_key = identity_key(&profile);
+        let initial_ready = count_ready(&directory, &profile);
+        {
+            let mut st = self.wake_replies.state.lock().unwrap();
+            st.error.clear();
+            st.error_code.clear();
+            st.done = initial_ready;
+            st.total = PHRASES.len();
+            st.identity = id_key.clone();
+        }
+        let cancelled = || {
+            self.wake_replies.generation.load(Ordering::SeqCst) != gen_id
+                || self.talking()
+                || self.player.playing()
+                || self.store.with(|s| identity_key(&s.active_profile()) != id_key)
+        };
+        log::info!(
+            "Отклики на активацию: фоновый прогрев {} фраз для «{}»",
+            pending.len(),
+            profile.name
+        );
+        let res = self.record_wake_replies(
+            settings,
+            &profile,
+            &directory,
+            &pending,
+            initial_ready,
+            &cancelled,
+        );
+        let now_ready = count_ready(&directory, &profile);
+        let mut st = self.wake_replies.state.lock().unwrap();
+        st.done = now_ready;
+        if let Err((_, err)) = res {
+            log::info!("Отклики на активацию (прогрев): {err} (готово {now_ready}/{})", PHRASES.len());
+        } else {
+            log::info!("Отклики на активацию (прогрев): готово {now_ready} из {}", PHRASES.len());
+        }
     }
 
     pub fn clear_wake_reply_cache(&self) -> usize {

@@ -467,14 +467,92 @@ pub async fn brain_request(params: Value) -> Result<Value, String> {
 pub async fn warm_loop(host: Arc<Host>, store: crate::settings::Store) {
     tokio::time::sleep(Duration::from_secs(5)).await; // плагины ещё запускаются
     loop {
-        if !store.is_night()
-            && store.with(|s| s.active_profile_ref().is_some_and(|p| p.engine == "chatgpt") && signed_in(&s.chatgpt))
+        let method = if !store.is_night() {
+            store.with(|s| {
+                if !signed_in(&s.chatgpt) {
+                    return None;
+                }
+                let p = s.active_profile_ref()?;
+                if p.engine == "chatgpt" {
+                    Some("voice.warm")
+                } else if p.is_classic() && p.effective_llm_engine() == "chatgpt" {
+                    Some("codex.warm")
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        if let Some(method) = method
             && let Ok(n) = host.provider("chatgpt")
         {
-            let _ = n.request("voice.warm", Value::Null, Duration::from_secs(5)).await;
+            let _ = n.request(method, Value::Null, Duration::from_secs(5)).await;
         }
         tokio::time::sleep(Duration::from_secs(25)).await;
     }
+}
+
+/// Нужно ли подключать серверный инструмент `web_search` для запроса.
+/// Безусловный `web_search` добавляет ~3-4 с к TTFT, поэтому включаем его
+/// только когда вопрос явно требует свежих данных, новостей или фактов из сети.
+pub fn should_use_web_search(text: &str) -> bool {
+    let norm = text.trim().to_lowercase().replace('ё', "е");
+    if norm.is_empty() {
+        return false;
+    }
+    const TRIGGERS: &[&str] = &[
+        "новост",
+        "курс ",
+        "доллар",
+        "евро",
+        "биткоин",
+        "крипт",
+        "рубл",
+        "акци",
+        "сколько стоит",
+        "цена",
+        "цены",
+        "цену",
+        "ценник",
+        "расписани",
+        "какой счет",
+        "счет матч",
+        "выиграл",
+        "победил",
+        "кто такой",
+        "кто такая",
+        "кто сейчас",
+        "президент",
+        "министр",
+        "когда выйдет",
+        "когда вышел",
+        "дата выхода",
+        "релиз",
+        "погугл",
+        "загугл",
+        "найди в интернет",
+        "поищи в сети",
+        "в интернете",
+        "актуальн",
+        "последние новост",
+        "последние событ",
+        "свежи",
+        "в 2025",
+        "в 2026",
+        "в 2027",
+        "в этом году",
+        "вчера",
+        "сегодня в мире",
+        "произошл",
+        "случил",
+    ];
+    // Отдельная проверка для "курс" без пробела в конце (например, "какой курс?")
+    norm == "курс"
+        || norm.ends_with(" курс")
+        || norm.contains(" курс ")
+        || norm.contains(" курса ")
+        || TRIGGERS.iter().any(|t| norm.contains(t))
 }
 
 /// Уровни рассуждения, которые принимает модель (Sol 6.1 и Astra не знают "none").
@@ -517,7 +595,7 @@ pub async fn ask_codex_with_history_detail_stream(
 ) -> Result<BrainReply, String> {
     let model = if p.effective_llm_model().is_empty() { BACKEND_MODELS[0].to_string() } else { p.effective_llm_model().to_string() };
     let effort = effort(&model, &p.effort);
-    if p.web_search {
+    if p.web_search && should_use_web_search(text) {
         defs.push(json!({"type": "web_search"}));
     }
     let mut input: Vec<Value> = history.iter().map(|turn| {
@@ -675,5 +753,17 @@ mod tests {
         super::trim_pre_connect_silence(&mut pending, super::quiet_threshold(0), 2560);
         assert_eq!(pending.len(), 6_400);
         assert!(pending.iter().all(|&v| v == 110));
+    }
+
+    #[test]
+    fn selective_web_search_avoids_everyday_chat() {
+        assert!(!super::should_use_web_search("Что мне сегодня посмотреть вечером?"));
+        assert!(!super::should_use_web_search("Расскажи сказку про ёжика"));
+        assert!(!super::should_use_web_search("Включи музыку на 50 процентов"));
+        assert!(!super::should_use_web_search("Оцени эту идею"));
+        assert!(super::should_use_web_search("Какие сегодня новости в мире?"));
+        assert!(super::should_use_web_search("Какой сейчас курс доллара?"));
+        assert!(super::should_use_web_search("Кто победил вчера в матче?"));
+        assert!(super::should_use_web_search("Погугли дату выхода игры"));
     }
 }

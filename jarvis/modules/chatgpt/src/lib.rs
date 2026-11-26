@@ -71,6 +71,22 @@ impl ChatGpt {
             "login.start"=>Box::pin(self.start()).await,
             "auth.logout"=>{self.stop();let before=(self.services)("auth.get".into(),Value::Null).await?;(self.services)("auth.set".into(),json!({"before":before,"after":{}})).await?;Ok(json!({}))},
             "codex.request"=>Box::pin(self.codex(params)).await,
+            "codex.warm"=>Box::pin(async move {
+                let auth=(self.services)("auth.get".into(),Value::Null).await?;
+                if auth["refresh"].as_str().is_some_and(|value| !value.is_empty()) {
+                    let network=(self.services)("network".into(),json!({})).await?;
+                    if network["error"].as_str().is_none() {
+                        let client=self.client_for(&network)?;
+                        let url=reqwest::Url::parse(&self.codex).map_err(|_|"Неверный адрес Codex ChatGPT")?;
+                        // Pre-warm access token and DNS/SOCKS/TLS/H2 connection pool without sending a prompt.
+                        let _=tokio::join!(
+                            self.token_with_margin(900),
+                            async{if let Ok(response)=client.head(url).timeout(Duration::from_secs(4)).send().await{let _=response.bytes().await;}},
+                        );
+                    }
+                }
+                Ok::<Value,String>(Value::Null)
+            }).await,
             "voice.warm"=>Box::pin(async move {
                 let auth=(self.services)("auth.get".into(),Value::Null).await?;
                 if auth["refresh"].as_str().is_some_and(|value| !value.is_empty()) {
