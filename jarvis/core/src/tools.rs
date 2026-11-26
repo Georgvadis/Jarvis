@@ -440,10 +440,56 @@ impl Tools {
         false
     }
 
-    /// Текст для инструкций бэкенда: время, устройства с возможностями, сценарии с фразами.
+    /// Текст для инструкций ассистента: время, живое состояние колонки и подключённые контексты.
     pub async fn context(&self) -> String {
-        let now = self.store.with(|s| s.now());
+        let (now, city, night_now) = self.store.with(|s| (s.now(), s.city.trim().to_string(), s.is_night()));
         let mut b = format!("\n\nСейчас {}, {}.", now.strftime("%d.%m.%Y %H:%M"), DAYS[now.weekday().to_sunday_zero_offset() as usize]);
+        if !city.is_empty() {
+            b += &format!(" Город хозяина: {city}.");
+        }
+        if night_now {
+            b += " Сейчас действует ночной режим — говори чуть спокойнее и мягче.";
+        }
+        let mut live_parts: Vec<String> = Vec::new();
+        if let Some(amb) = &self.ambient
+            && let Some(lbl) = amb.current_label()
+        {
+            live_parts.push(format!("фоновый звук «{lbl}»"));
+        }
+        if let Some(dj) = &self.dj
+            && dj.is_active()
+        {
+            let st = dj.status();
+            let title = st["current_title"].as_str().unwrap_or("");
+            live_parts.push(if title.is_empty() { "AI-DJ в эфире".into() } else { format!("AI-DJ (трек: {title})") });
+        }
+        if let Some(r) = &self.reader
+            && r.is_running()
+        {
+            let st = r.status();
+            let title = st["title"].as_str().unwrap_or("книга");
+            live_parts.push(format!("читается книга «{title}»"));
+        }
+        if let Some(sch) = &self.scheduler {
+            let timers = sch.active_timers_json();
+            if let Some(arr) = timers.as_array()
+                && !arr.is_empty()
+            {
+                let items: Vec<String> = arr
+                    .iter()
+                    .take(4)
+                    .map(|t| {
+                        let lbl = t["label"].as_str().unwrap_or("таймер");
+                        let rem = crate::scheduler::format_duration_ru(t["remaining_s"].as_u64().unwrap_or(0));
+                        format!("{lbl} ({rem})")
+                    })
+                    .collect();
+                live_parts.push(format!("активные таймеры: {}", items.join(", ")));
+            }
+        }
+        if !live_parts.is_empty() {
+            b += &format!(" Сейчас на колонке: {}.", live_parts.join("; "));
+        }
         // Independent providers must not add their cold-start delays together.
         // Definitions are still prepared after context, so their first catalog is ready.
         let ha=async{if self.use_ch("homeassistant") && self.ha_alive().await{as_str(&self.vendor("homeassistant","context",Value::Null,Duration::from_secs(4)).await.unwrap_or_default())}else{String::new()}};
@@ -622,6 +668,102 @@ impl Tools {
                 }
             }
         }));
+        if self.ambient.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "control_ambient",
+                "description": "Управлять студийными фоновыми звуками 48 кГц и фоновым радио прямо на колонке: зажечь/включить камин (fireplace), дождь (rain), океан (ocean), мягкий шум для сна (white), Lo-Fi радио (lofi), джаз (jazz), чилл (chill), остановить фон, поменять громкость фона или поставить таймер сна для фона.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["start", "stop", "volume", "sleep"], "description": "start — включить звук/радио; stop — выключить фон; volume — громкость фона; sleep — таймер отключения фона"},
+                        "preset": {"type": "string", "description": "fireplace (камин), rain (дождь), ocean (океан), white (мягкий шум), lofi, jazz, chill"},
+                        "volume": {"type": "integer", "description": "громкость фона от 5 до 100 (для action=volume)"},
+                        "sleep_minutes": {"type": "integer", "description": "через сколько минут выключить фон, 0 — отменить таймер (для action=sleep)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        if self.scheduler.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "manage_timer",
+                "description": "Нативные таймеры и голосовые напоминания на колонке (без Алисы): поставить таймер или напоминание через N минут/секунд, проверить активные таймеры или отменить их.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["set", "list", "cancel_all"], "description": "set — поставить таймер/напоминание; list — какие таймеры идут; cancel_all — снять все таймеры"},
+                        "minutes": {"type": "number", "description": "длительность в минутах (для set)"},
+                        "seconds": {"type": "integer", "description": "длительность в секундах (если указаны секунды, для set)"},
+                        "label": {"type": "string", "description": "короткая подпись таймера или текст напоминания, например «Чай» или «Проверить духовку»"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        defs.push(json!({
+            "type": "function",
+            "name": "set_speaker_volume",
+            "description": "Изменить громкость самой колонки тихо и напрямую (без Алисы): сделать громче, тише, выключить звук или выставить точный уровень от 0 до 10.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["set", "up", "down", "mute"], "description": "set — точный уровень 0..10; up — громче; down — тише; mute — без звука"},
+                    "level": {"type": "integer", "description": "уровень громкости от 0 до 10 (для set)"}
+                },
+                "required": ["action"]
+            }
+        }));
+        defs.push(json!({
+            "type": "function",
+            "name": "run_scenario",
+            "description": "Запустить домашний сценарий колонки: morning (Утро — брифинг и бодрый фон), work (Работа — фокус и Lo-Fi), evening (Вечер — камин и уют), sleep (Сон — океан и таймер сна), либо пользовательский сценарий по названию.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "scenario": {"type": "string", "description": "morning, work, evening, sleep или название пользовательского сценария"}
+                },
+                "required": ["scenario"]
+            }
+        }));
+        if self.reader.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "control_book",
+                "description": "Управление аудиокнигой на колонке: пересказать суть («на чём остановились»), поставить на паузу, сохранить цитату в CyberNotes или поставить таймер сна для книги.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["recap", "pause", "save_quote", "sleep"]},
+                        "sleep_minutes": {"type": "integer", "description": "минуты до остановки книги (для sleep)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        defs.push(json!({
+            "type": "function",
+            "name": "morning_briefing",
+            "description": "Собрать живую персональную сводку дня для хозяина: погода, активные таймеры и рутины на сегодня, прогресс книги и свежие заметки CyberNotes.",
+            "parameters": {"type": "object", "properties": {}}
+        }));
+        if self.modes.is_some() || self.games.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "control_mode_or_game",
+                "description": "Запустить или остановить интерактивные режимы и голосовые игры колонки: RPG-квест (rpg), викторина (quiz), угадай мелодию (melody), нуарный детектив (detective), синхронный переводчик (translator) или выйти из режима (stop).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["rpg", "quiz", "melody", "detective", "translator", "stop"]},
+                        "theme": {"type": "string", "description": "тема игры (например «аниме опенинги» для melody или сюжет для detective)"},
+                        "language": {"type": "string", "description": "язык перевода для translator (например «английский», «японский»)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
         defs
     }
 
@@ -887,6 +1029,221 @@ impl Tools {
                 },
             );
             return "Запускаю подкаст-разбор двумя голосами!".into();
+        }
+        if name == "control_ambient"
+            && let Some(amb) = &self.ambient
+        {
+            let action = field("action");
+            return match action.as_str() {
+                "stop" => {
+                    amb.stop();
+                    "Фоновый звук выключен.".into()
+                }
+                "volume" => {
+                    let vol = a.get("volume").and_then(Value::as_i64).unwrap_or(50).clamp(5, 100);
+                    amb.set_volume(vol);
+                    format!("Громкость фона выставлена на {vol}%.")
+                }
+                "sleep" => {
+                    let mins = a.get("sleep_minutes").and_then(Value::as_u64).unwrap_or(30);
+                    amb.set_sleep(mins)
+                }
+                _ => {
+                    let raw = field("preset").to_lowercase();
+                    let id = match raw.as_str() {
+                        "камин" | "костёр" | "костер" | "fire" | "fireplace" => "fireplace",
+                        "дождь" | "rain" => "rain",
+                        "океан" | "прибой" | "море" | "ocean" => "ocean",
+                        "белый шум" | "шум" | "white" => "white",
+                        "лоуфай" | "лофай" | "lo-fi" | "lofi" => "lofi",
+                        "джаз" | "jazz" => "jazz",
+                        "чилл" | "chill" => "chill",
+                        other => other,
+                    };
+                    match amb.start(if id.is_empty() { "fireplace" } else { id }) {
+                        Ok(lbl) => format!("Включил фон: {lbl}."),
+                        Err(e) => format!("Не получилось включить фон: {e}"),
+                    }
+                }
+            };
+        }
+        if name == "manage_timer"
+            && let Some(sch) = &self.scheduler
+        {
+            let action = field("action");
+            return match action.as_str() {
+                "list" => {
+                    let timers = sch.active_timers_json();
+                    let Some(arr) = timers.as_array() else { return "Активных таймеров сейчас нет.".into(); };
+                    if arr.is_empty() {
+                        "Активных таймеров сейчас нет.".into()
+                    } else {
+                        let list: Vec<String> = arr
+                            .iter()
+                            .map(|t| {
+                                let lbl = t["label"].as_str().unwrap_or("Таймер");
+                                let rem = crate::scheduler::format_duration_ru(t["remaining_s"].as_u64().unwrap_or(0));
+                                format!("{lbl} — осталось {rem}")
+                            })
+                            .collect();
+                        format!("Активные таймеры: {}.", list.join("; "))
+                    }
+                }
+                "cancel_all" => {
+                    let n = sch.cancel_all_timers();
+                    if n == 0 {
+                        "Активных таймеров и так не было.".into()
+                    } else {
+                        format!("Отменил таймеров: {n}.")
+                    }
+                }
+                _ => {
+                    let mins_s = a.get("minutes").and_then(Value::as_f64).map(|m| (m * 60.0).round() as u64).unwrap_or(0);
+                    let secs_s = a.get("seconds").and_then(Value::as_u64).unwrap_or(0);
+                    let total = mins_s.saturating_add(secs_s).clamp(5, 86400);
+                    if mins_s == 0 && secs_s == 0 {
+                        return "Уточните, на сколько минут или секунд поставить таймер.".into();
+                    }
+                    let label = {
+                        let l = field("label");
+                        if l.is_empty() { "Таймер".into() } else { l }
+                    };
+                    match sch.add_timer(label.clone(), total) {
+                        Ok(_) => format!("Поставил таймер «{label}» на {}.", crate::scheduler::format_duration_ru(total)),
+                        Err(e) => e,
+                    }
+                }
+            };
+        }
+        if name == "set_speaker_volume" {
+            let action = field("action");
+            let cur = tokio::task::spawn_blocking(crate::speakervol::speaker_volume)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or(5);
+            let target = match action.as_str() {
+                "up" => (cur + 2).min(10),
+                "down" => (cur - 2).max(1),
+                "mute" => 0,
+                _ => a.get("level").and_then(Value::as_i64).unwrap_or(cur).clamp(0, 10),
+            };
+            return match tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(target))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            {
+                Ok(()) => format!("Громкость колонки теперь {target} из 10."),
+                Err(e) => format!("Не удалось изменить громкость: {e}"),
+            };
+        }
+        if name == "run_scenario"
+            && let Some(eng) = self.engine()
+        {
+            let sc = field("scenario");
+            if let Some(custom) = self.scenarios.as_ref().and_then(|st| st.find_by_query(&sc)) {
+                let cname = custom.name.clone();
+                crate::scenarios::ScenarioStore::execute(eng, custom);
+                return format!("Запустил сценарий «{cname}».");
+            }
+            let sc_low = sc.to_lowercase();
+            let mapped = match sc_low.as_str() {
+                "утро" | "доброе утро" | "morning" => "morning",
+                "работа" | "фокус" | "work" => "work",
+                "вечер" | "уют" | "отдых" | "relax" | "evening" => "evening",
+                "сон" | "спать" | "ночь" | "sleep" => "sleep",
+                other => other,
+            };
+            return match run_scenario(eng, mapped) {
+                Ok(msg) => msg,
+                Err(e) => e,
+            };
+        }
+        if name == "control_book"
+            && let Some(reader) = &self.reader
+            && let Some(eng) = self.engine()
+        {
+            let action = field("action");
+            return match action.as_str() {
+                "pause" => {
+                    reader.stop();
+                    "Чтение книги поставлено на паузу.".into()
+                }
+                "save_quote" => reader.save_quote(&eng).await.unwrap_or_else(|e| e),
+                "sleep" => {
+                    let mins = a.get("sleep_minutes").and_then(Value::as_u64).unwrap_or(20);
+                    reader.set_sleep(mins);
+                    if mins == 0 {
+                        "Таймер сна книги отменён.".into()
+                    } else {
+                        format!("Поставил таймер сна книги на {mins} мин.")
+                    }
+                }
+                _ => Box::pin(reader.recap(eng)).await.unwrap_or_else(|e| e),
+            };
+        }
+        if name == "morning_briefing"
+            && let Some(eng) = self.engine()
+        {
+            return Box::pin(crate::briefing::generate_briefing_text(&eng, ""))
+                .await
+                .unwrap_or_else(|e| format!("Не удалось собрать сводку: {e}"));
+        }
+        if name == "control_mode_or_game" {
+            let action = field("action");
+            return match action.as_str() {
+                "stop" => {
+                    if let Some(g) = &self.games {
+                        g.stop_all(self.engine().as_deref());
+                    }
+                    if let Some(m) = &self.modes {
+                        m.reset(self.ambient.as_deref());
+                    }
+                    "Режим остановлен, возвращаюсь к обычному общению.".into()
+                }
+                "rpg" => self
+                    .modes
+                    .as_ref()
+                    .map(|m| m.activate(crate::modes::SpecialMode::Rpg, self.ambient.as_deref()))
+                    .unwrap_or_else(|| "Режим RPG недоступен.".into()),
+                "quiz" => self
+                    .modes
+                    .as_ref()
+                    .map(|m| m.activate(crate::modes::SpecialMode::Quiz, self.ambient.as_deref()))
+                    .unwrap_or_else(|| "Викторина недоступна.".into()),
+                "translator" => {
+                    let lang = {
+                        let l = field("language");
+                        if l.is_empty() { "английский".into() } else { l }
+                    };
+                    self.modes
+                        .as_ref()
+                        .map(|m| m.activate(crate::modes::SpecialMode::Translator(lang), self.ambient.as_deref()))
+                        .unwrap_or_else(|| "Переводчик недоступен.".into())
+                }
+                "melody" => {
+                    if let (Some(g), Some(eng)) = (&self.games, self.engine()) {
+                        let theme = field("theme");
+                        match Box::pin(g.start_melody(eng, if theme.is_empty() { "популярные хиты".into() } else { theme })).await {
+                            Ok(_) => "Запустил игру «Угадай мелодию»!".into(),
+                            Err(e) => e,
+                        }
+                    } else {
+                        "Игры недоступны.".into()
+                    }
+                }
+                "detective" => {
+                    if let (Some(g), Some(eng)) = (&self.games, self.engine()) {
+                        let theme = field("theme");
+                        match Box::pin(g.start_detective(eng, theme)).await {
+                            Ok(_) => "Запустил «Нуарный детектив»!".into(),
+                            Err(e) => e,
+                        }
+                    } else {
+                        "Игры недоступны.".into()
+                    }
+                }
+                _ => "Неизвестный режим.".into(),
+            };
         }
         if name != "smart_home" {
             if let Some(res) = self.host.call_tool(name, args).await {

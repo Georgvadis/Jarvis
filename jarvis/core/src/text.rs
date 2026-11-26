@@ -87,7 +87,9 @@ impl Engine {
                     return Ok(answer);
                 }
                 let has_youtube = self.host.provider("youtube").is_ok();
-                if let Some(command) = fastcmd::alice_skill_for_ex(command, s.use_home("yandexmusic"), has_youtube) {
+                if s.use_home("alice")
+                    && let Some(command) = fastcmd::alice_skill_for_ex(command, s.use_home("yandexmusic"), has_youtube)
+                {
                     let answer = format!("Передал Алисе: {command}");
                     tokio::task::spawn_blocking(move || alice::text(&command, false))
                         .await
@@ -100,7 +102,7 @@ impl Engine {
             }
             if is_bedtime && let Some(amb) = &self.tools.ambient {
                 let _ = amb.start("ocean");
-                amb.set_sleep(15);
+                amb.set_sleep(20);
             }
             let (context, defs) = if active_mode == SpecialMode::Normal {
                 self.tools.prepare().await
@@ -108,7 +110,7 @@ impl Engine {
                 (String::new(), Vec::new())
             };
             let whisper_hint = if is_bedtime {
-                "\n[Режим «История на ночь»: расскажи уютную, спокойную, убаюкивающую историю на 5–7 неспешных предложений, без Markdown и без вопросов в конце.]"
+                "\n[Режим «История на ночь»: расскажи тёплую, уютную, атмосферную и законченную историю перед сном. Если хозяин просит большую или длинную сказку — не торопись, раскрой сюжет подробно и образно (15–25 плавных предложений), без Markdown и без вопросов в конце.]"
             } else if s.expressive_mode {
                 "\n[При уместности можешь начинать фразу тегом эмоции [happy], [sarcastic], [whisper], [excited], [sad] или вставить короткий эффект [sfx:chime], [sfx:bell], [sfx:sigh], но не злоупотребляй.]"
             } else {
@@ -160,7 +162,7 @@ impl Engine {
             }
         };
         let result = tokio::select! {
-            value=tokio::time::timeout(Duration::from_secs(90),work)=>value.unwrap_or_else(|_|Err("Запрос не завершился за 90 с".into())),
+            value=tokio::time::timeout(Duration::from_secs(150),work)=>value.unwrap_or_else(|_|Err("Запрос не завершился за 150 с".into())),
             _=async{
                 loop {
                     let wait = self.speech_notify.notified();

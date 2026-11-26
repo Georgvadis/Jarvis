@@ -1336,7 +1336,7 @@ impl Engine {
                         if !self.player.playing() && is_loud {
                             let _ = self.start_voice(&*x); // после перебивания плеер был остановлен
                         }
-                        let wrote = self.player.write(&pcm).is_ok();
+                        let wrote = self.player.write_wait(&pcm, || x.dialog().muted()).is_ok();
                         if wrote {
                             let now = Instant::now();
                             if p.engine == "gemini" || p.is_classic() {
@@ -1515,7 +1515,11 @@ impl Engine {
         // отдаём ей, если так выбрано в настройках
         let schedule = fastcmd::alice_schedule(&cmd);
         let has_youtube = self.host.provider("youtube").is_ok();
-        let mut to_alice = fastcmd::alice_skill_for_ex(&cmd, self.store.with(|s| s.use_home("yandexmusic")), has_youtube);
+        let mut to_alice = if self.store.with(|s| s.use_home("alice")) {
+            fastcmd::alice_skill_for_ex(&cmd, self.store.with(|s| s.use_home("yandexmusic")), has_youtube)
+        } else {
+            None
+        };
         if to_alice.is_none() && self.store.with(|s| s.use_home("alice")) {
             to_alice = rt.block_on(self.tools.home_command(&cmd));
         }
@@ -1559,7 +1563,7 @@ impl Engine {
             return;
         }
         log::info!("Джарвис: ответ «{}»", crate::plugins::clip(text, 200));
-        if let Err(e) = self.say_aloud_opts(text, Duration::from_secs(120), None, whisper) {
+        if let Err(e) = self.say_aloud_opts(text, Duration::from_secs(600), None, whisper) {
             log::info!("озвучка: {e}");
             if e != INTERRUPTED {
                 self.earcon(true);
@@ -1634,7 +1638,7 @@ impl Engine {
     fn say_hook(&self) -> impl Fn(String) + '_ {
         move |answer: String| {
             log::info!("Джарвис: ответ «{}»", crate::plugins::clip(&answer, 200));
-            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(120)) {
+            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(600)) {
                 log::info!("озвучка: {e}");
                 if e != INTERRUPTED {
                     self.earcon(true);
@@ -1802,7 +1806,7 @@ impl Engine {
                 }
                 Err(RecvTimeoutError::Disconnected) => {
                     if started {
-                        self.player.finish_cancelable(Duration::from_secs(90), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
+                        self.player.finish_cancelable(Duration::from_secs(120), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
                     }
                     return if heard { Ok(()) } else { Err("голос не прозвучал".into()) };
                 }
@@ -1829,7 +1833,7 @@ impl Engine {
                 }
             }
         }
-        self.player.finish_cancelable(Duration::from_secs(90), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
+        self.player.finish_cancelable(Duration::from_secs(120), || self.speech_epoch.load(Ordering::SeqCst) != epoch);
         Ok(())
     }
 

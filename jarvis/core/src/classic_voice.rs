@@ -136,7 +136,9 @@ impl Classic {
                 if let Some(answer)=answer{self.dialog.on_bot(&answer);self.speak(context,&answer,generation,is_whisper).await?;self.dialog.finish_turn("");return Ok(());}
             }
             let has_youtube = context.host.provider("youtube").is_ok();
-            if let Some(command)=crate::fastcmd::alice_skill_for_ex(command,context.settings.use_home("yandexmusic"),has_youtube) {
+            if context.settings.use_home("alice")
+                && let Some(command)=crate::fastcmd::alice_skill_for_ex(command,context.settings.use_home("yandexmusic"),has_youtube)
+            {
                 tokio::task::spawn_blocking(move||crate::alice::text(&command,false)).await.map_err(|e|e.to_string())??;
                 self.dialog.on_bot("Передал Алисе");self.dialog.finish_turn("");return Ok(());
             }
@@ -165,7 +167,7 @@ impl Classic {
                 if e.is_empty() { "classic" } else { e }
             };
             let whisper_hint = if is_bedtime {
-                "\n[Режим «История на ночь»: расскажи уютную, спокойную, убаюкивающую историю на 5–7 неспешных предложений, без Markdown и без вопросов в конце.]"
+                "\n[Режим «История на ночь»: расскажи тёплую, уютную, атмосферную и законченную историю перед сном. Если хозяин просит большую или длинную сказку — не торопись, раскрой сюжет подробно и образно (15–25 плавных предложений), без Markdown и без вопросов в конце.]"
             } else if is_whisper {
                 "\n[Хозяин говорит шёпотом — ответь максимально коротко, тихо и спокойно.]"
             } else if context.settings.expressive_mode {
@@ -244,7 +246,16 @@ impl Classic {
         {
             return Ok(cached);
         }
-        match self.synthesize_provider(context, provider, voice, &context.profile.tts_model, text, emotion).await {
+        let primary = match self.synthesize_provider(context, provider, voice, &context.profile.tts_model, text, emotion).await {
+            Ok(pcm) => Ok(pcm),
+            Err(first_err) => {
+                // Один быстрый повтор при кратковременном сетевом/API сбое, чтобы длинная сказка не обрывалась на середине
+                log::warn!("TTS «{provider}»: повтор после сбоя ({first_err})");
+                tokio::time::sleep(Duration::from_millis(450)).await;
+                self.synthesize_provider(context, provider, voice, &context.profile.tts_model, text, emotion).await
+            }
+        };
+        match primary {
             Ok(pcm) => {
                 if let Some(ref key) = cache_key {
                     tts_cache_put(key, &pcm);
@@ -420,7 +431,7 @@ impl Capture {
     }
     fn feed(&mut self,pcm:&[i16])->Option<Vec<i16>>{
         let voiced=self.is_loud(pcm);
-        if !self.speaking && !voiced {self.preroll.extend(pcm);if self.preroll.len()>4800{self.preroll.drain(..self.preroll.len()-4800);}return None;}
+        if !self.speaking && !voiced {self.preroll.extend(pcm);if self.preroll.len()>8000{self.preroll.drain(..self.preroll.len()-8000);}return None;}
         if !self.speaking {self.speaking=true;self.speech=std::mem::take(&mut self.preroll);}
         self.speech.extend(pcm);if voiced{self.silence=0;}else{self.silence+=pcm.len();}
         if self.silence>=self.silence_limit || self.speech.len()>=16000*45 {self.speaking=false;self.silence=0;let result=std::mem::take(&mut self.speech);if result.len()>=3200{return Some(result);}}
@@ -674,20 +685,62 @@ fn split_sentences(text: &str) -> Vec<String> {
         let is_end = matches!(c, '.' | '!' | '?' | '…' | '\n');
         let next_sep = chars.peek().is_none_or(|n| n.is_whitespace());
         if is_end && next_sep {
-            let trimmed = cur.trim().to_string();
-            if !trimmed.is_empty() {
-                raw.push(trimmed);
+            let trimmed = cur.trim();
+            // Не разрываем на частых сокращениях вроде «т.д.», «г.», «ул.»
+            let is_abbrev = c == '.' && (
+                trimmed.ends_with(" т.д.")
+                    || trimmed.ends_with(" т.п.")
+                    || trimmed.ends_with(" др.")
+                    || trimmed.ends_with(" ул.")
+                    || trimmed.ends_with(" г.")
+            );
+            if !is_abbrev && !trimmed.is_empty() {
+                raw.push(trimmed.to_string());
+                cur.clear();
             }
-            cur.clear();
         }
     }
     let tail = cur.trim().to_string();
     if !tail.is_empty() {
         raw.push(tail);
     }
+    // Аккуратно делим сверхдлинные предложения (> 260 симв.) по запятой/точке с запятой, чтобы TTS не задыхался
+    let mut sized: Vec<String> = Vec::new();
+    for s in raw {
+        if s.chars().count() <= 260 {
+            sized.push(s);
+            continue;
+        }
+        let mut rest = s.as_str();
+        while rest.chars().count() > 260 {
+            let cut_byte = rest
+                .char_indices()
+                .take(260)
+                .filter(|&(_, ch)| matches!(ch, ';' | ',' | '—' | ':'))
+                .map(|(idx, ch)| idx + ch.len_utf8())
+                .last()
+                .filter(|&b| b > 80)
+                .or_else(|| {
+                    rest.char_indices()
+                        .take(260)
+                        .filter(|&(_, ch)| ch.is_whitespace())
+                        .map(|(idx, _)| idx)
+                        .last()
+                })
+                .unwrap_or_else(|| rest.char_indices().nth(260).map(|(i, _)| i).unwrap_or(rest.len()));
+            let part = rest[..cut_byte].trim();
+            if !part.is_empty() {
+                sized.push(part.to_string());
+            }
+            rest = rest[cut_byte..].trim();
+        }
+        if !rest.is_empty() {
+            sized.push(rest.to_string());
+        }
+    }
     // Merge very short fragments (< 35 chars) both forward and backward so short tails like «Спокойной ночи.» aren't isolated
     let mut out: Vec<String> = Vec::new();
-    for s in raw {
+    for s in sized {
         if let Some(last) = out.last_mut() {
             let last_len = last.chars().count();
             let s_len = s.chars().count();

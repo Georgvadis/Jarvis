@@ -274,7 +274,7 @@ fn default_vad_threshold() -> i64 {
     600
 }
 fn default_vad_silence_ms() -> i64 {
-    700
+    1000
 }
 fn default_tts_speed() -> f64 {
     1.0
@@ -482,7 +482,7 @@ impl Default for Settings {
             wake_enabled: true,
             wake_interrupt: true,
             wake_reply_enabled: true,
-            voice_error_alice: true,
+            voice_error_alice: false,
             wake_profile: String::new(),
             wake_check: false,
             wake_sensitivity: 5,
