@@ -1452,7 +1452,11 @@ impl Engine {
             } else {
                 idle
             };
-            if !self.player.has_queued() && x.dialog().idle(effective_idle) {
+            if self.player.has_queued() {
+                // Пока динамик физически доигрывает озвучку, отсчёт тишины ещё не начался:
+                // иначе длинный ответ (15+ сек) закрывал бы разговор сразу после последнего слова.
+                x.dialog().touch();
+            } else if x.dialog().idle(effective_idle) {
                 log::info!("разговор: тишина {effective_idle:.0} с — окончен");
                 self.player.finish(Duration::from_secs(12));
                 x.dialog().finish_turn("");
