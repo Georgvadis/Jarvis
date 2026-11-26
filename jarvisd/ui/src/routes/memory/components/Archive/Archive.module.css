@@ -18,9 +18,13 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 10px 0 6px;
-  background: var(--card);
-  color: var(--fg3);
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--glass-card-strong, var(--card));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border, var(--line));
+  color: var(--fg2);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: .02em;

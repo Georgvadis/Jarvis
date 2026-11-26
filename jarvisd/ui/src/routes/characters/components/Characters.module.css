@@ -95,15 +95,18 @@
   justify-content: center;
   gap: 8px;
   padding: 20px;
-  border: 2px dashed var(--line2);
-  border-radius: 24px;
-  background: transparent;
+  border: 1.5px dashed var(--line2);
+  border-radius: var(--r-lg, 22px);
+  background: var(--glass-inset, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
   color: var(--fg2);
   text-align: center;
 }
 
 .add:hover {
   border-color: var(--acc);
+  background: var(--acc-soft);
   color: var(--fg);
 }
 

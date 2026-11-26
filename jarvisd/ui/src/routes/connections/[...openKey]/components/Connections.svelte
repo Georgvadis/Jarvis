@@ -45,11 +45,20 @@
 
 <SystemNav current="connections" />
 
-<header class="ph ph-row">
-  <div>
-    <h1>Подключения</h1>
-  </div>
-  <div class="actions">
+<header class="section-head">
+  <h1>Подключения</h1>
+  <div class="section-head-right">
+    {#if catalog}
+      <div class="seg cx-tabs {styles.tabs}" id="cx-tabs" role="tablist" aria-label="Подключения">
+        {#each tabs as [id, name] (id)}
+          <button type="button" role="tab" id={"cx-tab-" + id} data-tab={id} class:on={catalog.tab === id}
+            aria-selected={catalog.tab === id} aria-controls="conns" tabindex={catalog.tab === id ? 0 : -1}
+            onclick={() => selectConnectionTab(id)} onkeydown={(event) => navigateTabs(event, id)}>
+            {name}<small>{counts[id] || ""}</small>
+          </button>
+        {/each}
+      </div>
+    {/if}
     <button class="btn" type="button" data-net onclick={(event) => connNetTest(event.currentTarget)}
       data-tip="Колонка достучится до облаков с вашими ключами и покажет время ответа">
       {@html icon("radio")}Проверить связь
@@ -58,15 +67,6 @@
 </header>
 
 {#if catalog}
-  <div class="seg cx-tabs {styles.tabs}" id="cx-tabs" role="tablist" aria-label="Подключения">
-    {#each tabs as [id, name] (id)}
-      <button type="button" role="tab" id={"cx-tab-" + id} data-tab={id} class:on={catalog.tab === id}
-        aria-selected={catalog.tab === id} aria-controls="conns" tabindex={catalog.tab === id ? 0 : -1}
-        onclick={() => selectConnectionTab(id)} onkeydown={(event) => navigateTabs(event, id)}>
-        {name}<small>{counts[id] || ""}</small>
-      </button>
-    {/each}
-  </div>
   <div id="conns" class="cx-list" role="tabpanel" aria-labelledby={"cx-tab-" + catalog.tab}>
     {#if catalog.tab === "svc"}
       {#each CONN_GROUPS as [group, title, description] (group)}

@@ -20,15 +20,16 @@
   }
 </script>
 
-<header class="ph who">
-  <span id="pav" class="ringbox">{@html avatar(draft, true)}</span>
-  <div>
-    <h1>{isNew ? "Новый ассистент" : savedName}</h1>
-    <p class="sub">{isNew ? "Профиль ассистента" : active ? "Активный" : "Не активен"}</p>
+<header class="profile-head">
+  <div class="profile-head-who">
+    <span id="pav" class="ringbox">{@html avatar(draft, true)}</span>
+    <div>
+      <h1>{isNew ? "Новый ассистент" : savedName}</h1>
+      <p class="sub">{isNew ? "Профиль ассистента" : active ? "Активный" : "Не активен"}</p>
+    </div>
   </div>
+  {@render tabs?.()}
 </header>
-
-{@render tabs?.()}
 
 <section class="sec" class:hidden={hideSection} id="profile-basics">
   <div class="sec-h">

@@ -12,9 +12,9 @@
   align-items: center;
   gap: 28px;
   padding: 20px;
-  border: 1px solid var(--soft-line);
+  border: 1px solid var(--glass-border, var(--soft-line));
   border-radius: 18px;
-  background: var(--bg0);
+  background: var(--glass-inset, var(--raise));
 }
 
 @container (min-width: 540px) {

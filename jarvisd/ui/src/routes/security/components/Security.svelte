@@ -60,7 +60,7 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Пароль настроек</h2>
+    <h2>{@html icon("lock")}Пароль настроек</h2>
   </div>
   <form class="sec-b" onsubmit={changePassword}>
     <div class="grid g2">
@@ -73,13 +73,13 @@
         <input type="password" id="pw-new" autocomplete="new-password" bind:value={newPassword} disabled={changingPassword}>
       </div>
     </div>
-    <div><button class="btn" type="submit" disabled={changingPassword}>Сменить пароль</button></div>
+    <div><button class="btn" type="submit" disabled={changingPassword}>{@html icon("save")}Сменить пароль</button></div>
   </form>
 </section>
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Доступ к настройкам</h2>
+    <h2>{@html icon("shield")}Доступ к настройкам</h2>
   </div>
   <div class="sec-b">
     <label class="sw">
@@ -104,7 +104,7 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Служебные входы</h2>
+    <h2>{@html icon("radar")}Служебные входы</h2>
   </div>
   <div class="sec-b">
     <div class="checks">
@@ -125,21 +125,21 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Обновления</h2>
+    <h2>{@html icon("refresh")}Обновления</h2>
   </div>
   <div class="sec-b"><Updates /></div>
 </section>
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Резервная копия</h2>
+    <h2>{@html icon("archive")}Резервная копия</h2>
   </div>
   <div class="sec-b"><Backup /></div>
 </section>
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Знакомство</h2>
+    <h2>{@html icon("sparkles")}Знакомство</h2>
   </div>
   <div class="sec-b">
     <div class="row">

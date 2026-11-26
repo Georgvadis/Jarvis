@@ -7,7 +7,7 @@
   import { chatMessages } from "./messages.js";
   import Message from "./Message/Message.svelte";
 
-  let { poll } = $props();
+  let { poll, expanded = false, onToggleExpand = null } = $props();
   const controller = new AbortController();
   const { signal } = controller;
   let snapshot = $state.raw(readChat());
@@ -355,7 +355,14 @@
     {/if}
   {/if}
   {#if snapshot.profile}
-    <a class="ib lg" href={profilePath(snapshot.profile.id)} aria-label="Настроить ассистента">{@html icon("tune")}</a>
+    <a class="ib lg" href={profilePath(snapshot.profile.id)} aria-label="Настроить ассистента" title="Настроить ассистента">{@html icon("tune")}</a>
+  {/if}
+  {#if onToggleExpand}
+    <button class="ib lg" class:on={expanded} type="button" onclick={onToggleExpand}
+      title={expanded ? "Свернуть чат" : "Развернуть чат"}
+      aria-label={expanded ? "Свернуть чат" : "Развернуть чат"}>
+      {@html icon(expanded ? "minimize" : "maximize")}
+    </button>
   {/if}
 </header>
 

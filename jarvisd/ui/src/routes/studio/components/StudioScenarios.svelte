@@ -4,6 +4,7 @@
   import { activity, refreshActivity } from "#state/activity.js";
 
   const ICON_CHOICES = [
+    { id: "flame", label: "Камин" },
     { id: "sparkles", label: "Искра" },
     { id: "sun", label: "Утро" },
     { id: "moon", label: "Ночь" },

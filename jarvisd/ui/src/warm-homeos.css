@@ -801,80 +801,333 @@ textarea { height: auto; }
 }
 
 /* ==========================================================================
-   Главная страница: воздушная, уютная и структурированная
+   Главная страница: «Гостиная у камина» (3-уровневая bento-архитектура)
    ========================================================================== */
-.home-head {
+.home-living {
+  display: grid;
+  gap: 18px;
+}
+
+/* ---------- Уровень 1: Каминный очаг (Fireside Hearth Hero) ---------- */
+.hearth-stage {
+  position: relative;
+  overflow: hidden;
+  padding: 22px 26px !important;
+  border-color: color-mix(in srgb, var(--acc) 26%, var(--glass-border)) !important;
+  background:
+    radial-gradient(420px 240px at 8% 108%, rgb(242 126 42 / .24), transparent 72%),
+    radial-gradient(360px 220px at 94% 0%, color-mix(in srgb, var(--acc) 14%, transparent), transparent 70%),
+    var(--glass-card) !important;
+  display: grid;
+  gap: 18px;
+}
+.hearth-stage.lit {
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--glass-border)) !important;
+  background:
+    radial-gradient(500px 280px at 10% 108%, rgb(252 132 42 / .38), rgb(214 78 24 / .14) 50%, transparent 76%),
+    radial-gradient(380px 220px at 92% 0%, color-mix(in srgb, var(--acc) 20%, transparent), transparent 72%),
+    var(--glass-card) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 240 218 / .24),
+    0 22px 50px -22px rgb(0 0 0 / .78),
+    0 0 42px -18px rgb(242 126 42 / .42) !important;
+}
+:root[data-theme="light"] .hearth-stage {
+  background:
+    radial-gradient(460px 240px at 8% 108%, rgb(242 146 62 / .20), transparent 72%),
+    radial-gradient(360px 220px at 94% 0%, rgb(255 212 150 / .30), transparent 70%),
+    var(--glass-card) !important;
+}
+
+/* Нежные анимированные искры очага (видны ярче при включённом камине) */
+.hearth-embers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.hearth-embers i {
+  position: absolute;
+  bottom: -8px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe4b5 0%, var(--acc) 60%, transparent 100%);
+  opacity: 0;
+  animation: ember-rise 6.5s ease-in infinite;
+}
+.hearth-embers i:nth-child(1) { left: 7%;  animation-delay: 0s;    animation-duration: 6.2s; }
+.hearth-embers i:nth-child(2) { left: 14%; animation-delay: 1.8s;  animation-duration: 7.4s; width: 3px; height: 3px; }
+.hearth-embers i:nth-child(3) { left: 22%; animation-delay: 3.1s;  animation-duration: 5.8s; }
+.hearth-embers i:nth-child(4) { left: 31%; animation-delay: 0.9s;  animation-duration: 8.1s; width: 3px; height: 3px; }
+.hearth-embers i:nth-child(5) { left: 11%; animation-delay: 4.3s;  animation-duration: 6.8s; width: 5px; height: 5px; }
+.hearth-stage.lit .hearth-embers i { animation-duration: 4.4s; }
+@keyframes ember-rise {
+  0%   { transform: translate3d(0, 0, 0) scale(.6); opacity: 0; }
+  18%  { opacity: .75; }
+  75%  { opacity: .45; }
+  100% { transform: translate3d(18px, -170px, 0) scale(1.1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hearth-embers { display: none; }
+}
+
+.hearth-top {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin-bottom: 18px;
-}
-.home-greet {
-  display: flex;
-  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
 }
-.home-greet h1 {
-  margin: 0;
-  font-size: 26px;
-  line-height: 32px;
-}
-.home-status-pill {
+
+.hearth-status-row {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 0 12px;
+  gap: 8px;
+  padding: 5px 12px;
   border-radius: 999px;
-  background: var(--glass-card);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: var(--glass-inset);
   border: 1px solid var(--glass-border);
-  box-shadow: inset 0 1px 0 var(--glass-spec);
   font-size: 12.5px;
   font-weight: 600;
   color: var(--fg2);
 }
-.home-status-pill .sep { opacity: .45; }
+.hearth-status-row .sep { opacity: .45; }
 
-/* Компактная стеклянная полоса телеметрии в шапке вместо 4 тяжёлых плиток */
+.hearth-main {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, .9fr);
+  gap: 20px;
+  align-items: center;
+}
+.hearth-intro {
+  display: grid;
+  gap: 14px;
+}
+.hearth-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.hearth-flame-orb {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgb(242 153 74 / .28), rgb(217 93 43 / .20));
+  border: 1px solid color-mix(in srgb, var(--acc) 45%, var(--glass-border));
+  box-shadow: inset 0 1px 0 rgb(255 242 224 / .28), 0 12px 28px -10px var(--acc-glow);
+  color: var(--acc-ink);
+  transition: transform .25s var(--spring), box-shadow .3s;
+}
+.hearth-stage.lit .hearth-flame-orb,
+.hearth-flame-orb.talking {
+  background: linear-gradient(145deg, var(--acc), var(--ember));
+  color: var(--on-acc);
+  box-shadow: 0 0 28px -4px var(--acc-glow), inset 0 1px 0 rgb(255 245 230 / .4);
+  animation: flame-soft 2.4s ease-in-out infinite alternate;
+}
+.hearth-flame-orb .ic { width: 26px; height: 26px; stroke-width: 1.85; }
+
+.hearth-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.hearth-clock-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hearth-clock {
+  font-size: 36px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -.035em;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.hearth-copy h1 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 28px;
+  font-weight: 700;
+  color: var(--ink2);
+}
+.hearth-date {
+  font-size: 13px;
+  color: var(--fg3);
+  text-transform: capitalize;
+}
+
+.hearth-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hearth-cta {
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 999px !important;
+}
+.hearth-pill-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 999px !important;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+  color: var(--fg);
+}
+.hearth-pill-btn:hover {
+  background: var(--glass-inset-hover);
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--glass-border));
+}
+.hearth-pill-btn.on {
+  background: linear-gradient(145deg, var(--acc-soft), color-mix(in srgb, var(--acc) 9%, transparent));
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--glass-border));
+  color: var(--acc-ink);
+  box-shadow: 0 8px 20px -12px var(--acc-glow);
+}
+
+/* Правая часть Hero: живая карточка «Сейчас играет / Активный режим / Уют» */
+.hearth-now {
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 rgb(255 240 220 / .08);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.hearth-now-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.hearth-now-art {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  overflow: hidden;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, var(--acc-soft), var(--glass-inset-hover));
+  border: 1px solid var(--glass-border);
+  color: var(--acc-ink);
+}
+.hearth-now-art img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity .3s;
+}
+.hearth-now-art img.ok { opacity: 1; }
+.hearth-now-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.hearth-now-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--acc-ink);
+}
+.hearth-now-meta b {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hearth-now-meta small {
+  font-size: 12.5px;
+  color: var(--fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hearth-now-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+.hearth-now-quick {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.hearth-mini-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-inset);
+  color: var(--fg2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background-color .15s, border-color .15s, color .15s;
+}
+.hearth-mini-chip:hover { background: var(--glass-inset-hover); color: var(--fg); border-color: var(--line2); }
+.hearth-mini-chip.on { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 48%, transparent); color: var(--acc-ink); }
+.hearth-mini-chip .ic { width: 13.5px; height: 13.5px; color: var(--acc); flex: none; }
+
+/* Компактная стеклянная полоса телеметрии в шапке Hero */
 .sys-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
-  padding: 5px 8px 5px 12px;
+  padding: 4px 8px 4px 11px;
   border-radius: 999px;
-  background: var(--glass-card);
-  backdrop-filter: blur(20px) saturate(145%);
-  -webkit-backdrop-filter: blur(20px) saturate(145%);
+  background: var(--glass-inset);
   border: 1px solid var(--glass-border);
-  box-shadow: var(--card-shadow);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--fg2);
 }
 .sys-seg {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 6px;
+  gap: 5px;
+  padding: 2px 5px;
   border-radius: 999px;
   white-space: nowrap;
 }
-.sys-seg .ic { width: 13.5px; height: 13.5px; color: var(--acc); }
-.sys-seg.link {
-  color: var(--fg2);
-  transition: color .15s, background-color .15s;
-}
+.sys-seg .ic { width: 13px; height: 13px; color: var(--acc); }
+.sys-seg.link { color: var(--fg2); transition: color .15s, background-color .15s; }
 .sys-seg.link:hover { color: var(--fg); background: var(--glass-inset-hover); }
-.sys-div { width: 1px; height: 14px; background: var(--line); }
+.sys-div { width: 1px; height: 13px; background: var(--line); }
 .sys-vram-btn {
   display: inline-grid; place-items: center;
-  width: 24px; height: 24px;
+  width: 22px; height: 22px;
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--acc) 36%, var(--glass-border));
   background: var(--acc-soft);
@@ -883,14 +1136,72 @@ textarea { height: auto; }
   transition: filter .15s, transform .14s;
 }
 .sys-vram-btn:hover { filter: brightness(1.12); transform: scale(1.06); }
-.sys-vram-btn .ic { width: 12px; height: 12px; }
+.sys-vram-btn .ic { width: 11px; height: 11px; }
 
-/* Основная сетка Главной: 2 чистых пространства */
+/* ---------- Уровень 2: Лента сценариев дома (Scene Ribbon) ---------- */
+.scene-ribbon {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.scene-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--glass-card);
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--card-shadow);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  transition: transform .18s var(--spring), border-color .18s, box-shadow .18s, background-color .18s;
+}
+.scene-tile:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--glass-border));
+  box-shadow: inset 0 1px 0 var(--glass-spec), 0 16px 34px -20px rgb(0 0 0 / .75), 0 0 24px -12px var(--acc-glow);
+}
+.scene-tile:active { transform: scale(.98); }
+.scene-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 13px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--glass-inset-hover);
+  border: 1px solid var(--glass-border);
+  color: var(--acc-ink);
+}
+.scene-tile[data-sc="morning"] .scene-badge { background: rgb(245 184 82 / .16); color: #ffd485; border-color: rgb(245 184 82 / .28); }
+.scene-tile[data-sc="work"] .scene-badge    { background: rgb(118 162 214 / .16); color: #b5d5f7; border-color: rgb(118 162 214 / .28); }
+.scene-tile[data-sc="evening"] .scene-badge { background: rgb(242 138 64 / .18); color: #ffc896; border-color: rgb(242 138 64 / .32); }
+.scene-tile[data-sc="sleep"] .scene-badge   { background: rgb(168 146 214 / .16); color: #d5c6f7; border-color: rgb(168 146 214 / .28); }
+:root[data-theme="light"] .scene-tile[data-sc="morning"] .scene-badge { color: #b26e0c; }
+:root[data-theme="light"] .scene-tile[data-sc="work"] .scene-badge    { color: #2b5b92; }
+:root[data-theme="light"] .scene-tile[data-sc="evening"] .scene-badge { color: #b85214; }
+:root[data-theme="light"] .scene-tile[data-sc="sleep"] .scene-badge   { color: #5c4594; }
+
+.scene-badge .ic { width: 19px; height: 19px; }
+.scene-copy { display: grid; gap: 1px; min-width: 0; }
+.scene-copy b { font-size: 14.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-copy small { font-size: 12px; color: var(--fg3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- Уровень 3: Сбалансированное пространство (Беседа + Уют и дом) ---------- */
 .home {
   display: grid !important;
-  grid-template-columns: minmax(0, 1.56fr) minmax(320px, 1fr) !important;
-  gap: 20px !important;
-  align-items: start !important;
+  grid-template-columns: minmax(0, 1.32fr) minmax(330px, 1fr) !important;
+  gap: 18px !important;
+  align-items: stretch !important;
+}
+.home.chat-expanded {
+  grid-template-columns: minmax(0, 1fr) !important;
 }
 
 /* Чат — тёплое стеклянное окно беседы */
@@ -901,26 +1212,22 @@ textarea { height: auto; }
   border: 1px solid var(--glass-border) !important;
   border-radius: var(--r-lg) !important;
   box-shadow: var(--card-shadow) !important;
-  height: clamp(500px, calc(100vh - var(--dock-h) - 108px), 780px) !important;
-  min-height: 470px !important;
-  position: sticky;
-  top: 24px;
+  height: 500px !important;
+  min-height: 440px !important;
+  position: static !important;
+  transition: height .28s var(--ease);
+}
+.home.chat-expanded .tg {
+  height: clamp(560px, 72vh, 840px) !important;
 }
 .tg-h {
-  height: 62px;
+  height: 60px;
   padding: 0 16px;
   border-bottom: 1px solid var(--glass-border);
   background: rgb(255 236 214 / .02);
 }
-.tg-body {
-  padding: 18px 20px;
-  gap: 6px;
-}
-.b {
-  border-radius: 16px;
-  padding: 10px 14px;
-  line-height: 1.48;
-}
+.tg-body { padding: 16px 18px; gap: 6px; }
+.b { border-radius: 16px; padding: 10px 14px; line-height: 1.48; }
 .b.me {
   background: linear-gradient(145deg, color-mix(in srgb, var(--acc) 24%, transparent), color-mix(in srgb, var(--acc) 14%, transparent));
   border: 1px solid color-mix(in srgb, var(--acc) 28%, transparent);
@@ -933,10 +1240,7 @@ textarea { height: auto; }
   color: var(--fg);
   border-bottom-left-radius: 5px;
 }
-.tg-empty {
-  gap: 8px;
-  max-width: 340px;
-}
+.tg-empty { gap: 8px; max-width: 340px; }
 .tg-empty-icon {
   width: 48px; height: 48px;
   margin: 0 auto 4px;
@@ -973,7 +1277,7 @@ textarea { height: auto; }
   color: var(--acc-ink);
 }
 .tg-f {
-  min-height: 64px;
+  min-height: 62px;
   padding: 10px 14px;
   border-top: 1px solid var(--glass-border);
   background: rgb(255 236 214 / .018);
@@ -986,29 +1290,83 @@ textarea { height: auto; }
   border: 1px solid var(--glass-border);
 }
 
-/* Правая колонка Главной — сбалансированный пульт уюта */
+/* Правая колонка Главной — единая стеклянная станция уюта с вкладками */
 .rail {
   display: grid !important;
   gap: 16px !important;
   align-content: start !important;
   height: auto !important;
 }
+.lounge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 500px;
+}
+.lounge-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.lounge-tabs {
+  display: inline-flex;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 3px;
+  gap: 2px;
+}
+.lounge-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--fg2);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color .15s, color .15s;
+}
+.lounge-tab:hover { color: var(--fg); }
+.lounge-tab.on {
+  background: var(--seg-on);
+  color: var(--fg);
+  box-shadow: inset 0 1px 0 var(--glass-spec), 0 2px 8px -4px rgb(0 0 0 / .35);
+}
+.lounge-tab .ic { width: 14.5px; height: 14.5px; color: var(--acc); }
 
-/* Активная плашка в правой колонке */
-.live-deck {
-  padding: 14px 16px !important;
-  border-color: color-mix(in srgb, var(--acc) 35%, var(--glass-border)) !important;
-  background: linear-gradient(155deg, color-mix(in srgb, var(--acc) 14%, transparent), rgb(26 19 14 / .62)) !important;
+.lounge-body {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  flex: 1;
 }
-:root[data-theme="light"] .live-deck {
-  background: linear-gradient(155deg, color-mix(in srgb, var(--acc) 12%, rgb(255 251 245 / .86)), rgb(255 251 245 / .74)) !important;
+
+/* Вкладка «Таймеры и ПК» внутри правой станции */
+.timer-quick-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
-.live-deck-head {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--acc-ink);
-  margin-bottom: 10px;
+.lounge-section-lbl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--fg3);
+  margin-top: 2px;
 }
+
 .live-deck-list { display: grid; gap: 6px; }
 .live-row {
   background: var(--glass-inset) !important;
@@ -1017,10 +1375,9 @@ textarea { height: auto; }
   padding: 8px 10px !important;
 }
 
-/* Сценарии — аккуратные стеклянные плитки 2×2 */
 .quick-head {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 10px; margin-bottom: 14px;
+  gap: 10px; margin-bottom: 12px;
 }
 .quick-link {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1063,35 +1420,10 @@ textarea { height: auto; }
 }
 .scen-btn .ic { width: 17px; height: 17px; color: var(--acc); flex: none; }
 
-.quick-util {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
-  gap: 7px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--glass-border);
-}
-.quick-util > .btn {
-  justify-content: center;
-  padding: 0 9px;
-  font-size: 12.5px;
-  background: var(--glass-inset);
-  border: 1px solid var(--glass-border);
-}
-.quick-util > .btn:hover {
-  background: var(--glass-inset-hover);
-  border-color: var(--line2);
-}
-.quick-util > .btn.on {
-  background: var(--acc-soft);
-  border-color: color-mix(in srgb, var(--acc) 45%, transparent);
-  color: var(--acc-ink);
-}
-
 /* Компактная панель ПК */
 .pc-bar {
-  margin-top: 12px;
-  padding: 9px 11px !important;
+  margin-top: 4px;
+  padding: 10px 12px !important;
 }
 
 /* Карточка «Камин и атмосфера» */
@@ -1102,7 +1434,6 @@ textarea { height: auto; }
   gap: 12px;
   width: 100%;
   padding: 12px 14px;
-  margin-bottom: 10px;
   border-radius: 15px;
   border: 1px solid color-mix(in srgb, var(--acc) 26%, var(--glass-border));
   background: linear-gradient(135deg, rgb(242 136 52 / .14) 0%, rgb(206 84 36 / .07) 60%, var(--glass-inset) 100%);
@@ -1184,7 +1515,7 @@ textarea { height: auto; }
 .amb-btn .ic { color: var(--acc); }
 
 /* ==========================================================================
-   Улучшенная раскладка хабов: Знания, Колонка, Медиа, Студия, Вход
+   Полировка всех разделов: Знания, Колонка, Подключения, Студия, Профиль
    ========================================================================== */
 .mem-split {
   display: grid;
@@ -1196,8 +1527,8 @@ textarea { height: auto; }
   .mem-split { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Убираем двойные табы на странице «Колонка» */
-.speaker-head {
+/* Шапки с встроенным переключателем без двойных полос */
+.speaker-head, .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1205,30 +1536,109 @@ textarea { height: auto; }
   flex-wrap: wrap;
   margin-bottom: 18px;
 }
-.speaker-head h1 { margin: 0; }
-
-/* Экран входа (Gate) — тёплое стекло по центру */
-.gate {
-  position: relative;
-}
-.gate-card {
-  max-width: 390px;
-  padding: 32px 28px;
-  gap: 14px;
-}
-.gate-brand {
+.speaker-head h1, .section-head h1 { margin: 0; }
+.section-head-right {
   display: flex;
   align-items: center;
-  gap: 12px;
-  font-size: 19px;
-  font-weight: 750;
-  letter-spacing: -.02em;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.gate-card input {
-  background: var(--input-bg);
-  height: 42px;
-  border-radius: 12px;
+.profile-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
 }
+.profile-head-who {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.profile-head .asst-sub-seg { margin-bottom: 0; }
+
+/* Карточки подключений и плагинов */
+.cn {
+  transition: transform .2s var(--spring), border-color .2s, box-shadow .2s !important;
+}
+.cn:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--acc) 40%, var(--glass-border)) !important;
+}
+.cn.on {
+  border-color: color-mix(in srgb, var(--acc) 32%, var(--glass-border)) !important;
+}
+.cn-av {
+  background: var(--glass-inset-hover) !important;
+  border: 1px solid var(--glass-border);
+}
+.cn.on .cn-av, .cn-mh .cn-av {
+  background: linear-gradient(145deg, var(--acc-soft), color-mix(in srgb, var(--ember) 14%, transparent)) !important;
+  border-color: color-mix(in srgb, var(--acc) 36%, transparent);
+}
+
+/* Стеклянные контролы в Студии, Расписании и Заметках */
+.day-pill, .icon-pick, .note-tag, .chap-btn {
+  background: var(--glass-inset) !important;
+  border: 1px solid var(--glass-border) !important;
+  color: var(--fg2);
+}
+.day-pill:hover, .icon-pick:hover, .note-tag:hover, .chap-btn:hover {
+  background: var(--glass-inset-hover) !important;
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--glass-border)) !important;
+  color: var(--fg);
+}
+.day-pill.active, .icon-pick.active, .note-tag.on, .chap-btn.on {
+  background: var(--acc-soft) !important;
+  border-color: color-mix(in srgb, var(--acc) 55%, var(--glass-border)) !important;
+  color: var(--acc-ink) !important;
+}
+.pod-archive { margin-top: 18px; }
+.pod-list { display: grid; gap: 10px; }
+.pod-row { padding: 12px 14px; display: grid; gap: 10px; }
+.pod-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.pod-meta { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.pod-meta b { font-size: 14px; }
+.pod-meta small { font-size: 12px; color: var(--fg3); }
+.pod-turns {
+  display: grid; gap: 6px; padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  font-size: 13px; line-height: 1.5; color: var(--ink2);
+}
+.pod-turns p { margin: 0; }
+.note-rag-box {
+  margin-top: 12px; padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--acc-soft);
+  border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--glass-border));
+  display: grid; gap: 8px;
+}
+.note-rag-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--acc-ink); }
+.note-rag-head b { display: inline-flex; align-items: center; gap: 6px; }
+.chap-list { display: grid; gap: 4px; max-height: 200px; overflow-y: auto; padding-top: 6px; border-top: 1px solid var(--glass-border); }
+.chap-btn { padding: 6px 10px; border-radius: 9px; font-size: 12.5px; text-align: left; cursor: pointer; }
+.dj-saved-wrap { position: relative; display: flex; min-width: 0; }
+.dj-saved-wrap > .scen-btn { width: 100%; padding-right: 30px !important; }
+.dj-saved-del {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg3); display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.dj-saved-del:hover { color: var(--bad); background: var(--glass-inset-hover); }
+.dj-saved-del .ic { width: 13px; height: 13px; }
+.cx-search {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--input-bg); border: 1px solid var(--glass-border);
+  border-radius: 10px; padding: 0 10px;
+}
+.cx-search input { border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 0; }
+
+/* Экран входа (Gate) — тёплое стекло по центру */
+.gate { position: relative; }
+.gate-card { max-width: 390px; padding: 32px 28px; gap: 14px; }
+.gate-brand { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 750; letter-spacing: -.02em; }
+.gate-card input { background: var(--input-bg); height: 42px; border-radius: 12px; }
 .gate-card .btn { height: 42px; }
 
 /* Спокойные статусные точки */
@@ -1276,8 +1686,11 @@ dialog::backdrop {
    Адаптив (планшеты и телефоны)
    ========================================================================== */
 @media (max-width: 1120px) {
+  .hearth-main { grid-template-columns: minmax(0, 1fr); }
+  .scene-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home { grid-template-columns: minmax(0, 1fr) !important; }
-  .tg { height: 520px !important; position: static; }
+  .tg { height: 480px !important; }
+  .lounge-card { min-height: 0; }
 }
 
 @media (max-width: 860px) {
@@ -1287,10 +1700,13 @@ dialog::backdrop {
   .savebar { bottom: calc(76px + env(safe-area-inset-bottom)); }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
   .view { padding: 18px 14px calc(94px + env(safe-area-inset-bottom)) !important; }
-  .home-head { gap: 10px; margin-bottom: 14px; }
-  .home-greet h1 { font-size: 22px; line-height: 28px; }
+  .hearth-stage { padding: 18px 16px !important; }
+  .hearth-clock { font-size: 30px; }
+  .hearth-copy h1 { font-size: 20px; line-height: 24px; }
   .sys-pill { width: 100%; justify-content: space-between; border-radius: 14px; padding: 6px 10px; }
-  .quick-util { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scene-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .scene-tile { padding: 12px; gap: 10px; }
+  .scene-badge { width: 34px; height: 34px; border-radius: 10px; }
 
   .mbar {
     background: var(--glass-side) !important;

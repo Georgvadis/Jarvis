@@ -2,6 +2,7 @@
   import { api, icon, jelly, toast } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
 
+  let { embedded = false } = $props();
   const controller = new AbortController();
   const { signal } = controller;
   const fallbackPresets = [
@@ -139,20 +140,7 @@
   }
 </script>
 
-<section class="card" aria-label="Камин и атмосфера">
-  <h2>
-    {@html icon("flame")} Камин и атмосфера
-    <span class="amb-head-actions">
-      <button class="btn sm ghost" type="button" onclick={() => { showAdd = !showAdd; }} title="Добавить радиопоток">
-        {@html icon(showAdd ? "x" : "plus")} Радио
-      </button>
-      {#if active}
-        <button class="btn sm ghost" type="button" disabled={busy} onclick={() => toggle(active)}>
-          {@html icon("stop", "solid")} Стоп
-        </button>
-      {/if}
-    </span>
-  </h2>
+{#snippet body()}
   {#if showAdd}
     <form class="mode-drawer amb-add" onsubmit={addStation}>
       <input type="text" maxlength="40" placeholder="Название станции" bind:value={newName} disabled={busy}>
@@ -194,7 +182,20 @@
     {/each}
   </div>
   <div class="amb-vol">
-    <span class="lbl">Громкость <b class="val">{displayVol}%</b></span>
+    <span class="lbl">
+      Громкость
+      <span class="amb-head-actions">
+        <button class="btn sm ghost" type="button" onclick={() => { showAdd = !showAdd; }} title="Добавить радиопоток">
+          {@html icon(showAdd ? "x" : "plus")} Радио
+        </button>
+        {#if active}
+          <button class="btn sm ghost" type="button" disabled={busy} onclick={() => toggle(active)}>
+            {@html icon("stop", "solid")} Стоп
+          </button>
+        {/if}
+        <b class="val">{displayVol}%</b>
+      </span>
+    </span>
     <div use:mountVol role="slider" aria-label="Громкость фона и радио" aria-valuemin="5" aria-valuemax="100" aria-valuenow={displayVol}></div>
   </div>
   {#if active}
@@ -210,4 +211,13 @@
       </div>
     </div>
   {/if}
-</section>
+{/snippet}
+
+{#if embedded}
+  {@render body()}
+{:else}
+  <section class="card" aria-label="Камин и атмосфера">
+    <h2>{@html icon("flame")} Камин и атмосфера</h2>
+    {@render body()}
+  </section>
+{/if}

@@ -13,8 +13,8 @@
   flex-wrap: wrap;
   padding: 16px 18px;
   border-radius: 16px;
-  background: var(--bg0);
-  border: 1px solid var(--soft-line);
+  background: var(--glass-inset, var(--raise));
+  border: 1px solid var(--glass-border, var(--soft-line));
 }
 
 .versionInfo {
@@ -127,8 +127,8 @@
   gap: 14px;
   padding: 18px;
   border-radius: 16px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--acc) 11%, var(--bg0)), var(--bg0));
-  border: 1px solid color-mix(in srgb, var(--acc) 32%, var(--line));
+  background: linear-gradient(135deg, var(--acc-soft), var(--glass-inset, var(--raise)));
+  border: 1px solid color-mix(in srgb, var(--acc) 36%, var(--glass-border, var(--line)));
 }
 
 .releaseHead {
@@ -326,8 +326,8 @@
   width: 100%;
   padding: 12px 16px;
   border-radius: 14px;
-  background: var(--bg0);
-  border: 1px solid var(--soft-line);
+  background: var(--glass-inset, var(--raise));
+  border: 1px solid var(--glass-border, var(--soft-line));
 }
 
 .prefs {
@@ -335,8 +335,8 @@
   gap: 14px;
   padding: 16px 18px;
   border-radius: 16px;
-  background: var(--bg0);
-  border: 1px solid var(--soft-line);
+  background: var(--glass-inset, var(--raise));
+  border: 1px solid var(--glass-border, var(--soft-line));
 }
 
 .prefRow {
