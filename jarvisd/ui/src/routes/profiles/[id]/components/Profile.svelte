@@ -1,7 +1,7 @@
 <script>
   import { onMount, untrack } from "svelte";
   import { goto } from "$app/navigation";
-  import { api, setDirty, toast } from "#helpers/core.js";
+  import { api, icon, setDirty, toast } from "#helpers/core.js";
   import { refreshRoute, reload, S } from "#state/panelState.js";
   import { profilePath } from "#helpers/paths.js";
   import { createProfile, profilePayload } from "./profileDraft.js";
@@ -133,16 +133,17 @@
   voice: initial.voice, ttsVoice: initial.tts_voice,
   ttsProvider: initial.engine === "eleven_realtime" ? "elevenlabs" : initial.tts_engine,
   volume: initial.volume,
+  ttsSpeed: initial.tts_speed || 1.0,
 }} onedit={edit} {previewModels} />
 <ProfileLighting initial={initial.led} previewAvailable={Boolean(S.speaker.leds)}
   globallyEnabled={S.settings.led?.enabled !== false} onedit={editLighting} />
 
 <div class="savebar">
-  <button class="btn primary" type="button" id="p-save" disabled={Boolean(working)} onclick={save}>{isNew ? "Создать" : "Сохранить"}</button>
+  <button class="btn primary" type="button" id="p-save" disabled={Boolean(working)} onclick={save}>{@html icon(isNew ? "plus" : "save")}{isNew ? "Создать" : "Сохранить"}</button>
   {#if !isNew && !active}
     <button class="btn" type="button" id="p-activate" disabled={Boolean(working)} onclick={activate}
-      data-tip="Этот ассистент будет отвечать на «Джарвис»">Сделать активным</button>
-    <button class="btn ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={remove}>Удалить</button>
+      data-tip="Этот ассистент будет отвечать на «Джарвис»">{@html icon("check")}Сделать активным</button>
+    <button class="btn ghost danger" type="button" id="p-del" disabled={Boolean(working)} onclick={remove}>{@html icon("trash")}Удалить</button>
   {/if}
   <span class="dirty" class:hidden={!dirty} id="dirty">есть несохранённые изменения</span>
 </div>

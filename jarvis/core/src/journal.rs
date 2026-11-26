@@ -19,6 +19,12 @@ pub struct Turn {
     pub live: bool,
     pub route: String,
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stt_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tts_ms: Option<u64>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub error: String,
 }
@@ -112,5 +118,10 @@ impl Journal {
         let id = self.new_turn("Джарвис", "");
         self.update(id, |t| t.error = msg.into());
         log::info!("{msg}");
+    }
+
+    /// Очистить ленту чата в веб-панели (постоянная память не затрагивается).
+    pub fn clear(&self) {
+        self.st.lock().unwrap().items.clear();
     }
 }

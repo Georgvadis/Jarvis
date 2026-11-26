@@ -46,6 +46,12 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "wake_sensitivity",
         "mic_boost_db",
         "mic_gain_db",
+        "vad_threshold",
+        "vad_silence_ms",
+        "thinking_sound",
+        "sound_theme",
+        "whisper_mode",
+        "notify_token",
         "memory",
         "follow_up_s",
         "city",
@@ -62,6 +68,7 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "train_limit_mb",
         "night",
         "radio",
+        "ambient_volume",
     ];
     let mut out = serde_json::to_value(&*s)?;
     for (k, v) in input {
@@ -125,8 +132,11 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
     next.wake_sensitivity = next.wake_sensitivity.clamp(1, 10);
     next.mic_boost_db = next.mic_boost_db.clamp(0, 18);
     next.mic_gain_db = next.mic_gain_db.clamp(0, 30);
+    next.vad_threshold = next.vad_threshold.clamp(100, 3000);
+    next.vad_silence_ms = next.vad_silence_ms.clamp(300, 2500);
     next.follow_up_s = next.follow_up_s.clamp(0.0, 30.0);
     next.volume = next.volume.clamp(0, 100);
+    next.ambient_volume = next.ambient_volume.clamp(5, 100);
     next.train_limit_mb = next.train_limit_mb.clamp(1, MAX_TRAIN_LIMIT_MB);
     next.city = next.city.trim().into();
     next.speaker_room = next.speaker_room.trim().into();
@@ -177,6 +187,12 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
     p.stt_engine = p.stt_engine.trim().into();
     p.llm_engine = p.llm_engine.trim().into();
     p.tts_engine = p.tts_engine.trim().into();
+    p.tts_fallback_engine = p.tts_fallback_engine.trim().into();
+    p.tts_speed = if p.tts_speed.is_finite() && p.tts_speed > 0.0 {
+        p.tts_speed.clamp(0.75, 1.35)
+    } else {
+        1.0
+    };
     p.llm_plugin = p.llm_plugin.trim().into();
     p.stt_model = p.stt_model.trim().into();
     p.llm_model = p.llm_model.trim().into();
@@ -185,6 +201,7 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
         (&p.stt_engine, "Неверный идентификатор плагина распознавания"),
         (&p.llm_engine, "Неверный идентификатор текстового провайдера"),
         (&p.tts_engine, "Неверный идентификатор плагина озвучки"),
+        (&p.tts_fallback_engine, "Неверный идентификатор резервной озвучки"),
         (&p.llm_plugin, "Неверный идентификатор текстового плагина"),
     ] {
         if !id.is_empty() && !crate::plugins::valid_id(id) {

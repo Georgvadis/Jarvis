@@ -178,6 +178,18 @@ impl Dialog {
         self.journal.update(st.turn, |t| t.answer = a);
     }
 
+    pub fn set_timings(&self, stt_ms: Option<u64>, llm_ms: Option<u64>, tts_ms: Option<u64>) {
+        let turn = self.st.lock().unwrap().turn;
+        if turn == 0 {
+            return;
+        }
+        self.journal.update(turn, |t| {
+            if let Some(v) = stt_ms { t.stt_ms = Some(v); }
+            if let Some(v) = llm_ms { t.llm_ms = Some(v); }
+            if let Some(v) = tts_ms { t.tts_ms = Some(v); }
+        });
+    }
+
     /// Модель произнесла слышимый звук: разговор жив; первый звук после реплики — задержка ответа.
     pub fn heard_voice(&self) {
         let mut st = self.st.lock().unwrap();

@@ -4,6 +4,11 @@
 
 mod alice;
 mod alice_music;
+mod ambient;
+mod debate;
+mod focus;
+mod modes;
+mod telegram_bot;
 mod launchpatch;
 mod audio;
 mod chatgpt;
@@ -261,26 +266,6 @@ async fn run(f: Flags, store: settings::Store) {
             host.clone().restore_pending_plugins().await;
         });
     }
-    {
-        let host = host.clone();
-        tokio::spawn(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            host.stop_all().await;
-            std::process::exit(0);
-        });
-    }
-    #[cfg(unix)]
-    {
-        let host = host.clone();
-        tokio::spawn(async move {
-            if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                s.recv().await;
-                log::info!("завершаюсь: останавливаю плагины");
-                host.stop_all().await;
-                std::process::exit(0);
-            }
-        });
-    }
     // микрофон и слово «Джарвис»
     let mic = {
         let st = store.clone();
@@ -316,13 +301,68 @@ async fn run(f: Flags, store: settings::Store) {
             }
         }));
     }
+    let ambient = ambient::Ambient::new(host.clone(), store.clone());
+    let focus = focus::Focus::new(leds.clone(), ambient.clone());
+    let modes = modes::ModeManager::new();
+    {
+        let host = host.clone();
+        let ambient = ambient.clone();
+        let focus = focus.clone();
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            focus.stop();
+            ambient.stop();
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            host.stop_all().await;
+            std::process::exit(0);
+        });
+    }
+    #[cfg(unix)]
+    {
+        let host = host.clone();
+        let ambient = ambient.clone();
+        let focus = focus.clone();
+        tokio::spawn(async move {
+            if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                s.recv().await;
+                log::info!("завершаюсь: останавливаю плагины");
+                focus.stop();
+                ambient.stop();
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                host.stop_all().await;
+                std::process::exit(0);
+            }
+        });
+    }
     let mut tools = tools::Tools::new(host.clone(), store.clone());
     tools.memory = Some(memory.clone());
+    tools.leds = Some(leds.clone());
+    tools.ambient = Some(ambient.clone());
+    tools.modes = Some(modes.clone());
+    {
+        let ec = engine_cell.clone();
+        tools.on_debate = Some(Arc::new(move |topic: String| {
+            if let Some(e) = ec.get().and_then(|w| w.upgrade()) {
+                debate::spawn_debate(e, debate::DebateParams::from_topic(topic));
+            }
+        }));
+    }
+    {
+        let ec = engine_cell.clone();
+        let fc = focus.clone();
+        tools.on_focus = Some(Arc::new(move |text: &str| {
+            let e = ec.get().and_then(|w| w.upgrade())?;
+            fc.fast_command(&e, text)
+        }));
+    }
     for (target, queue) in [(&mut tools.music, false), (&mut tools.music_queue, true)] {
-        let (music, host) = (music.clone(), host.clone());
+        let (music, host, amb) = (music.clone(), host.clone(), ambient.clone());
         *target = Some(Arc::new(move |q| {
-            let (music, host) = (music.clone(), host.clone());
-            Box::pin(async move { music.play(&host, &q, queue).await })
+            let (music, host, amb) = (music.clone(), host.clone(), amb.clone());
+            Box::pin(async move {
+                amb.stop();
+                music.play(&host, &q, queue).await
+            })
         }));
     }
     tools.music_ctl = Some({
@@ -360,11 +400,17 @@ async fn run(f: Flags, store: settings::Store) {
     let _ = engine_cell.set(Arc::downgrade(&engine));
     {
         let e = Arc::downgrade(&engine);
-        music::volume_loop(music, host.clone(), move || e.upgrade().is_some_and(|e| e.talking() || e.player.playing()));
+        let amb = ambient.clone();
+        music::volume_loop(music, host.clone(), move || {
+            let d = e.upgrade().is_some_and(|e| e.talking() || e.player.playing());
+            amb.set_duck(d);
+            d
+        });
     }
     memory.set_summarizer(Some(engine.summarizer()));
     engine.run(det);
-    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine);
+    telegram_bot::spawn(engine.clone(), host.clone(), proxy.clone(), ambient.clone(), focus.clone());
+    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes);
     #[cfg(unix)]
     {
         let app = app.clone();

@@ -31,6 +31,16 @@ pub struct Tools {
     pub music_cancel: Option<Arc<dyn Fn() -> crate::plugins::BoxFut<()> + Send + Sync>>,
     /// Общая память: «вспомни», «забудь/запомни».
     pub memory: Option<Arc<crate::memory::Memory>>,
+    /// Подсветка кольца (для мгновенного отклика при смене ассистента голосом).
+    pub leds: Option<Arc<crate::led::Leds>>,
+    /// Фоновые звуки и интернет-радио.
+    pub ambient: Option<Arc<crate::ambient::Ambient>>,
+    /// Запуск мини-подкаста / спора двух ассистентов.
+    pub on_debate: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    /// Фокус-режим (Помодоро) голосом.
+    pub on_focus: Option<Arc<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    /// Интерактивные режимы (переводчик, RPG-квест, викторина).
+    pub modes: Option<Arc<crate::modes::ModeManager>>,
 }
 
 const DAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -51,7 +61,7 @@ fn as_str(v: &Value) -> String {
 
 impl Tools {
     pub fn new(host: Arc<Host>, store: Store) -> Tools {
-        Tools { host, store, music: None, music_ctl: None, music_fast:None, music_queue: None, music_cancel: None, memory: None }
+        Tools { host, store, music: None, music_ctl: None, music_fast:None, music_queue: None, music_cancel: None, memory: None, leds: None, ambient: None, on_debate: None, on_focus: None, modes: None }
     }
     pub async fn cancel_loading_music(&self) {
         if let Some(cancel) = &self.music_cancel {
@@ -118,8 +128,43 @@ impl Tools {
         }
     }
 
+    /// Мгновенные встроенные команды YaJarvis (Фокус, Фон/Радио, Спор) без обращения к Алисе и облаку.
+    pub fn fast_local(&self, text: &str) -> Option<String> {
+        if let Some(on_focus) = &self.on_focus
+            && let Some(ans) = on_focus(text)
+        {
+            return Some(ans);
+        }
+        if let Some(amb) = &self.ambient
+            && let Some(ans) = amb.fast_command(text)
+        {
+            return Some(ans);
+        }
+        if let Some(on_debate) = &self.on_debate {
+            let trimmed = text.trim();
+            let low = trimmed.to_lowercase();
+            for pat in ["поспорьте про ", "поспорьте о ", "поспорьте об ", "подкаст про ", "подкаст о ", "устройте спор про ", "устройте спор о "] {
+                if let Some(pos) = low.find(pat) {
+                    let tail = if trimmed.len() == low.len() {
+                        trimmed[pos + pat.len()..].trim()
+                    } else {
+                        low[pos + pat.len()..].trim()
+                    };
+                    if !tail.is_empty() {
+                        on_debate(tail.to_string());
+                        return Some(format!("Запускаю спор на тему «{tail}»!"));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Быстрая команда Яндекс Умного дома без модели.
     pub async fn fast(&self, text: &str) -> Option<String> {
+        if let Some(ans) = self.fast_local(text) {
+            return Some(ans);
+        }
         if !self.has_token() || !self.use_ch("yandex") {
             return None;
         }
@@ -266,6 +311,26 @@ impl Tools {
             defs.push(def("recall_conversation"));
             defs.push(def("edit_memory"));
         }
+        let assistant_names: Vec<String> = self.store.with(|s| {
+            s.profiles.iter().map(|p| {
+                if p.id == s.active { format!("{} (активен)", p.name) } else { p.name.clone() }
+            }).collect()
+        });
+        if !assistant_names.is_empty() {
+            defs.push(json!({
+                "type": "function",
+                "name": "switch_assistant",
+                "description": format!("Переключить активного ассистента/голос на колонке по просьбе хозяина («переключи ассистента на ...», «позови ...», «включи голос ...», «какие есть ассистенты»). Доступные ассистенты: {}.", assistant_names.join(", ")),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["switch", "list"], "description": "switch — переключить на ассистента по имени; list — перечислить всех ассистентов"},
+                        "name": {"type": "string", "description": "имя (или часть имени) нужного ассистента из списка"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
         defs.extend(self.host.tools());
         if self.has_token() && self.use_ch("yandex") && self.has_catalog().await {
             defs.push(def("smart_home"));
@@ -304,6 +369,47 @@ impl Tools {
                 return mq(q).await;
             }
             return m(q).await;
+        }
+        if name == "switch_assistant" {
+            let action = field("action");
+            let target = field("name").to_lowercase();
+            if action == "list" || target.is_empty() {
+                let list = self.store.with(|s| {
+                    s.profiles.iter().map(|p| {
+                        if p.id == s.active { format!("{} (сейчас активен)", p.name) } else { p.name.clone() }
+                    }).collect::<Vec<_>>().join(", ")
+                });
+                return format!("Доступные ассистенты: {list}.");
+            }
+            let found = self.store.with(|s| {
+                s.profiles.iter().find(|p| {
+                    let pn = p.name.to_lowercase();
+                    pn == target || pn.contains(&target) || p.id.to_lowercase() == target
+                }).map(|p| (p.id.clone(), p.name.clone()))
+            });
+            return match found {
+                Some((id, pname)) => {
+                    let res = self.store.update(|s| {
+                        s.active = id.clone();
+                        Ok::<(), std::io::Error>(())
+                    });
+                    match res {
+                        Ok(()) => {
+                            if let Some(leds) = &self.leds {
+                                let l = self.store.led_for();
+                                leds.configure(&l);
+                                leds.show(crate::led::Mode::Listening, &l.listening, l.brightness, Duration::from_secs(2));
+                            }
+                            format!("Переключил ассистента на «{pname}». Со следующего обращения будет отвечать он.")
+                        }
+                        Err(e) => format!("Не удалось переключить ассистента: {e}"),
+                    }
+                }
+                None => {
+                    let list = self.store.with(|s| s.profiles.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "));
+                    format!("Ассистент «{target}» не найден. Доступны: {list}.")
+                }
+            };
         }
         if name == "music_control"
             && let Some(m) = &self.music_ctl

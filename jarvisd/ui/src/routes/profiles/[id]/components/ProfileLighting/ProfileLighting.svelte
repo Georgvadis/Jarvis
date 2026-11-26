@@ -9,18 +9,29 @@
 
 <script>
   import { onMount, untrack } from "svelte";
-  import { api } from "#helpers/core.js";
+  import { api, icon, jelly } from "#helpers/core.js";
 
   let { initial, previewAvailable, globallyEnabled, onedit } = $props();
   const controller = new AbortController();
   const { signal } = controller;
   let led = $state({ ...untrack(() => initial) });
   let intensity = $derived(0.35 + 0.65 * led.brightness / 100);
+  let brightSlider;
+  let lastBright = untrack(() => led.brightness);
 
   onMount(() => () => controller.abort());
 
+  $effect(() => {
+    const v = led.brightness;
+    if (v !== lastBright) {
+      lastBright = v;
+      brightSlider?.set(v, true);
+    }
+  });
+
   function edit(field, value) {
     if (led[field] === value) return;
+    if (field === "brightness") lastBright = value;
     led[field] = value;
     onedit({ [field]: value });
   }
@@ -34,12 +45,21 @@
     edit(mode, color);
     preview(mode);
   }
+
+  function mountBrightness(node) {
+    brightSlider = jelly(node, {
+      label: "Яркость", min: 5, max: 100, step: 5, format: (v) => `${v}%`, value: led.brightness,
+      onInput: (v) => edit("brightness", v),
+      onChange: (v) => { edit("brightness", v); preview("listening"); },
+    });
+    return { destroy: () => { brightSlider.destroy(); brightSlider = undefined; } };
+  }
 </script>
 
 <section class="sec" id="profile-lighting">
   <div class="sec-h">
-    <h2>Подсветка</h2>
-    <p>Цвет кольца у этого ассистента. Нажмите цвет — колонка покажет его на 3 секунды</p>
+    <h2>{@html icon("sun")}Подсветка</h2>
+    <p>Цвет кольца этого ассистента</p>
   </div>
   <div class="sec-b">
     <div id="p-led" class="ledrows">
@@ -63,10 +83,8 @@
       {/each}
     </div>
     <div class="f">
-      <label for="p-br">Яркость <b id="p-br-v" class="val">{led.brightness}%</b></label>
-      <input type="range" id="p-br" min="5" max="100" step="5" value={led.brightness}
-        oninput={(event) => edit("brightness", event.currentTarget.valueAsNumber)}
-        onchange={() => preview("listening")}>
+      <span class="lbl">Яркость <b id="p-br-v" class="val">{led.brightness}%</b></span>
+      <div id="p-br" use:mountBrightness role="slider" aria-label="Яркость" aria-valuemin="5" aria-valuemax="100" aria-valuenow={led.brightness}></div>
     </div>
     {#if !globallyEnabled}
       <p class="note">Сейчас подсветка выключена для всех — включается на странице «Колонка».</p>

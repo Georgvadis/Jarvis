@@ -51,6 +51,9 @@ pub struct Web {
     pub plugins: Arc<Host>,
     pub proxy: Arc<Proxy>,
     pub engine: Arc<crate::engine::Engine>,
+    pub ambient: Arc<crate::ambient::Ambient>,
+    pub focus: Arc<crate::focus::Focus>,
+    pub modes: Arc<crate::modes::ModeManager>,
     pub data_dir: PathBuf,
     pub started: Instant,
     pub telemetry: Arc<crate::telemetry::Telemetry>,
@@ -63,10 +66,20 @@ pub struct Web {
 pub type App = Arc<Web>;
 
 impl Web {
-    pub fn new(store: Store, plugins: Arc<Host>, proxy: Arc<Proxy>, data_dir: PathBuf, engine: Arc<crate::engine::Engine>) -> App {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        store: Store,
+        plugins: Arc<Host>,
+        proxy: Arc<Proxy>,
+        data_dir: PathBuf,
+        engine: Arc<crate::engine::Engine>,
+        ambient: Arc<crate::ambient::Ambient>,
+        focus: Arc<crate::focus::Focus>,
+        modes: Arc<crate::modes::ModeManager>,
+    ) -> App {
         let telemetry=crate::telemetry::Telemetry::start(data_dir.clone());
         let updater = crate::updates::Updater::new(data_dir.clone(), store.clone(), plugins.clone());
-        Arc::new(Web { store, plugins, proxy, engine, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
+        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
     }
 }
 
@@ -164,12 +177,26 @@ pub fn router(app: App) -> Router {
         .route("/api/onboarded", post(plugins::onboarded))
         .route("/api/talk", post(talk::talk))
         .route("/api/say", post(talk::say))
+        .route("/api/mic-level", get(talk::mic_level))
+        .route("/api/local-voices/upload", post(talk::local_voice_upload).layer(DefaultBodyLimit::max(32 << 20)))
+        .route("/api/local-voices/upload-raw", post(talk::local_voice_upload_raw).layer(DefaultBodyLimit::max(16 << 20)))
+        .route("/api/local-voices/{id}", delete(talk::local_voice_delete))
+        .route("/api/ambient", get(talk::ambient_get).post(talk::ambient_set))
+        .route("/api/ambient/stations", post(talk::ambient_station_add))
+        .route("/api/ambient/stations/{id}", delete(talk::ambient_station_delete))
+        .route("/api/focus", get(talk::focus_get).post(talk::focus_set))
+        .route("/api/modes", get(talk::modes_get).post(talk::modes_set))
+        .route("/api/sound-preview", post(talk::sound_preview))
         .route("/api/chatgpt/login", post(chatgpt::login))
         .route("/api/chatgpt", delete(chatgpt::logout))
         .route("/api/backup", get(backup::download))
         .route("/api/backup/restore", post(backup::restore).layer(DefaultBodyLimit::max(jarvis_station::backup::MAX_ZIP + 1)))
         .route("/api/stop", post(talk::stop))
         .route("/api/journal", get(talk::journal))
+        .route("/api/journal/clear", post(talk::journal_clear))
+        .route("/api/debate", post(talk::debate_start))
+        .route("/api/gpu-status", get(talk::gpu_status))
+        .route("/api/gpu-unload", post(talk::gpu_unload))
         .route("/api/speaker/volume", post(talk::volume))
         .route("/api/music", get(music::get).post(music::post))
         .route("/api/youtube", put(music::set_cookies).delete(music::clear_cookies))
@@ -200,6 +227,7 @@ pub fn router(app: App) -> Router {
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/setup", post(auth::setup))
+        .route("/api/notify", post(talk::notify))
         .merge(api)
         .route("/api/{*rest}", any(not_ported))
         .fallback(get(ui::serve))
@@ -230,7 +258,7 @@ async fn guard(State(app): State<App>, ConnectInfo(peer): ConnectInfo<SocketAddr
     if app.store.with(|s| s.lan_only) && !local_ip(peer.ip()) {
         return (StatusCode::FORBIDDEN, "Доступ только из домашней сети").into_response();
     }
-    if req.method() != Method::GET && req.headers().get("x-jarvis").is_none_or(|v| v != "1") {
+    if req.method() != Method::GET && req.uri().path() != "/api/notify" && req.headers().get("x-jarvis").is_none_or(|v| v != "1") {
         return (StatusCode::FORBIDDEN, "нужен заголовок X-Jarvis").into_response();
     }
     let mut resp = next.run(req).await;

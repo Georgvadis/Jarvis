@@ -105,7 +105,7 @@
 <header class="ph ph-row">
   <div>
     <h1>Характеры</h1>
-    <p class="sub">Кто такой Джарвис и как он с вами общается. Характер выбирается в настройках ассистента</p>
+    <p class="sub">Стиль и роль общения ассистента</p>
   </div>
   <div class="actions">
     <button class="btn primary" type="button" onclick={() => openEditor()}>{@html icon("plus")}Новый характер</button>

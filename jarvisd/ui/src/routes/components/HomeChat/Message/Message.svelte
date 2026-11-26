@@ -18,7 +18,7 @@
 
 <script>
   import { untrack } from "svelte";
-  import { icon } from "#helpers/core.js";
+  import { copyText, icon, toast } from "#helpers/core.js";
   import { animateAnswer } from "./animateAnswer.js";
 
   let { row, animate, follow } = $props();
@@ -26,6 +26,15 @@
   let node = $state();
   let previousAnswer;
   let previousSize;
+
+  async function copyAnswer() {
+    try {
+      await copyText(row.answer);
+      toast("Ответ скопирован");
+    } catch {
+      toast("Не удалось скопировать", true);
+    }
+  }
 
   $effect.pre(() => {
     if (row.answer === previousAnswer) return;
@@ -53,6 +62,9 @@
     <span class="t">Отвечает</span>
   {:else if row.kind === "answer"}
     <span class="t" use:animateAnswer={{ text: row.answer, animate, follow, measure: () => previousSize }}></span>
-    <span class="m">{row.time}</span>
+    <span class="m">
+      {row.time}
+      <button type="button" class="b-copy" onclick={copyAnswer} title="Скопировать ответ" aria-label="Скопировать ответ">{@html icon("copy")}</button>
+    </span>
   {/if}
 </div>

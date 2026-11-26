@@ -96,31 +96,45 @@ async fn hash(password: String) -> String {
     tokio::task::spawn_blocking(move || bcrypt::hash(password, 10).unwrap_or_default()).await.unwrap_or_default()
 }
 
+pub fn check_rate_limit(app: &App, ip: std::net::IpAddr) -> Result<(), Response> {
+    let fails = app.fails.lock().unwrap();
+    if let Some(until) = fails.get(&ip).and_then(|f| f.until).filter(|u| Instant::now() < *u) {
+        let wait = (until - Instant::now()).as_secs().max(1);
+        return Err(reply(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": format!("Слишком много попыток. Подождите {wait}s")}),
+        ));
+    }
+    Ok(())
+}
+
+pub fn record_auth_fail(app: &App, ip: std::net::IpAddr) {
+    let mut fails = app.fails.lock().unwrap();
+    let f = fails.entry(ip).or_insert(Fail { n: 0, until: None });
+    f.n += 1;
+    if f.n >= 5 {
+        let d = Duration::from_secs(30 * (f.n as u64 - 4)).min(Duration::from_secs(15 * 60));
+        f.until = Some(Instant::now() + d);
+    }
+}
+
+pub fn clear_auth_fail(app: &App, ip: std::net::IpAddr) {
+    app.fails.lock().unwrap().remove(&ip);
+}
+
 pub async fn login(State(app): State<App>, ConnectInfo(peer): ConnectInfo<SocketAddr>, body: axum::body::Bytes) -> Response {
     let ip = peer.ip();
-    {
-        let fails = app.fails.lock().unwrap();
-        if let Some(until) = fails.get(&ip).and_then(|f| f.until).filter(|u| Instant::now() < *u) {
-            let wait = (until - Instant::now()).as_secs().max(1);
-            return reply(StatusCode::TOO_MANY_REQUESTS, json!({"error": format!("Слишком много попыток. Подождите {wait}s")}));
-        }
+    if let Err(r) = check_rate_limit(&app, ip) {
+        return r;
     }
     let Ok(req) = serde_json::from_slice::<PasswordReq>(&body) else { return bad("пустой запрос") };
     let hash = app.store.with(|s| s.password_hash.clone());
     if !verify(req.password, hash).await {
-        {
-            let mut fails = app.fails.lock().unwrap();
-            let f = fails.entry(ip).or_insert(Fail { n: 0, until: None });
-            f.n += 1;
-            if f.n >= 5 {
-                let d = Duration::from_secs(30 * (f.n as u64 - 4)).min(Duration::from_secs(15 * 60));
-                f.until = Some(Instant::now() + d);
-            }
-        }
+        record_auth_fail(&app, ip);
         tokio::time::sleep(Duration::from_millis(700)).await;
         return reply(StatusCode::UNAUTHORIZED, json!({"error": "Неверный пароль"}));
     }
-    app.fails.lock().unwrap().remove(&ip);
+    clear_auth_fail(&app, ip);
     with_cookie(ok(), session_cookie(&app))
 }
 

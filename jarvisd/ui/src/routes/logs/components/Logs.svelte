@@ -16,9 +16,14 @@
 
   let source = $state(preferences.source);
   let query = $state(preferences.query);
+  let levelFilter = $state("all");
   let autoRefresh = $state(preferences.autoRefresh);
   let lines = $state.raw([]);
-  let entries = $derived(lines.map(parseLogLine));
+  let entries = $derived(lines.map(parseLogLine).filter((e) => {
+    if (levelFilter === "err") return e.level === "bad" || e.level === "warn" || /ошибк|error|fail|warn/i.test(e.message);
+    if (levelFilter === "voice") return /джарвис:|разговор|stt|tts|активац|ответ/i.test(e.message);
+    return true;
+  }));
   let emptyText = $state("Загружаю…");
   let logbox = $state();
   let request;
@@ -98,12 +103,22 @@
       toast("Не получилось скопировать", true);
     }
   }
+
+  function downloadLogs() {
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `jarvis-${source}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 </script>
 
 <header class="ph ph-row">
   <div>
     <h1>Логи</h1>
-    <p class="sub">Что делали Джарвис и Алиса — последние 400 строк. Тексты разговоров пишутся только в журнал Джарвиса</p>
+    <p class="sub">Последние 400 строк · {entries.length} показано</p>
   </div>
   <div class="actions">
     <div class="seg" role="group" aria-label="Источник логов">
@@ -120,14 +135,20 @@
   <div class={styles.toolbar}>
     <label class={styles.search}>
       {@html icon("search")}
-      <input type="search" aria-label="Найти в логе" placeholder="Найти в логе" value={query} oninput={search} autocomplete="off">
+      <input type="search" aria-label="Найти в логе" placeholder="Поиск по логам" value={query} oninput={search} autocomplete="off">
     </label>
+    <div class="seg" role="group" aria-label="Фильтр">
+      <button type="button" class:on={levelFilter === "all"} onclick={() => { levelFilter = "all"; }}>Все</button>
+      <button type="button" class:on={levelFilter === "voice"} onclick={() => { levelFilter = "voice"; }}>Голос</button>
+      <button type="button" class:on={levelFilter === "err"} onclick={() => { levelFilter = "err"; }}>Ошибки</button>
+    </div>
     <label class="sw">
       <input type="checkbox" checked={autoRefresh} onchange={changeAutoRefresh}>
       <span class="tr"></span>
-      Обновлять сами
+      Авто
     </label>
-    <button class="btn sm" type="button" onclick={copyLogs}>{@html icon("link")}Скопировать</button>
+    <button class="btn sm" type="button" onclick={copyLogs}>{@html icon("copy")}Копировать</button>
+    <button class="btn sm ghost" type="button" onclick={downloadLogs} aria-label="Скачать лог">{@html icon("download")}Скачать</button>
   </div>
   <div class={styles.logbox} bind:this={logbox}>
     {#each entries as { time, message, level }}

@@ -219,24 +219,54 @@ impl St {
 
     fn clock_shape_at(mode: Mode, level: f64, hear: f64, seg: &str, t: f64) -> f64 {
         let b = seg.as_bytes();
-        if b.len() != 2 || b[0] != b'g' || !(b'0'..=b'3').contains(&b[1]) {
+        // 4-разрядный 7-сегментный дисплей (a..g + цифра 0..3): живой эквалайзер и анимации!
+        if b.len() != 2 || !(b'a'..=b'g').contains(&b[0]) || !(b'0'..=b'3').contains(&b[1]) {
             return 0.0;
         }
+        let s = b[0];
         let pos = (b[1] - b'0') as f64;
         let inner = pos == 1.0 || pos == 2.0;
         match mode {
             Mode::Thinking => {
-                let c = (2.0 * PI * (t * 1.2 - pos / 4.0)).cos();
-                0.1 + 0.9 * c.max(0.0).powi(2)
+                // Бегущий огонёк по периметру каждой цифры (a -> b -> c -> d -> e -> f) с фазовым сдвигом
+                let ring_idx = match s {
+                    b'a' => 0.0,
+                    b'b' => 1.0,
+                    b'c' => 2.0,
+                    b'd' => 3.0,
+                    b'e' => 4.0,
+                    b'f' => 5.0,
+                    _ => return 0.0,
+                };
+                let c = (2.0 * PI * (t * 1.6 - ring_idx / 6.0 - pos / 8.0)).cos();
+                0.08 + 0.92 * c.max(0.0).powi(3)
             }
-            Mode::Listening | Mode::Speaking => {
-                let v = if mode == Mode::Speaking { level } else { hear };
-                if inner {
-                    let onset = if mode == Mode::Listening { 1.0 } else { (t / 0.2).min(1.0) };
-                    onset * (0.2 + 0.8 * (v / 0.35).min(1.0))
+            Mode::Listening => {
+                // Мягкое «дыхание» + реакция центральной линии на громкость голоса (hear)
+                let breath = 0.25 + 0.75 * (0.5 - 0.5 * (2.0 * PI * t * 0.7).cos());
+                if s == b'g' {
+                    let boost = (hear / 0.35).min(1.0);
+                    (if inner { 0.35 + 0.65 * boost } else { 0.15 + 0.85 * boost }) * (0.5 + 0.5 * breath)
+                } else if (pos == 0.0 && (s == b'f' || s == b'e')) || (pos == 3.0 && (s == b'b' || s == b'c')) {
+                    // Мягкие боковые «скобки» [  ]
+                    0.35 * breath
                 } else {
-                    ((v - 0.3) / 0.35).clamp(0.0, 1.0)
+                    0.0
                 }
+            }
+            Mode::Speaking => {
+                // 4-полосный живой эквалайзер в такт голосу: от нижней планки (d) вверх до (a)
+                let wave = 0.85 + 0.15 * (2.0 * PI * (t * 3.5 + pos * 0.35)).sin();
+                let amp = ((level * 1.45 * wave) * if inner { 1.15 } else { 0.85 }).clamp(0.0, 1.0);
+                let tier = match s {
+                    b'd' => 0.05,            // уровень 1 (низ)
+                    b'e' | b'c' => 0.22,     // уровень 2 (нижние бока)
+                    b'g' => 0.42,            // уровень 3 (середина)
+                    b'f' | b'b' => 0.62,     // уровень 4 (верхние бока)
+                    b'a' => 0.80,            // уровень 5 (пик)
+                    _ => 1.0,
+                };
+                ((amp - tier) / 0.22).clamp(0.0, 1.0)
             }
             Mode::Off => 0.0,
         }
@@ -439,6 +469,50 @@ impl Leds {
 
     pub fn set(&self, mode: Mode) {
         self.inner.set_inner(mode, false)
+    }
+
+    /// Отобразить 4 цифры MM:SS на переднем 7-сегментном дисплее (например, для таймера Фокус/Помодоро).
+    /// При `None` дисплей возвращается под управление штатных часов.
+    pub fn set_clock_digits(&self, digits: Option<[u8; 4]>, colon: bool) {
+        let mut st = self.inner.st.lock().unwrap();
+        if st.clock.is_empty() || st.mode != Mode::Off {
+            return;
+        }
+        let Some(d) = digits else {
+            // Сбросим last, чтобы следующий вызов maind спокойно перерисовал часы
+            for c in st.clock.iter_mut() {
+                c.last = -1;
+            }
+            return;
+        };
+        const MASK: [u8; 10] = [
+            0b0111111, // 0: a b c d e f
+            0b0000110, // 1: b c
+            0b1011011, // 2: a b d e g
+            0b1001111, // 3: a b c d g
+            0b1100110, // 4: b c f g
+            0b1101101, // 5: a c d f g
+            0b1111101, // 6: a c d e f g
+            0b0000111, // 7: a b c
+            0b1111111, // 8: all
+            0b1101111, // 9: a b c d f g
+        ];
+        for c in st.clock.iter_mut() {
+            let b = c.color.as_bytes();
+            let on = if b.len() == 2 && (b'a'..=b'g').contains(&b[0]) && (b'0'..=b'3').contains(&b[1]) {
+                let pos = (b[1] - b'0') as usize;
+                let bit = (b[0] - b'a') as usize;
+                let digit = (d[pos] % 10) as usize;
+                (MASK[digit] >> bit) & 1 == 1
+            } else if c.color == "dh" || c.color == "dl" || c.color == "dm" {
+                colon
+            } else {
+                false
+            };
+            let v = if on { (c.max as f64 * 0.45) as i64 } else { 0 };
+            write(&c.path, v);
+            c.last = v;
+        }
     }
 }
 

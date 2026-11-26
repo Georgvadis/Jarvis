@@ -21,6 +21,12 @@
   ];
 
   const languages = [["ru", "Русский"], ["en", "English"], ["uk", "Українська"], ["", "Определять самому"]];
+  const soundThemes = [
+    ["scifi", "Sci-Fi (Джарвис)"],
+    ["soft", "Мягкий"],
+    ["retro", "Ретро"],
+    ["minimal", "Минимал"],
+  ];
   const services = [
     ["alice", "Алиса", "Джарвис передаёт команду штатной Алисе — она умеет всё, что подключено к Яндексу", () => true],
     ["yandexmusic", "Яндекс Музыка", "«Включи музыку», «поставь песню…» Джарвис отдаёт Алисе — играет из Яндекс Музыки. Выключено — всё играет с YouTube", () => true],
@@ -46,6 +52,16 @@
       hint: "Если модель плохо слышит и переспрашивает, хотя вы говорите не тихо (так бывает на Станции Лайт 2: её обработка отдаёт голос тише), прибавьте 6–12 дБ. На слово активации это не влияет. Уровень голоса за каждый разговор пишется в журнал: «микрофон: за разговор голос …».",
       low: "как есть", high: "+18 дБ", format: (value) => `+${value} дБ`, message: "Усиление микрофона сохранено",
     },
+    {
+      key: "vad_threshold", label: "Порог тишины (VAD)", min: 100, max: 3000, step: 50,
+      hint: "Минимальная громкость, при которой классический пайплайн считает звук речью. Поставьте чуть выше фонового шума на индикаторе ниже.",
+      low: "тише (100)", high: "громче (3000)", format: String, message: "Порог тишины сохранён",
+    },
+    {
+      key: "vad_silence_ms", label: "Пауза конца фразы", min: 300, max: 2500, step: 100,
+      hint: "Сколько ждать тишины после вашей речи перед отправкой в распознавание.",
+      low: "быстро (0.3 с)", high: "спокойно (2.5 с)", format: (value) => `${(value / 1000).toFixed(1)} с`, message: "Пауза конца фразы сохранена",
+    },
   ];
 
   const nightDefaults = { enabled: false, from: "23:00", to: "08:00", voice: 20, bright: 10, speaker: 3 };
@@ -54,7 +70,7 @@
 <script>
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { api, tip, toast } from "#helpers/core.js";
+  import { api, copyText, icon, jelly, tip, toast } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
   import { loadWakeProfiles, modelLabel, selectWakeProfile } from "#helpers/wake-training.js";
   import Lighting from "./Lighting/Lighting.svelte";
@@ -74,7 +90,10 @@
   let showWakeConfirm = $state(false);
   let wakeBusy = $state(false);
   let wakeTimer = null;
+  let micPeak = $state(0);
+  let micTimer = null;
   let settings = $derived(state.settings);
+  let vadThreshold = $derived(rangesInEdit.vad_threshold ?? settings.vad_threshold ?? 600);
   let word = $derived(profiles?.find((profile) => profile.id === selected)?.phrase || settings.wake_word || "Джарвис");
   let timezone = $derived(settings.timezone || "UTC");
   let language = $derived(settings.language ?? "ru");
@@ -115,8 +134,17 @@
     if (wakeReplies?.running) {
       wakeTimer = setTimeout(() => void pollWakeReplies(), 1000);
     }
+    const pollMic = async () => {
+      try {
+        const res = await api("GET", "/api/mic-level", undefined, { signal });
+        if (!signal.aborted && typeof res?.peak === "number") micPeak = res.peak;
+      } catch { /* ignore */ }
+      if (!signal.aborted) micTimer = setTimeout(() => void pollMic(), 250);
+    };
+    micTimer = setTimeout(() => void pollMic(), 250);
     return () => {
       stopWakePoll();
+      clearTimeout(micTimer);
       controller.abort();
     };
   });
@@ -231,16 +259,22 @@
     void save("language", () => ({ language: value }), value ? `Язык: ${label}` : "Язык определяется сам");
   }
 
-  function liveRange(event, key) {
-    rangesInEdit[key] = event.currentTarget.valueAsNumber;
-  }
-
-  async function saveRange(event, range) {
-    const { key, message } = range;
-    const value = event.currentTarget.valueAsNumber;
-    rangesInEdit[key] = value;
-    await save(key, () => ({ [key]: value }), message);
-    delete rangesInEdit[key];
+  function mountRange(node, range) {
+    const { key, label, min, max, step, format, message } = range;
+    const current = () => rangesInEdit[key] ?? settings[key] ?? min;
+    const slider = jelly(node, {
+      label, min, max, step, format, value: current(),
+      disabled: () => pending.has(key),
+      onInput: (value) => { rangesInEdit[key] = value; },
+      async onChange(value) {
+        if (pending.has(key)) return;
+        rangesInEdit[key] = value;
+        await save(key, () => ({ [key]: value }), message);
+        delete rangesInEdit[key];
+        if (node.isConnected) slider.set(settings[key] ?? min);
+      },
+    });
+    return { destroy: () => slider.destroy() };
   }
 
   function changeProfile(event) {
@@ -258,11 +292,30 @@
     return save("night." + key, () => ({ night: { ...night, [key]: value } }), ({ night }) =>
       night.enabled ? `Ночной режим: ${night.from}–${night.to}` : "Ночной режим выключен");
   }
+
+  function generateNotifyToken() {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    void save("notify_token", () => ({ notify_token: token }), "Токен уведомлений обновлён");
+  }
+
+  async function copyNotifyCurl() {
+    const tok = settings.notify_token || "<ТОКЕН>";
+    const host = typeof location !== "undefined" ? location.origin : "http://192.168.1.20:8080";
+    const cmd = `curl -X POST "${host}/api/notify" -H "Authorization: Bearer ${tok}" -H "Content-Type: application/json" -d '{"text":"Готово!"}'`;
+    try {
+      await copyText(cmd);
+      toast("Команда curl скопирована");
+    } catch {
+      toast("Не удалось скопировать", true);
+    }
+  }
 </script>
 
-{#snippet settingSection(title, description, fields)}
+{#snippet settingSection(title, description, fields, ic = "")}
   <section class="sec">
-    <div class="sec-h"><h2>{title}</h2><p>{description}</p></div>
+    <div class="sec-h"><h2>{#if ic}{@html icon(ic)}{/if}{title}</h2>{#if description}<p>{description}</p>{/if}</div>
     <div class="sec-b">{@render fields()}</div>
   </section>
 {/snippet}
@@ -308,8 +361,8 @@
   </div>
 {/snippet}
 {@render settingSection("Умный дом и музыка",
-  "Через что Джарвис может управлять домом и откуда включать музыку. Можно оставить несколько: быстрые команды сначала пробуют Smart Life по домашней сети, потом Алису, а сложные просьбы модель решает сама теми способами, что здесь включены",
-  homeFields)}
+  "Каналы управления домом и источник музыки",
+  homeFields, "home")}
 
 {#snippet locationFields()}
   <div class="f">
@@ -337,9 +390,9 @@
     </div>
   </div>
 {/snippet}
-{@render settingSection("Где вы",
-  "Комната колонки — для команд без комнаты («выключи свет»). Город и пояс — для погоды, новостей и времени: часы колонки идут по Гринвичу",
-  locationFields)}
+{@render settingSection("Локация",
+  "Комната, город и часовой пояс",
+  locationFields, "globe")}
 
 {#snippet wakeFields()}
   {#if settings.wake_training}
@@ -412,6 +465,28 @@
       {/if}
     </div>
   {/if}
+  {@render toggle("Звук «услышал / думаю»", "thinking_sound", settings.thinking_sound !== false,
+    (value) => saveToggle("thinking_sound", value, "Звук отклика включён", "Звук отклика выключен"),
+    "Короткий сигнал сразу после окончания вашей фразы в классическом пайплайне.")}
+  {#if settings.thinking_sound !== false}
+    <div class="f">
+      <span class="lbl">Звуковая тема отклика</span>
+      <div class="seg" role="group" aria-label="Звуковая тема отклика">
+        {#each soundThemes as [id, label] (id)}
+          {@const currentTheme = settings.sound_theme || "scifi"}
+          <button type="button" class:on={currentTheme === id} aria-pressed={currentTheme === id}
+            disabled={pending.has("sound_theme")}
+            onclick={() => {
+              void save("sound_theme", () => ({ sound_theme: id }), `Звук: ${label}`);
+              void api("POST", "/api/sound-preview", { theme: id }, { signal }).catch(() => {});
+            }}>{label}</button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+  {@render toggle("Авто-режим «Шёпот»", "whisper_mode", settings.whisper_mode !== false,
+    (value) => saveToggle("whisper_mode", value, "Авто-режим «Шёпот» включён", "Авто-режим «Шёпот» выключен"),
+    "Если вы говорите тихо или шёпотом, Джарвис сам приглушает ответ и отвечает коротко и спокойно.")}
   {@render toggle("Озвучивать ошибки Алисой", "voice_error_alice", settings.voice_error_alice !== false,
     (value) => saveToggle("voice_error_alice", value, "Алиса сообщит, если голосовой ИИ не ответит", "Голосовые уведомления об ошибках выключены"),
     "Если голосовой движок не смог подключиться или упёрся в лимит после всех автопереключений, штатная Алиса коротко назовёт причину. Ночью и при команде «Стоп» не срабатывает.")}
@@ -423,22 +498,32 @@
   {#each ranges as range (range.key)}
     {@const value = rangesInEdit[range.key] ?? settings[range.key] ?? range.min}
     <div class="f">
-      <label for={"speaker-" + range.key}>
+      <span class="lbl">
         <span id={"label-" + range.key}>{range.label}</span>
         {@html tip(range.hint)}
         <b class="val" aria-hidden="true">{range.format(value)}</b>
-      </label>
-      <input type="range" id={"speaker-" + range.key} min={range.min} max={range.max} step={range.step}
-        aria-labelledby={"label-" + range.key} {value} disabled={pending.has(range.key)}
-        oninput={(event) => liveRange(event, range.key)} onchange={(event) => saveRange(event, range)}>
+      </span>
+      <div use:mountRange={range} role="slider" aria-labelledby={"label-" + range.key}
+        aria-valuemin={range.min} aria-valuemax={range.max} aria-valuenow={value}
+        aria-disabled={pending.has(range.key)}></div>
       <div class={styles.scale}><span>{range.low}</span><span>{range.high}</span></div>
     </div>
   {/each}
+  <div class={styles.vu} aria-live="off">
+    <div class={styles.vuHead}>
+      <span>Уровень микрофона</span>
+      <b class="val">{micPeak} / порог {vadThreshold}</b>
+    </div>
+    <div class={styles.vuTrack}>
+      <div class={styles.vuFill} class:hot={micPeak > vadThreshold} style:width={`${Math.min(100, (micPeak / 3000) * 100)}%`}></div>
+      <div class={styles.vuMark} style:left={`${Math.min(100, (vadThreshold / 3000) * 100)}%`}></div>
+    </div>
+  </div>
   {#if !state.speaker.wake_model}
     <p class="note">Модель слова ещё не установлена — пока Джарвиса можно позвать только кнопкой «Поговорить» на главной.</p>
   {/if}
 {/snippet}
-{@render settingSection("Слово активации", "Колонка распознаёт его без интернета", wakeFields)}
+{@render settingSection("Микрофон и активация", "Слово активации, усиление и порог тишины", wakeFields, "mic")}
 
 {#snippet languageFields()}
   <div class="seg" role="group" aria-label="Язык общения">
@@ -449,8 +534,8 @@
   </div>
 {/snippet}
 {@render settingSection("Язык",
-  "На каком языке вы говорите с Джарвисом. Распознавание речи и ответы будут на нём — так он не «услышит» испанский там, где был русский",
-  languageFields)}
+  "Язык распознавания и ответов",
+  languageFields, "globe")}
 
 <NightMode {night} now={settings.night_now} leds={state.speaker.leds} {pending} save={saveNight} />
 
@@ -458,5 +543,19 @@
   <Lighting />
 {/snippet}
 {@render settingSection("Подсветка",
-  "Кольцо Джарвиса. Цвета у каждого ассистента свои — в его настройках. У Алисы подсветка своя и не меняется",
-  lightingFields)}
+  "Световое кольцо колонки",
+  lightingFields, "sun")}
+
+{#snippet notifyFields()}
+  <div class="f">
+    <label for="s-notify-token">Токен для <code>POST /api/notify</code> {@html tip("Позволяет скриптам, iOS Командам, qBittorrent или Uptime Kuma озвучивать уведомления на колонке (ночью пропускается, если не передать force: true).")}</label>
+    <div class="row">
+      <input id="s-notify-token" type="text" readonly value={settings.notify_token || "не задан"} class="mono">
+      <button type="button" class="btn" disabled={pending.has("notify_token")} onclick={generateNotifyToken}>{@html icon("refresh")}Создать</button>
+      <button type="button" class="btn primary" disabled={!settings.notify_token} onclick={copyNotifyCurl}>{@html icon("copy")}Копировать curl</button>
+    </div>
+  </div>
+{/snippet}
+{@render settingSection("HTTP-уведомления",
+  "Вебхук для озвучки событий из домашней сети",
+  notifyFields, "broadcast")}

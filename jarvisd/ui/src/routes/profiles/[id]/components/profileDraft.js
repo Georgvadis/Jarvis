@@ -27,6 +27,8 @@ export function createProfile(base, state) {
   }
   profile.llm_engine ||= profile.llm_plugin || "";
   profile.llm_model ||= profile.backend_model || "";
+  profile.tts_fallback_engine ||= "";
+  profile.tts_speed = Number(profile.tts_speed) > 0 ? Number(profile.tts_speed) : 1.0;
   profile.gemini_models = Array.isArray(profile.gemini_models) ? [...profile.gemini_models] : [];
   if (profile.engine === "classic" && usesOpenAiModel(profile.llm_engine)) {
     profile.backend_model = profile.llm_model || state.backend_models[0] || "";

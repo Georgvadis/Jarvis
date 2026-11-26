@@ -1,6 +1,6 @@
 <script>
   import { untrack } from "svelte";
-  import { tip } from "#helpers/core.js";
+  import { icon, tip } from "#helpers/core.js";
   import { S } from "#state/panelState.js";
   import { usesOpenAiModel } from "../profileDraft.js";
   import { brainOptions, modelKind } from "./options.js";
@@ -95,8 +95,8 @@
 
 <section class="sec">
   <div class="sec-h">
-    <h2>Мозг</h2>
-    <p>Выберите живой разговор или свой пайплайн: распознавание речи → текстовая модель → озвучка</p>
+    <h2>{@html icon("cpu")}Мозг</h2>
+    <p>Режим работы: живой разговор или пайплайн STT → LLM → TTS</p>
   </div>
   <div class="sec-b">
     {#if engines.length}
@@ -216,15 +216,24 @@
       </div>
     {/if}
     {#if engineReady && classic}
-      <div class="eng stack"><div class="grid g2">
-        <div class="f">
-          <label for="p-tts-engine">3. Озвучка (TTS)</label>
-          <select id="p-tts-engine" value={profile.tts_engine} onchange={(e) => onedit({ tts_engine: e.currentTarget.value })}>
+      <div class="eng stack">
+        <div class="grid g2">
+          <div class="f">
+            <label for="p-tts-engine">3. Озвучка (TTS)</label>
+            <select id="p-tts-engine" value={profile.tts_engine} onchange={(e) => onedit({ tts_engine: e.currentTarget.value })}>
+              {@render options(providers.tts)}
+            </select>
+          </div>
+          {@render stageModel("tts", "Модель озвучки", ttsKind, models.tts[ttsKind])}
+        </div>
+        <div class="f half">
+          <label for="p-tts-fallback">Резервный TTS {@html tip("Если основной провайдер не ответит, озвучка автоматически переключится на резервный.")}</label>
+          <select id="p-tts-fallback" value={profile.tts_fallback_engine || ""} onchange={(e) => onedit({ tts_fallback_engine: e.currentTarget.value })}>
+            <option value="">Выключен</option>
             {@render options(providers.tts)}
           </select>
         </div>
-        {@render stageModel("tts", "Модель озвучки", ttsKind, models.tts[ttsKind])}
-      </div></div>
+      </div>
     {/if}
     {#if engineReady && ttsProvider === "elevenlabs"}
       <div id="p-el-voices-bar">

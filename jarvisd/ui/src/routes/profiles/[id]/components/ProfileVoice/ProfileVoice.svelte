@@ -11,7 +11,7 @@
 <script>
   import { onMount, untrack } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { api, icon, tip, toast, toastProgress } from "#helpers/core.js";
+  import { api, icon, jelly, tip, toast, toastProgress, upload } from "#helpers/core.js";
   import { reload, S } from "#state/panelState.js";
   import styles from "./ProfileVoice.module.css";
 
@@ -46,10 +46,36 @@
   let name = $state("");
   let prompt = $state("");
   let savingVoice = $state(false);
+  let qwenName = $state("");
+  let qwenRefText = $state("");
+  let qwenFile = $state(null);
+  let qwenUploading = $state(false);
+  let confirmDeleteId = $state("");
+  let volSlider;
+  let speedSlider;
+  let lastVol = untrack(() => draft.volume);
+  let lastSpeed = untrack(() => draft.ttsSpeed || 1.0);
+
+  $effect(() => {
+    const v = draft.volume;
+    if (v !== lastVol) {
+      lastVol = v;
+      volSlider?.set(v, true);
+    }
+  });
+
+  $effect(() => {
+    const s = draft.ttsSpeed || 1.0;
+    if (s !== lastSpeed) {
+      lastSpeed = s;
+      speedSlider?.set(Math.round(s * 100), true);
+    }
+  });
 
   let classic = $derived(engine === "classic");
   let eleven = $derived(ttsProvider === "elevenlabs");
   let pluginTts = $derived(classic && !eleven && ttsProvider !== "openai");
+  let isLocalQwen = $derived(pluginTts && ttsProvider === "local-rvc-voice");
   let pluginVoicesState = $derived(pluginVoices.get(ttsProvider));
   let selected = $derived(classic || eleven ? draft.ttsVoice : draft.voice);
   let groups = $derived(voiceGroups(S, classic ? ttsProvider : engine).map((group) => ({
@@ -244,11 +270,96 @@
     }
   }
 
-  function changeVolume(event) {
-    const volume = event.currentTarget.valueAsNumber;
-    if (volume === draft.volume) return;
-    draft.volume = volume;
-    onedit({ volume });
+  function mountVolume(node) {
+    volSlider = jelly(node, {
+      label: "Громкость голоса", min: 10, max: 100, step: 5, format: (v) => `${v}%`, value: draft.volume,
+      onInput: (volume) => {
+        if (volume === draft.volume) return;
+        lastVol = volume;
+        draft.volume = volume;
+        onedit({ volume });
+      },
+      onChange: (volume) => {
+        if (volume === draft.volume) return;
+        lastVol = volume;
+        draft.volume = volume;
+        onedit({ volume });
+      },
+    });
+    return { destroy: () => { volSlider.destroy(); volSlider = undefined; } };
+  }
+
+  function mountSpeed(node) {
+    const initialPct = Math.round((draft.ttsSpeed || 1.0) * 100);
+    speedSlider = jelly(node, {
+      label: "Скорость речи", min: 80, max: 130, step: 5, format: (v) => `${(v / 100).toFixed(2)}×`, value: initialPct,
+      onInput: (pct) => {
+        const s = Math.round(pct) / 100;
+        if (s === draft.ttsSpeed) return;
+        lastSpeed = s;
+        draft.ttsSpeed = s;
+        onedit({ tts_speed: s });
+      },
+      onChange: (pct) => {
+        const s = Math.round(pct) / 100;
+        if (s === draft.ttsSpeed) return;
+        lastSpeed = s;
+        draft.ttsSpeed = s;
+        onedit({ tts_speed: s });
+      },
+    });
+    return { destroy: () => { speedSlider.destroy(); speedSlider = undefined; } };
+  }
+
+  async function uploadQwenVoice(event) {
+    event.preventDefault();
+    if (qwenUploading) return;
+    const vname = qwenName.trim();
+    if (!vname) return toast("Введите название голоса", true);
+    if (!qwenFile) return toast("Выберите аудиофайл (5–15 сек)", true);
+    if (qwenFile.size > 15 * 1024 * 1024) return toast("Файл больше 15 МБ", true);
+    qwenUploading = true;
+    try {
+      const qs = new URLSearchParams({
+        name: vname,
+        filename: qwenFile.name || "sample.wav",
+        ref_text: qwenRefText.trim(),
+        language: "Russian",
+      }).toString();
+      const res = await upload("POST", "/api/local-voices/upload-raw?" + qs, qwenFile, { signal });
+      if (signal.aborted) return;
+      qwenName = "";
+      qwenRefText = "";
+      qwenFile = null;
+      const input = event.currentTarget.querySelector('input[type="file"]');
+      if (input) input.value = "";
+      toast(res.ref_text ? `Голос «${res.name}» добавлен (текст распознан)` : `Голос «${res.name}» добавлен`);
+      pluginVoices.delete(ttsProvider);
+      await loadPluginVoices(ttsProvider);
+      if (res.id) choose(res.id);
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      qwenUploading = false;
+    }
+  }
+
+  async function deleteQwenVoice(id) {
+    if (qwenUploading) return;
+    qwenUploading = true;
+    confirmDeleteId = "";
+    try {
+      await api("DELETE", "/api/local-voices/" + encodeURIComponent(id), undefined, { signal });
+      if (signal.aborted) return;
+      toast("Голос удалён");
+      pluginVoices.delete(ttsProvider);
+      await loadPluginVoices(ttsProvider);
+      if (draft.ttsVoice === id) choose("");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      qwenUploading = false;
+    }
   }
 </script>
 
@@ -277,6 +388,22 @@
             aria-label={"Удалить голос " + item.name} disabled={savingVoice} onclick={() => deleteVoice(item.id)}>
             {@html icon("x")}
           </button>
+        {:else if isLocalQwen}
+          {#if confirmDeleteId === item.id}
+            <button class="ib danger {styles.action}" type="button" title="Подтвердить удаление"
+              aria-label={"Подтвердить удаление " + item.name} disabled={qwenUploading} onclick={() => deleteQwenVoice(item.id)}>
+              {@html icon("check")}
+            </button>
+            <button class="ib {styles.action}" type="button" title="Отмена"
+              aria-label="Отменить удаление" disabled={qwenUploading} onclick={() => { confirmDeleteId = ""; }}>
+              {@html icon("x")}
+            </button>
+          {:else}
+            <button class="ib danger {styles.action}" type="button" title="Удалить голос"
+              aria-label={"Удалить голос " + item.name} disabled={qwenUploading} onclick={() => { confirmDeleteId = item.id; }}>
+              {@html icon("trash")}
+            </button>
+          {/if}
         {/if}
       </div>
     {/each}
@@ -285,8 +412,8 @@
 
 <section class="sec" id="profile-voice">
   <div class="sec-h">
-    <h2>Голос</h2>
-    <p>Кнопка рядом с голосом — колонка скажет им пробную фразу. Первый раз это около цента, дальше фраза играет с самой колонки бесплатно</p>
+    <h2>{@html icon("voice")}Голос</h2>
+    <p>Выбор голоса, прослушивание на колонке и громкость</p>
   </div>
   <div class="sec-b">
     <div id="voices" class="vgroups">
@@ -341,6 +468,33 @@
         </button>
       </div>
     {/if}
+    {#if isLocalQwen}
+      <details class="qwen-upload">
+        <summary>{@html icon("upload")} Клонировать свой голос (Qwen3-TTS)</summary>
+        <form class="inner" onsubmit={uploadQwenVoice}>
+          <div class="grid g2">
+            <div class="f">
+              <label for="qv-name">Название голоса</label>
+              <input id="qv-name" type="text" maxlength="60" placeholder="Например, Тони" bind:value={qwenName} disabled={qwenUploading}>
+            </div>
+            <div class="f">
+              <label for="qv-file">Аудио-образец (5–15 с)</label>
+              <input id="qv-file" type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a" disabled={qwenUploading}
+                onchange={(e) => { qwenFile = e.currentTarget.files?.[0] || null; }}>
+            </div>
+          </div>
+          <div class="f">
+            <label for="qv-text">Текст образца {@html tip("Оставьте пустым — сервер автоматически распознает фразу через Whisper.")}</label>
+            <input id="qv-text" type="text" maxlength="400" placeholder="Необязательно — распознается автоматически" bind:value={qwenRefText} disabled={qwenUploading}>
+          </div>
+          <div>
+            <button class="btn primary" type="submit" disabled={qwenUploading}>
+              {@html icon("upload")}{qwenUploading ? "Загружаю и обрабатываю…" : "Загрузить голос"}
+            </button>
+          </div>
+        </form>
+      </details>
+    {/if}
     <details id="v-custom" class:hidden={!ready || engine !== "openai"}>
       <summary>Создать свой голос по описанию</summary>
       <form class="inner" onsubmit={createVoice}>
@@ -356,8 +510,14 @@
       </form>
     </details>
     <div class="f">
-      <label for="p-vol">Громкость голоса {@html tip("Насколько голос Джарвиса громче или тише остального звука колонки. Общая громкость колонки — на главной: голос меняется вместе с ней мягче. Голосом: «Джарвис, громче/тише».")}<b id="p-vol-v" class="val">{draft.volume}%</b></label>
-      <input type="range" id="p-vol" min="10" max="100" step="5" value={draft.volume} oninput={changeVolume}>
+      <span class="lbl">Громкость голоса {@html tip("Насколько голос Джарвиса громче или тише остального звука колонки. Голосом: «Джарвис, громче/тише».")}<b id="p-vol-v" class="val">{draft.volume}%</b></span>
+      <div id="p-vol" use:mountVolume role="slider" aria-label="Громкость голоса" aria-valuemin="10" aria-valuemax="100" aria-valuenow={draft.volume}></div>
     </div>
+    {#if classic}
+      <div class="f">
+        <span class="lbl">Скорость речи {@html tip("Темп озвучки в классическом пайплайне (работает с любым TTS без искажения тона голоса).")}<b class="val">{(draft.ttsSpeed || 1.0).toFixed(2)}×</b></span>
+        <div id="p-speed" use:mountSpeed role="slider" aria-label="Скорость речи" aria-valuemin="80" aria-valuemax="130" aria-valuenow={Math.round((draft.ttsSpeed || 1.0) * 100)}></div>
+      </div>
+    {/if}
   </div>
 </section>

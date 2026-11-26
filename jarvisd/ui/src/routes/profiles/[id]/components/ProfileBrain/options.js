@@ -12,6 +12,7 @@ const engines = [
 
 const sttModels = {
   elevenlabs: [
+    ["scribe_v2", "Scribe v2 (HTTP)"],
     ["scribe_v3_live", "Scribe v3 Live — определяет конец мысли"],
     ["scribe_v2_realtime", "Scribe v2 Realtime"],
   ],
@@ -35,7 +36,7 @@ const realtimeModels = [
   ["eleven_realtime_v1_mini", "Realtime v1 Mini — быстрый разговор"],
   ["eleven_realtime_v1_max", "Realtime v1 Max — сложные задачи и инструменты"],
 ];
-const defaultStt = { elevenlabs: "scribe_v2_realtime", openai: "gpt-4o-mini-transcribe" };
+const defaultStt = { elevenlabs: "scribe_v2", openai: "gpt-4o-mini-transcribe" };
 const defaultTts = { elevenlabs: "eleven_flash_v2_5", openai: "gpt-4o-mini-tts" };
 const textProviders = [
   ["openai", "OpenAI"], ["chatgpt", "ChatGPT по подписке"], ["gemini", "Google Gemini"], ["grok", "xAI Grok"],

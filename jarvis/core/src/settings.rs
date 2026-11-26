@@ -117,6 +117,10 @@ pub struct Profile {
     pub tts_model: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub tts_engine: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tts_fallback_engine: String,
+    #[serde(default = "default_tts_speed")]
+    pub tts_speed: f64,
     pub stt_engine: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub stt_model: String,
@@ -245,6 +249,14 @@ pub struct CustomVoice {
     pub prompt: String,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CustomRadio {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ElevenKey {
@@ -257,6 +269,21 @@ pub struct ElevenKey {
 
 fn is_zero(v: &i64) -> bool {
     *v == 0
+}
+fn default_vad_threshold() -> i64 {
+    600
+}
+fn default_vad_silence_ms() -> i64 {
+    700
+}
+fn default_tts_speed() -> f64 {
+    1.0
+}
+fn default_sound_theme() -> String {
+    "scifi".into()
+}
+fn default_ambient_volume() -> i64 {
+    70
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -317,6 +344,18 @@ pub struct Settings {
     pub wake_sensitivity: i64,
     pub mic_boost_db: i64,
     pub mic_gain_db: i64,
+    #[serde(default = "default_vad_threshold")]
+    pub vad_threshold: i64,
+    #[serde(default = "default_vad_silence_ms")]
+    pub vad_silence_ms: i64,
+    #[serde(default = "default_true")]
+    pub thinking_sound: bool,
+    #[serde(default = "default_sound_theme")]
+    pub sound_theme: String,
+    #[serde(default = "default_true")]
+    pub whisper_mode: bool,
+    #[serde(default)]
+    pub notify_token: String,
     pub follow_up_s: f64,
     pub memory: MemorySettings,
     pub city: String,
@@ -337,6 +376,11 @@ pub struct Settings {
     pub plugins_warned: bool,
     pub language: String,
     pub radio_off: bool,
+    #[serde(default = "default_ambient_volume")]
+    pub ambient_volume: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "nd")]
+    pub custom_radios: Vec<CustomRadio>,
     pub night: NightSettings,
 
     pub train_mode: bool,
@@ -404,6 +448,12 @@ impl Default for Settings {
             wake_sensitivity: 5,
             mic_boost_db: 0,
             mic_gain_db: 0,
+            vad_threshold: default_vad_threshold(),
+            vad_silence_ms: default_vad_silence_ms(),
+            thinking_sound: true,
+            sound_theme: default_sound_theme(),
+            whisper_mode: true,
+            notify_token: rand_hex(12),
             follow_up_s: 6.0,
             memory: MemorySettings::default(),
             city: String::new(),
@@ -421,6 +471,8 @@ impl Default for Settings {
             plugins_warned: false,
             language: "ru".into(),
             radio_off: false,
+            ambient_volume: default_ambient_volume(),
+            custom_radios: vec![],
             night: NightSettings::default(),
             train_mode: false,
             train_limit_mb: 2,
@@ -601,6 +653,7 @@ struct Hot {
     wake_interrupt: AtomicBool,
     mic_boost_db: AtomicI64,
     mic_gain_db: AtomicI64,
+    vad_threshold: AtomicI64,
     wake_sensitivity: AtomicI64,
     train_mode: AtomicBool,
     train_limit_mb: AtomicI64,
@@ -618,6 +671,7 @@ impl Hot {
             wake_interrupt: AtomicBool::new(s.wake_interrupt),
             mic_boost_db: AtomicI64::new(s.mic_boost_db),
             mic_gain_db: AtomicI64::new(s.mic_gain_db),
+            vad_threshold: AtomicI64::new(s.vad_threshold),
             wake_sensitivity: AtomicI64::new(s.wake_sensitivity),
             train_mode: AtomicBool::new(s.train_mode),
             train_limit_mb: AtomicI64::new(s.train_limit_mb),
@@ -630,6 +684,7 @@ impl Hot {
         self.wake_interrupt.store(s.wake_interrupt, Ordering::Relaxed);
         self.mic_boost_db.store(s.mic_boost_db, Ordering::Relaxed);
         self.mic_gain_db.store(s.mic_gain_db, Ordering::Relaxed);
+        self.vad_threshold.store(s.vad_threshold, Ordering::Relaxed);
         self.wake_sensitivity.store(s.wake_sensitivity, Ordering::Relaxed);
         self.train_mode.store(s.train_mode, Ordering::Relaxed);
         self.train_limit_mb.store(s.train_limit_mb, Ordering::Relaxed);
@@ -683,6 +738,7 @@ impl Store {
     pub fn wake_interrupt(&self) -> bool { self.hot.wake_interrupt.load(Ordering::Relaxed) }
     pub fn mic_boost_db(&self) -> i64 { self.hot.mic_boost_db.load(Ordering::Relaxed) }
     pub fn mic_gain_db(&self) -> i64 { self.hot.mic_gain_db.load(Ordering::Relaxed) }
+    pub fn vad_threshold(&self) -> i64 { self.hot.vad_threshold.load(Ordering::Relaxed) }
     pub fn wake_sensitivity(&self) -> i64 { self.hot.wake_sensitivity.load(Ordering::Relaxed) }
     pub fn train_mode(&self) -> bool { self.hot.train_mode.load(Ordering::Relaxed) }
     pub fn train_limit_mb(&self) -> i64 { self.hot.train_limit_mb.load(Ordering::Relaxed) }

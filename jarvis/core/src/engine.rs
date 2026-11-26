@@ -303,6 +303,7 @@ pub struct Engine {
     last_error_notice: Mutex<Option<(String, Instant)>>,
     error_speaking: AtomicBool,
     initial_audio: Mutex<InitialAudioDiag>,
+    pub mic_peak: std::sync::atomic::AtomicU16,
 }
 
 fn same(a: &Arc<dyn Session>, b: &Arc<dyn Session>) -> bool {
@@ -314,7 +315,12 @@ pub fn peak(pcm: &[i16]) -> f64 {
 }
 
 pub fn loud(pcm: &[i16]) -> bool {
-    pcm.iter().any(|&v| !(-600..=600).contains(&v))
+    loud_at(pcm, 600)
+}
+
+pub fn loud_at(pcm: &[i16], threshold: i64) -> bool {
+    let th = threshold.clamp(100, 5000) as u16;
+    pcm.iter().any(|&v| v.unsigned_abs() > th)
 }
 
 struct InputActivity {
@@ -548,7 +554,16 @@ impl Engine {
             wake_replies: Default::default(), wake_reply_sequence: AtomicU64::new(0), cmds: Default::default(),
             last_error_notice: Mutex::default(), error_speaking: AtomicBool::new(false),
             initial_audio: Mutex::default(),
+            mic_peak: std::sync::atomic::AtomicU16::new(0),
         })
+    }
+
+    pub fn take_mic_peak(&self) -> u16 {
+        self.mic_peak.swap(0, Ordering::Relaxed)
+    }
+
+    pub fn speech_epoch_now(&self) -> u64 {
+        self.speech_epoch.load(Ordering::SeqCst)
     }
 
     /// Не содержащие речи счётчики передачи начального буфера (для диагностики issue #35).
@@ -596,9 +611,6 @@ impl Engine {
                             }
                             st.ring.extend(&raw[..]);
                         }
-                        if loud(&raw) {
-                            st.last_loud = Some(Instant::now());
-                        }
                         if st.holding && st.live.is_none() && st.hold.len() < 20 * RATE {
                             st.hold.extend_from_slice(&raw);
                         }
@@ -607,6 +619,11 @@ impl Engine {
                         (st.live.clone(), st.busy, st.echo.muted(Instant::now()), raw.clone())
                     };
                     let boost_db = e.store.mic_boost_db();
+                    let gain = if boost_db > 0 { 10f64.powf(boost_db as f64 / 20.0) } else { 1.0 };
+                    let frame_peak = (peak(&raw) * gain).min(32767.0) as u16;
+                    if frame_peak > e.store.vad_threshold().clamp(100, 5000) as u16 {
+                        e.st.lock().unwrap().last_loud = Some(Instant::now());
+                    }
                     if !muted_input && activity.observe(&input, busy, boost_db) {
                         let now = Instant::now();
                         e.st.lock().unwrap().input_at = Some(now);
@@ -614,8 +631,9 @@ impl Engine {
                             session.dialog().heard_input(now);
                         }
                     }
+                    e.mic_peak.fetch_max(frame_peak, Ordering::Relaxed);
                     if busy || live.is_some() {
-                        e.leds.hear(peak(&raw) / 9000.0);
+                        e.leds.hear(f64::from(frame_peak) / 9000.0);
                     }
                     if let Some(c) = e.cmds.get() {
                         if busy || live.is_some() || e.music_playing() {
@@ -874,6 +892,13 @@ impl Engine {
     }
 
     fn instructions(&self, s: &Settings, p: &Profile) -> String {
+        if let Some(modes) = &self.tools.modes {
+            let active_mode = modes.current();
+            if active_mode != crate::modes::SpecialMode::Normal {
+                return crate::modes::ModeManager::build_prompt(&active_mode, "", "", "", "")
+                    + rules::SPEAKER_WAIT_RULES;
+            }
+        }
         let phrase = self.listener.phrase();
         let mut text = s.prompt_text(&p.prompt);
         if p.prompt == "jarvis" || p.prompt == "bro" {
@@ -1044,7 +1069,7 @@ impl Engine {
         Ok(())
     }
 
-    fn earcon(&self, ok: bool) {
+    pub fn earcon(&self, ok: bool) {
         if self.player.start(RATE).is_ok() {
             let _ = self.player.write(&fastcmd::earcon(ok));
             self.player.finish(Duration::from_secs(2));
@@ -1307,14 +1332,14 @@ impl Engine {
                 Err(RecvTimeoutError::Timeout) => {}
                 Ok(pcm) => {
                     if !x.dialog().muted() {
-                        let is_loud = loud(&pcm);
+                        let is_loud = loud_at(&pcm, 180);
                         if !self.player.playing() && is_loud {
                             let _ = self.start_voice(&*x); // после перебивания плеер был остановлен
                         }
                         let wrote = self.player.write(&pcm).is_ok();
                         if wrote {
                             let now = Instant::now();
-                            if p.engine == "gemini" {
+                            if p.engine == "gemini" || p.is_classic() {
                                 self.st.lock().unwrap().echo.played(now, &pcm, x.rate());
                             }
                             if is_loud {
@@ -1524,11 +1549,73 @@ impl Engine {
 
     /// Сказать вслух просьбу плагина. Пока идёт разговор — не перебиваем его.
     pub fn say_text(&self, text: &str) {
+        self.say_text_whisper(text, false);
+    }
+
+    pub fn say_text_whisper(&self, text: &str, whisper: bool) {
         if self.talking() {
             log::info!("плагин просит сказать «{}» — идёт разговор, пропускаю", crate::plugins::clip(text, 120));
             return;
         }
-        (self.say_hook())(text.to_string());
+        log::info!("Джарвис: ответ «{}»", crate::plugins::clip(text, 200));
+        if let Err(e) = self.say_aloud_opts(text, Duration::from_secs(60), None, whisper) {
+            log::info!("озвучка: {e}");
+            if e != INTERRUPTED {
+                self.earcon(true);
+            }
+        }
+    }
+
+    /// Проиграть готовый поток 24 кГц PCM16 (например, голосовое сообщение из Telegram).
+    pub fn play_pcm_24k(&self, pcm: &[i16]) -> Result<(), String> {
+        if pcm.is_empty() {
+            return Ok(());
+        }
+        {
+            let st = self.st.lock().unwrap();
+            if st.busy || st.live.is_some() {
+                return Err("Идёт разговор".into());
+            }
+        }
+        if self.saying.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
+            return Err(INTERRUPTED.into());
+        }
+        struct Speaking<'a>(&'a AtomicBool);
+        impl Drop for Speaking<'_> { fn drop(&mut self) { self.0.store(false, Ordering::SeqCst); } }
+        let _speaking = Speaking(&self.saying);
+
+        struct SayLedGuard<'a> {
+            engine: &'a Engine,
+            active: bool,
+        }
+        impl Drop for SayLedGuard<'_> {
+            fn drop(&mut self) {
+                self.engine.clear_say_leds(self.active);
+            }
+        }
+        let mut led_guard = SayLedGuard { engine: self, active: false };
+        let epoch = self.speech_epoch.load(Ordering::SeqCst);
+        self.player.start(24000).map_err(|e| e.to_string())?;
+        self.player.set_boost(1.0);
+        self.leds.set(Mode::Speaking);
+        led_guard.active = true;
+        for chunk in pcm.chunks(1200) {
+            loop {
+                if self.speech_epoch.load(Ordering::SeqCst) != epoch {
+                    self.player.stop(true);
+                    return Err(INTERRUPTED.into());
+                }
+                match self.player.write(chunk) {
+                    Ok(()) => break,
+                    Err("плеер не успевает") => std::thread::sleep(Duration::from_millis(20)),
+                    Err(_) => return Err(INTERRUPTED.into()),
+                }
+            }
+            self.leds.level(peak(chunk) / 9000.0);
+            std::thread::sleep(Duration::from_millis(45));
+        }
+        self.player.finish(Duration::from_secs(15));
+        Ok(())
     }
 
     pub async fn offer_next(self: Arc<Self>, id: String) {
@@ -1546,7 +1633,7 @@ impl Engine {
     fn say_hook(&self) -> impl Fn(String) + '_ {
         move |answer: String| {
             log::info!("Джарвис: ответ «{}»", crate::plugins::clip(&answer, 200));
-            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(25)) {
+            if let Err(e) = self.say_aloud(&answer, Duration::from_secs(60)) {
                 log::info!("озвучка: {e}");
                 if e != INTERRUPTED {
                     self.earcon(true);
@@ -1555,9 +1642,12 @@ impl Engine {
         }
     }
 
-    /// Произнести готовый текст голосом активного ассистента: отдельный короткий звонок, где модель
-    /// только читает текст. Блокирует до конца фразы (не дольше limit). Вызывать не из потоков tokio.
     pub fn say_aloud(&self, text: &str, limit: Duration) -> Result<(), String> {
+        self.say_aloud_opts(text, limit, None, false)
+    }
+
+    /// Произнести готовый текст голосом активного или указанного ассистента (опционально шёпотом).
+    pub fn say_aloud_opts(&self, text: &str, limit: Duration, profile_override: Option<&Profile>, whisper: bool) -> Result<(), String> {
         if self.saying.compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
             return Err(INTERRUPTED.into());
         }
@@ -1566,11 +1656,52 @@ impl Engine {
         let _speaking = Speaking(&self.saying);
         let epoch = self.speech_epoch.load(Ordering::SeqCst);
         let s = self.store.get();
-        let p = s.active_profile();
+        let p = profile_override.cloned().unwrap_or_else(|| s.active_profile());
         let missing = tts_missing(&self.host, &s, &p);
         if !missing.is_empty() {
             return Err(missing);
         }
+
+        struct LedRestore<'a> {
+            engine: &'a Engine,
+            restore: bool,
+        }
+        impl Drop for LedRestore<'_> {
+            fn drop(&mut self) {
+                if self.restore {
+                    self.engine.leds.configure(&self.engine.store.led_for());
+                }
+            }
+        }
+        let _led_restore = LedRestore { engine: self, restore: profile_override.is_some() };
+        if profile_override.is_some() {
+            let mut l = s.led.clone();
+            if let Some(pl) = &p.led {
+                l.brightness = pl.brightness;
+                l.listening = pl.listening.clone();
+                l.thinking = pl.thinking.clone();
+                l.speaking = pl.speaking.clone();
+            }
+            if self.store.is_night() {
+                l.brightness = l.brightness.min(s.night.bright);
+            }
+            self.leds.configure(&l);
+        }
+
+        let base_vol = self.store.voice_volume().max(1);
+        let mut target_vol = if p.volume > 0 { p.volume } else { s.volume };
+        if self.store.is_night() {
+            target_vol = target_vol.min(s.night.voice);
+        }
+        let mut boost_mul = if profile_override.is_some() {
+            (target_vol as f64) / (base_vol as f64)
+        } else {
+            1.0
+        };
+        if whisper {
+            boost_mul *= 0.35;
+        }
+
         let t0 = Instant::now();
         const READ_ALOUD: &str = "Ты озвучиваешь готовый текст. Произнеси ровно то, что тебе дали, ничего не добавляя, и замолчи.";
         let sess: Arc<dyn Session> = if p.is_classic() {
@@ -1618,7 +1749,7 @@ impl Engine {
                 },
             )
         };
-        let res = self.play_said(&*sess, text, limit, t0, epoch);
+        let res = self.play_said_opts(&*sess, text, limit, t0, epoch, boost_mul);
         sess.close();
         res
     }
@@ -1629,7 +1760,7 @@ impl Engine {
         }
     }
 
-    fn play_said(&self, sess: &dyn Session, text: &str, limit: Duration, t0: Instant, epoch: u64) -> Result<(), String> {
+    fn play_said_opts(&self, sess: &dyn Session, text: &str, limit: Duration, t0: Instant, epoch: u64, boost_mul: f64) -> Result<(), String> {
         struct SayLedGuard<'a> {
             engine: &'a Engine,
             active: bool,
@@ -1672,6 +1803,7 @@ impl Engine {
                     if !started {
                         // плеер — только с первым звуком, а не пока модель думает
                         self.start_voice(sess)?;
+                        self.player.set_boost(sess.out_boost() * boost_mul);
                         self.leds.set(Mode::Speaking);
                         led_guard.active = true;
                         let _ = self.player.write(&vec![0; sess.rate() / 4]);
@@ -1681,7 +1813,7 @@ impl Engine {
                         return Err(INTERRUPTED.into()); // плеер забрали — нас перебили
                     }
                     self.leds.level(peak(&pcm) / 9000.0);
-                    if loud(&pcm) {
+                    if loud_at(&pcm, 180) {
                         heard = true;
                         quiet_since = Instant::now();
                     }

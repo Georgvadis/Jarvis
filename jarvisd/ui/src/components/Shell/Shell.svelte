@@ -1,8 +1,8 @@
 <script>
   import { onMount, tick } from "svelte";
   import { navPill } from "#helpers/charts.js";
-  import { act, api, icon, observePills, tip } from "#helpers/core.js";
-  import { reload } from "#state/panelState.js";
+  import { act, api, icon, observePills, tip, toast } from "#helpers/core.js";
+  import { refreshRoute, reload } from "#state/panelState.js";
   import { subscribeMusic } from "#state/player.js";
   import { profilePath } from "#helpers/paths.js";
   import Gate from "#components/Shell/Gate/Gate.svelte";
@@ -55,6 +55,35 @@
       await reload();
     });
   }
+
+  async function quickActivate(event, profile) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (profile.active) return;
+    try {
+      await api("POST", "/api/active", { id: profile.id });
+      await reload();
+      toast(`Активен: ${profile.name}`);
+      refreshRoute();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  }
+
+  let mobileBusy = $state(false);
+  async function mobileControl() {
+    if (mobileBusy) return;
+    mobileBusy = true;
+    const isTalking = orb.state === "talk";
+    try {
+      await api("POST", isTalking ? "/api/stop" : "/api/talk");
+      if (!isTalking) toast("Слушаю…");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      mobileBusy = false;
+    }
+  }
 </script>
 
 <svelte:window onkeydown={(event) => { if (event.key === "Escape") closeMenu(); }} />
@@ -75,7 +104,10 @@
             ondragover={(event) => event.preventDefault()} ondrop={(event) => reorder(event, profile.id)}>
             <span class={"av c" + profile.color}>{profile.initial}</span>
             <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.detail}</div></div>
-            {#if profile.active}<span class="act" title="Активный профиль"></span>{/if}
+            <button type="button" class="prof-act" class:on={profile.active}
+              title={profile.active ? "Активный ассистент" : `Сделать «${profile.name}» активным`}
+              aria-label={profile.active ? "Активный ассистент" : `Активировать ${profile.name}`}
+              onclick={(event) => quickActivate(event, profile)}><i></i></button>
           </a>
         {/each}
       </div>
@@ -95,7 +127,16 @@
     <div class="spacer"></div>
     <button class="navbtn" id="logout" type="button" onclick={logout}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Выйти</button>
   </aside>
-  <header class="mbar"><button class="ib" id="menu" type="button" aria-label="Меню" aria-expanded={menuOpen} aria-controls="side" onclick={() => { menuOpen = !menuOpen; }}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button><span class="brand"><span class="logo"></span><b>Джарвис</b></span></header>
+  <header class="mbar">
+    <button class="ib" id="menu" type="button" aria-label="Меню" aria-expanded={menuOpen} aria-controls="side" onclick={() => { menuOpen = !menuOpen; }}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <span class="brand"><span class="orb" data-s={orb.state} aria-hidden="true"><i></i></span><b>YaJarvis</b></span>
+    <div class="mbar-actions">
+      <button type="button" class="mbar-btn" class:live={orb.state === "talk"} disabled={mobileBusy} onclick={mobileControl}>
+        {@html icon(orb.state === "talk" ? "stop" : "mic", orb.state === "talk" ? "solid" : "")}
+        <span>{orb.state === "talk" ? "Стоп" : "Слушать"}</span>
+      </button>
+    </div>
+  </header>
   <main id="view" class="view" use:observePills bind:this={view}>{@render children?.()}</main>
 </div>
 <div id="toast" class="toast" role="status"></div>

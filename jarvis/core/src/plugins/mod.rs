@@ -942,6 +942,17 @@ impl Host {
         Ok(())
     }
 
+    /// Прочитать строковую настройку плагина (с учётом значения по умолчанию из манифеста).
+    pub fn plugin_setting_str(&self, id: &str, key: &str) -> String {
+        let mut g = self.inner.lock().unwrap();
+        g.settings_of(id)
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    }
+
     /// Сохранить настройки плагина. Пустой пароль — оставить прежний (панель не видит ключи целиком).
     pub fn set_settings(&self, id: &str, input: &Map<String, Value>) -> Result<(), String> {
         let (settings, rt) = {

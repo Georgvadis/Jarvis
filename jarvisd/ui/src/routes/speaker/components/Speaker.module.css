@@ -11,3 +11,50 @@
   font-size: 12px;
   line-height: 16px;
 }
+
+.vu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--raise);
+  border: 1px solid var(--line);
+}
+
+.vuHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg2);
+}
+
+.vuTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg0);
+  overflow: hidden;
+}
+
+.vuFill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: width 120ms linear, background-color 120ms linear;
+}
+
+.vuFill.hot {
+  background: var(--acc);
+}
+
+.vuMark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--warn);
+  pointer-events: none;
+}

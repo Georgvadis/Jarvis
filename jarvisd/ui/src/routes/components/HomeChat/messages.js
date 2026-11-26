@@ -52,7 +52,13 @@ export function chatMessages(journal, phase) {
     if (service) {
       rows.push({ key: "service:" + id, kind: "service", text: serviceText(turn, service) });
     } else if (turn.answer) {
-      const delay = typeof turn.audio_s === "number" && turn.audio_s > 0 ? `ответ через ${turn.audio_s.toFixed(1)} с · ` : "";
+      const parts = [];
+      if (typeof turn.stt_ms === "number") parts.push(`STT ${(turn.stt_ms / 1000).toFixed(1)}с`);
+      if (typeof turn.llm_ms === "number") parts.push(`LLM ${(turn.llm_ms / 1000).toFixed(1)}с`);
+      if (typeof turn.tts_ms === "number") parts.push(`TTS ${(turn.tts_ms / 1000).toFixed(1)}с`);
+      const delay = parts.length
+        ? `${parts.join(" · ")} · `
+        : (typeof turn.audio_s === "number" && turn.audio_s > 0 ? `ответ через ${turn.audio_s.toFixed(1)} с · ` : "");
       rows.push({ key: "him:" + id, kind: "answer", answer: turn.answer, time: delay + time });
     } else if (turn.live && !answered && turn.text) {
       rows.push({ key: "him:" + id, kind: phase === "speaking" ? "speaking" : "thinking" });

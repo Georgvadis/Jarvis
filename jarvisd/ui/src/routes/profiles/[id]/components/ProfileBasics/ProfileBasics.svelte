@@ -1,6 +1,6 @@
 <script>
   import { untrack } from "svelte";
-  import { tip } from "#helpers/core.js";
+  import { icon, tip } from "#helpers/core.js";
   import { avatar } from "#state/panelState.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
@@ -30,8 +30,8 @@
 
 <section class="sec" id="profile-basics">
   <div class="sec-h">
-    <h2>Основное</h2>
-    <p>Как ассистент выглядит в списке и кем он себя считает</p>
+    <h2>{@html icon("sparkles")}Основное</h2>
+    <p>Имя, цвет и характер ассистента</p>
   </div>
   <div class="sec-b">
     <div class="grid g2">

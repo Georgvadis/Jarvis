@@ -24,10 +24,15 @@
   let editor = $state.raw(null);
   let draft = $state("");
   let newFact = $state("");
+  let factQuery = $state("");
   let memory = $derived(data?.memory || {});
   let settings = $derived(data?.settings || {});
   let facts = $derived((memory.profile || "").split("\n").map((line) => line.trim())
     .filter(Boolean).map((line) => line.replace(/^[-•*]\s*/, "")));
+  let filteredFacts = $derived(
+    facts.map((fact, index) => ({ fact, index }))
+      .filter(({ fact }) => !factQuery.trim() || fact.toLowerCase().includes(factQuery.trim().toLowerCase()))
+  );
   let chronicle = $derived((memory.chronicle || []).slice().reverse());
   let archiveCount = $derived(memory.archive || 0);
   let provider = $derived(settings.provider || "");
@@ -188,7 +193,7 @@
 <header class="ph ph-row">
   <div>
     <h1>Память</h1>
-    <p class="sub">Что Джарвис помнит о вас — общее для всех ассистентов. Неверное поправьте, лишнее удалите</p>
+    <p class="sub">Общая память для всех ассистентов</p>
   </div>
   {#if data}
     <div class="actions">
@@ -241,17 +246,23 @@
       <div class={styles.heading}>
         <div>
           <h2>{@html icon("read")}Что Джарвис знает о вас</h2>
-          <p class="muted">Досье: он видит его в начале каждого разговора. Пополняется само, когда разговор сжимается</p>
+          <p class="muted">Передаётся в начале каждого разговора</p>
         </div>
+        {#if facts.length > 3}
+          <label class="cx-search mem-search">
+            {@html icon("search")}
+            <input type="search" aria-label="Поиск по фактам" placeholder="Поиск по фактам" bind:value={factQuery}>
+          </label>
+        {/if}
       </div>
       {#if facts.length}
         <ul class={styles.facts}>
-          {#each facts as fact, index}
+          {#each filteredFacts as { fact, index } (index)}
             <li>
               {#if editor?.kind === "fact" && editor.key === index}
                 <form class={[styles.fact, styles.editFact]} onsubmit={(event) => saveFact(event, index)}>
                   <input type="text" aria-label="Факт" bind:value={draft} use:focus disabled={busy}>
-                  <button class="btn sm primary" type="submit" disabled={busy}>Сохранить</button>
+                  <button class="btn sm primary" type="submit" disabled={busy}>{@html icon("save")}Сохранить</button>
                   <button class="btn sm ghost" type="button" onclick={cancelEdit} disabled={busy}>Отмена</button>
                 </form>
               {:else}
@@ -264,6 +275,8 @@
                 </div>
               {/if}
             </li>
+          {:else}
+            <p class={styles.empty}>По запросу «{factQuery}» ничего не найдено.</p>
           {/each}
         </ul>
       {:else}
