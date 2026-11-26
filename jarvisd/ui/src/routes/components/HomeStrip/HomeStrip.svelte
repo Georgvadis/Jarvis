@@ -78,38 +78,67 @@
   });
 </script>
 
-<div class="home-strip" aria-label="Статус колонки и пайплайна">
-  <span class="strip-pill" class:ok={overview.micOnline} class:bad={!overview.micOnline}>
-    {@html icon("mic")} {overview.micOnline ? "Микрофон" : "Нет микрофона"}
-  </span>
+<div class="home-strip" aria-label="Статус колонки и системы">
+  <div class="hstat">
+    <div class="hstat-top">
+      <span>Микрофон</span>
+      {@html icon("mic")}
+    </div>
+    <div class="hstat-val">
+      <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline}></span>
+      <span>{overview.micOnline ? "На связи" : "Отключён"}</span>
+      {#if presence.phone_ip && presence.state !== "unknown"}
+        <span class="hstat-act" style="pointer-events:none;border-color:transparent;">
+          {presence.state === "home" ? "Дома" : "Нет дома"}
+        </span>
+      {/if}
+    </div>
+  </div>
 
-  {#if activeProfile}
-    {#if isClassic}
-      <span class="strip-pill">{@html icon("sparkles")} {sttLabel} → {llmLabel} → {ttsLabel}</span>
-    {:else}
-      <span class="strip-pill">{@html icon("sparkles")} {labelPlugin(activeProfile.engine, [])}</span>
-    {/if}
-  {/if}
+  <div class="hstat">
+    <div class="hstat-top">
+      <span>Пайплайн</span>
+      {@html icon("sparkles")}
+    </div>
+    <div class="hstat-val">
+      {#if activeProfile}
+        {#if isClassic}
+          <span title={`${sttLabel} → ${llmLabel} → ${ttsLabel}`}>{sttLabel} → {llmLabel} → {ttsLabel}</span>
+        {:else}
+          <span>{labelPlugin(activeProfile.engine, [])}</span>
+        {/if}
+      {:else}
+        <span class="muted">—</span>
+      {/if}
+    </div>
+  </div>
 
-  <span class="strip-pill" class:ok={gpu?.online} class:bad={gpu && !gpu.online}>
-    {@html icon("cpu")} {gpuLabel}
-    {#if gpuLoaded}
-      <button type="button" class="btn sm ghost strip-act" disabled={unloading} onclick={unloadGpu} title="Освободить VRAM">
-        {@html icon("bolt")}
-      </button>
-    {/if}
-  </span>
+  <div class="hstat">
+    <div class="hstat-top">
+      <span>GPU</span>
+      {@html icon("cpu")}
+    </div>
+    <div class="hstat-val">
+      <span class="dot" class:on={gpu?.online} class:off={gpu && !gpu.online}></span>
+      <span>{gpuLabel}</span>
+      {#if gpuLoaded}
+        <button type="button" class="hstat-act" disabled={unloading} onclick={unloadGpu} title="Освободить VRAM">
+          {@html icon("bolt")}
+        </button>
+      {/if}
+    </div>
+  </div>
 
-  {#if presence.phone_ip && presence.state !== "unknown"}
-    <span class="strip-pill" class:ok={presence.state === "home"} class:warn={presence.state === "away"}>
-      {@html icon("radar")} {presence.state === "home" ? "Дома" : "Нет дома"}
-    </span>
-  {/if}
-
-  <a class="strip-link" href="/charts" title="Открыть графики телеметрии">
-    {#if stats.cpu != null}<span class="strip-stat">CPU {stats.cpu}%</span>{/if}
-    {#if memPct != null}<span class="strip-stat">RAM {memPct}%</span>{/if}
-    {#if sys.temp_c}<span class="strip-stat">{Math.round(sys.temp_c)}°C</span>{/if}
-    {@html icon("right")}
+  <a class="hstat" href="/charts" title="Открыть графики">
+    <div class="hstat-top">
+      <span>Система</span>
+      {@html icon("right")}
+    </div>
+    <div class="hstat-val">
+      {#if stats.cpu != null}<span>CPU {stats.cpu}%</span>{/if}
+      {#if memPct != null}<span class="muted">· RAM {memPct}%</span>{/if}
+      {#if sys.temp_c}<span class="muted">· {Math.round(sys.temp_c)}°C</span>{/if}
+      {#if stats.cpu == null && memPct == null && !sys.temp_c}<span class="muted">—</span>{/if}
+    </div>
   </a>
 </div>

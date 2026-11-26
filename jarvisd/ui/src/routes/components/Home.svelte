@@ -39,8 +39,10 @@
   </section>
   <aside class="rail">
     <HomeQuick {overview} />
-    <HomePlayer />
-    <HomeVolume />
     <HomeAmbient />
+    <div class="mobile-only-cards">
+      <HomePlayer />
+      <HomeVolume />
+    </div>
   </aside>
 </div>

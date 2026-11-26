@@ -19,14 +19,7 @@ export function countTo(el, v, dec = 0) {
   requestAnimationFrame(step);
 }
 
-// край карточки светится там, где указатель
-globalThis.document?.addEventListener("pointermove", (e) => {
-  const c = e.target.closest?.(".card, .sec, .np, .kpi");
-  if (!c) return;
-  const r = c.getBoundingClientRect();
-  c.style.setProperty("--mx", `${e.clientX - r.left}px`);
-  c.style.setProperty("--my", `${e.clientY - r.top}px`);
-}, { passive: true });
+// Warm HomeOS: отключена неоновая подсветка краёв карточек за курсором.
 
 // плашка активного пункта меню переезжает на пружине
 export function navPill() {

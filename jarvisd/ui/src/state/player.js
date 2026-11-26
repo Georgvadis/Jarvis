@@ -250,6 +250,12 @@ export function mountVolume(element, onLevel) {
   };
 }
 
+export function subscribeVolume(listener) {
+  listener(volumeLevel());
+  volumeListeners.add(listener);
+  return () => volumeListeners.delete(listener);
+}
+
 export function refreshVolume() {
   const level = volumeLevel();
   for (const listener of volumeListeners) listener(level);

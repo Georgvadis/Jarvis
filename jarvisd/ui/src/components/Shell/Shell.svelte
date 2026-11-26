@@ -1,23 +1,26 @@
 <script>
   import { onMount, tick } from "svelte";
   import { navPill } from "#helpers/charts.js";
-  import { act, api, icon, observePills, tip, toast } from "#helpers/core.js";
+  import { act, api, icon, observePills, toast } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
   import { activity, runActivityNext, stopActivityItem, summarizeActivity } from "#state/activity.js";
   import { refreshRoute, reload } from "#state/panelState.js";
   import { subscribeMusic } from "#state/player.js";
-  import { ACCENTS, setAccent, themeState, toggleThemeMode } from "#state/theme.js";
+  import { themeState, toggleThemeMode } from "#state/theme.js";
   import CommandPalette from "#components/Shell/CommandPalette.svelte";
   import Gate from "#components/Shell/Gate/Gate.svelte";
+  import SpeakerDock from "#components/Shell/SpeakerDock.svelte";
 
   let { access, login, logout, sidebar, orb, navigation, children } = $props();
   let active = $derived(access.status === "active");
   let profiles = $derived(sidebar?.profiles || []);
-  let activeProfileId = $derived(profiles.find((p) => p.active)?.id || "");
+  let activeProfile = $derived(profiles.find((p) => p.active) || profiles[0] || null);
+  let activeProfileId = $derived(activeProfile?.id || "");
   let page = $derived(navigation?.nav || "home");
   let view = $state();
   let menuOpen = $state(false);
   let cmdOpen = $state(false);
+  let asstOpen = $state(false);
   let dragged = $state("");
   let playing = $state(false);
 
@@ -44,6 +47,7 @@
   $effect(() => {
     const route = navigation;
     closeMenu();
+    asstOpen = false;
     if (active && route && view) {
       view.classList.remove("enter");
       void view.offsetWidth;
@@ -64,11 +68,9 @@
       return;
     }
     if (event.key === "Escape") {
-      if (cmdOpen) {
-        cmdOpen = false;
-      } else {
-        closeMenu();
-      }
+      if (cmdOpen) cmdOpen = false;
+      else if (asstOpen) asstOpen = false;
+      else closeMenu();
     }
   }
 
@@ -125,91 +127,82 @@
 <Gate {access} {login} />
 <div id="app" class="app" class:hidden={!active}>
   <aside class="side" class:open={menuOpen} id="side">
-    <a class="brand" href="/"><span class="orb" id="orb" data-s={orb.state} role="img" aria-label={orb.text} title={orb.text}><i></i></span><span class="brand-t"><b>YaJarvis</b><small id="ver">v{sidebar?.version ?? "…"}</small></span></a>
+    <a class="brand" href="/">
+      <span class="orb" id="orb" data-s={orb.state} role="img" aria-label={orb.text} title={orb.text}><i></i></span>
+      <span class="brand-t"><b>YaJarvis</b><small id="ver">v{sidebar?.version ?? "…"}</small></span>
+    </a>
+
+    {#if activeProfile}
+      <div class="asst-box">
+        <button type="button" class="asst-card" aria-expanded={asstOpen} onclick={() => { asstOpen = !asstOpen; }}>
+          <span class={"av c" + activeProfile.color}>{activeProfile.initial}</span>
+          <span class="asst-meta">
+            <b>{activeProfile.name}</b>
+            <small>{activeProfile.detail || "Активный ассистент"}</small>
+          </span>
+          <span class="asst-chev">{@html icon(asstOpen ? "x" : "right")}</span>
+        </button>
+
+        {#if asstOpen}
+          <div class="asst-pop" id="profiles" role="list" aria-label="Ассистенты">
+            {#each profiles as profile (profile.id)}
+              <div class="asst-pop-row" role="listitem" class:on={page === "p:" + profile.id} class:drag={dragged === profile.id}
+                draggable="true" data-id={profile.id}
+                ondragstart={(event) => startDrag(event, profile.id)} ondragend={() => { dragged = ""; }}
+                ondragover={(event) => event.preventDefault()} ondrop={(event) => reorder(event, profile.id)}>
+                <a href={profilePath(profile.id)} class="asst-pop-link">
+                  <span class={"av c" + profile.color}>{profile.initial}</span>
+                  <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.detail}</div></div>
+                </a>
+                <button type="button" class="prof-act" class:on={profile.active}
+                  title={profile.active ? "Активный" : `Активировать «${profile.name}»`}
+                  aria-label={profile.active ? "Активный" : `Активировать ${profile.name}`}
+                  onclick={(event) => quickActivate(event, profile)}><i></i></button>
+              </div>
+            {/each}
+            <div class="asst-pop-foot">
+              <a href={profilePath("new")} id="add-profile">{@html icon("plus")}Новый</a>
+              <a href="/characters">{@html icon("smile")}Характеры</a>
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <button type="button" class="cmdk-trigger" onclick={() => { closeMenu(); cmdOpen = true; }}>
       {@html icon("search")}
       <span>Команды</span>
-      <span class="cmdk-kbd">Ctrl+K</span>
+      <span class="cmdk-kbd">⌘K</span>
     </button>
+
     <nav class="nav" id="nav">
       <a href="/" data-page="home" class:on={page === "home"}>{@html icon("home")}Главная</a>
       <a href="/studio" data-page="studio" class:on={page === "studio"}>{@html icon("layers")}Студия<span class="dot" class:hidden={!studioActive}></span></a>
       <a href="/player" data-page="player" class:on={page === "player"}>{@html icon("music")}Плеер<span class="nav-eq" class:hidden={!playing} id="nav-eq"><i></i><i></i><i></i></span></a>
-      <div class="nav-group">Ассистенты {@html tip("Ассистент — набор настроек: голос, модель, характер. Активный отвечает на «Джарвис». Перетаскивайте, чтобы поменять порядок.")}</div>
-      <div id="profiles" class="profiles">
-        {#each profiles as profile (profile.id)}
-          <a href={profilePath(profile.id)} class="prof" class:on={page === "p:" + profile.id} class:drag={dragged === profile.id}
-            draggable="true" data-id={profile.id}
-            ondragstart={(event) => startDrag(event, profile.id)} ondragend={() => { dragged = ""; }}
-            ondragover={(event) => event.preventDefault()} ondrop={(event) => reorder(event, profile.id)}>
-            <span class={"av c" + profile.color}>{profile.initial}</span>
-            <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.detail}</div></div>
-            <button type="button" class="prof-act" class:on={profile.active}
-              title={profile.active ? "Активный ассистент" : `Сделать «${profile.name}» активным`}
-              aria-label={profile.active ? "Активный ассистент" : `Активировать ${profile.name}`}
-              onclick={(event) => quickActivate(event, profile)}><i></i></button>
-          </a>
-        {/each}
-      </div>
-      <a href={profilePath("new")} class="navbtn" id="add-profile">{@html icon("plus")}Новый ассистент</a>
-      <a href="/characters" data-page="characters" class:on={page === "characters"}>{@html icon("smile")}Характеры</a>
       <a href="/memory" data-page="memory" class:on={page === "memory"}>{@html icon("list")}Память</a>
-      <div class="nav-group">Колонка</div>
+
+      <div class="nav-group">Система</div>
       <a href="/speaker" data-page="speaker" class:on={page === "speaker"}>{@html icon("speaker")}Колонка</a>
       <a href="/connections" data-page="connections" class:on={page === "connections"}>{@html icon("puzzle")}Подключения</a>
-      <div id="nav-ext" class="nav-ext">{#if sidebar?.training}<a href="/training" data-page="training" class:on={page === "training"}>{@html icon("mic")}Обучение</a>{/if}</div>
-      <div class="nav-group">Состояние</div>
+      <div id="nav-ext" class="nav-ext">
+        {#if sidebar?.training}<a href="/training" data-page="training" class:on={page === "training"}>{@html icon("mic")}Обучение</a>{/if}
+      </div>
       <a href="/charts" data-page="charts" class:on={page === "charts"}>{@html icon("activity")}Графики</a>
       <a href="/logs" data-page="logs" class:on={page === "logs"}>{@html icon("note")}Логи</a>
-      <div class="nav-sep"></div>
       <a href="/security" data-page="security" class:on={page === "security"}>{@html icon("shield")}Безопасность<span class="dot" class:hidden={!sidebar?.updateAvailable} id="upd-dot"></span></a>
     </nav>
 
-    {#if liveItems.length}
-      <div class="live-bar" aria-label="Сейчас активно">
-        <div class="live-head"><span class="live-dot"></span>Сейчас активно</div>
-        {#each liveItems.slice(0, 2) as item (item.id)}
-          <div class="live-row">
-            <a class="live-link" href={item.href}>
-              <b>{item.title}</b>
-              {#if item.subtitle}<small>{item.subtitle}</small>{/if}
-            </a>
-            <div class="live-acts">
-              {#if item.canNext}
-                <button type="button" class="ib" title={item.nextLabel || "Далее"} aria-label={item.nextLabel || "Далее"} onclick={() => void runActivityNext(item)}>
-                  {@html icon("skip")}
-                </button>
-              {/if}
-              <button type="button" class="ib danger" title="Остановить" aria-label="Остановить" onclick={() => void stopActivityItem(item)}>
-                {@html icon("stop", "solid")}
-              </button>
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="spacer"></div>
-    <div class="theme-bar" aria-label="Оформление">
+    <div class="side-foot">
       <button type="button" class="theme-toggle" onclick={toggleThemeMode}
         title={$themeState.mode === "dark" ? "Светлая тема" : "Тёмная тема"}
         aria-label="Переключить тему">
         {@html icon($themeState.mode === "dark" ? "sun" : "moon")}
       </button>
-      <div class="accent-dots" role="group" aria-label="Акцентный цвет">
-        {#each ACCENTS as a (a.id)}
-          <button
-            type="button"
-            class={"accent-dot ac-" + a.id}
-            class:on={$themeState.accent === a.id}
-            title={a.label}
-            aria-label={a.label}
-            onclick={() => setAccent(a.id)}
-          ></button>
-        {/each}
-      </div>
+      <button class="navbtn" id="logout" type="button" onclick={logout}>
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        Выйти
+      </button>
     </div>
-    <button class="navbtn" id="logout" type="button" onclick={logout}><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Выйти</button>
   </aside>
 
   <header class="mbar">
@@ -225,6 +218,10 @@
   </header>
 
   <main id="view" class="view" use:observePills bind:this={view}>{@render children?.()}</main>
+
+  {#if active}
+    <SpeakerDock {orb} {liveItems} />
+  {/if}
 
   {#if liveItems.length}
     {@const topItem = liveItems[0]}
