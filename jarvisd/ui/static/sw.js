@@ -1,4 +1,4 @@
-const CACHE = "yajarvis-shell-v6";
+const CACHE = "yajarvis-shell-v7";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());

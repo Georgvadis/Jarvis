@@ -46,7 +46,7 @@
 .logbox {
   flex: 1;
   min-height: 0;
-  padding: 12px 0 16px;
+  padding: 12px 0;
   overflow: auto;
   color: var(--ink2);
   font: 12px/19px var(--mono);

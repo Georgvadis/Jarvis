@@ -290,7 +290,7 @@ body.hearth-lit::after {
   pointer-events: auto;
   width: min(1240px, 100%);
   height: 62px;
-  padding: 0 12px 0 14px;
+  padding: 0 14px;
   border-radius: 20px;
   background: var(--glass-dock);
   backdrop-filter: blur(28px) saturate(165%);
@@ -309,7 +309,7 @@ body.hearth-lit::after {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 6px 4px 2px;
+  padding: 4px 6px;
   border-radius: 14px;
   min-width: 0;
 }
@@ -543,7 +543,7 @@ body.hearth-lit::after {
   pointer-events: auto;
   width: min(940px, 100%);
   min-height: 64px;
-  padding: 9px 14px 9px 12px;
+  padding: 10px 14px;
   border-radius: 22px;
   background: var(--glass-dock);
   backdrop-filter: blur(28px) saturate(165%);
@@ -577,6 +577,7 @@ body.hearth-lit::after {
 .dock-info small { font-size: 12px; color: var(--fg3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .dock-ctl { display: flex; align-items: center; gap: 6px; flex: none; }
+.dock-ctl .ib { width: 34px; height: 34px; border-radius: 50%; }
 .dock-play {
   width: 38px; height: 38px; border-radius: 50%;
   border: 0;
@@ -593,7 +594,8 @@ body.hearth-lit::after {
 
 .dock-vol {
   display: flex; align-items: center; gap: 8px;
-  padding: 4px 10px 4px 6px;
+  height: 38px;
+  padding: 0 11px 0 6px;
   border-radius: 999px;
   background: var(--glass-inset);
   border: 1px solid var(--glass-border);
@@ -666,6 +668,7 @@ h2 { font-size: 15.5px; line-height: 22px; font-weight: 700; letter-spacing: -.0
   box-shadow: var(--card-shadow) !important;
 }
 .card { padding: 20px 22px; }
+.kpi { padding: 20px 22px !important; }
 .sec {
   padding: 22px 26px;
   margin-bottom: 16px;
@@ -812,6 +815,9 @@ textarea { height: auto; }
 }
 
 .seg {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
   background: var(--glass-inset);
   border: 1px solid var(--glass-border);
   border-radius: var(--r-sm);
@@ -819,11 +825,12 @@ textarea { height: auto; }
   gap: 2px;
 }
 .seg button {
-  height: 32px;
+  height: 30px;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  line-height: 1;
 }
 .seg button .ic { width: 15px; height: 15px; }
 .seg button.on, .seg-pill {
@@ -925,7 +932,8 @@ textarea { height: auto; }
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 12px;
+  min-height: 32px;
+  padding: 4px 12px;
   border-radius: 999px;
   background: var(--glass-inset);
   border: 1px solid var(--glass-border);
@@ -1144,7 +1152,8 @@ textarea { height: auto; }
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
-  padding: 4px 8px 4px 11px;
+  min-height: 32px;
+  padding: 4px 10px;
   border-radius: 999px;
   background: var(--glass-inset);
   border: 1px solid var(--glass-border);
@@ -1306,20 +1315,30 @@ textarea { height: auto; }
 .chat-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 14px 4px;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 0;
   border-top: 1px solid var(--glass-border);
-  background: transparent;
+  background: rgb(255 236 214 / .018);
 }
 .chat-chip {
-  height: 29px;
-  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--glass-border);
   background: var(--glass-inset);
   color: var(--fg2);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
+  line-height: 1;
+}
+.chat-chip .ic {
+  width: 13.5px;
+  height: 13.5px;
+  flex: none;
 }
 .chat-chip:hover {
   border-color: color-mix(in srgb, var(--acc) 45%, var(--glass-border));
@@ -1327,17 +1346,40 @@ textarea { height: auto; }
   color: var(--acc-ink);
 }
 .tg-f {
-  min-height: 62px;
-  padding: 10px 14px;
-  border-top: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 14px 12px;
+  border-top: 0;
   background: rgb(255 236 214 / .018);
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
 }
 .tg-f input[type=text] {
-  height: 42px;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+  height: 40px;
   border-radius: 14px;
-  padding: 0 15px;
+  padding: 0 14px;
   background: var(--input-bg);
   border: 1px solid var(--glass-border);
+}
+.tg-f .ib.lg,
+.tg-f .rb {
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+.tg-f .rb .ic { width: 18px; height: 18px; }
+@media (max-width: 560px) {
+  .chat-chips { padding: 8px 10px 0; gap: 6px; }
+  .tg-f { padding: 8px 10px 10px; gap: 6px; }
+  .tg-f input[type=text] { height: 36px; padding: 0 12px; }
+  .tg-f .ib.lg,
+  .tg-f .rb { width: 36px; height: 36px; }
 }
 
 /* Правая колонка Главной — единая стеклянная станция уюта с вкладками */
@@ -1396,6 +1438,27 @@ textarea { height: auto; }
   gap: 12px;
   align-content: start;
   flex: 1;
+}
+.lounge-body > .amb-vol,
+.lounge-body > .amb-sleep,
+.lounge-body > .pc-bar,
+.lounge-body > .mode-drawer {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.amb-vol {
+  padding-top: 12px;
+  border-top-color: var(--glass-border);
+}
+.amb-vol > .lbl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.amb-sleep {
+  padding-top: 12px;
+  border-top-color: var(--glass-border);
 }
 
 /* Вкладка «Таймеры и ПК» внутри правой станции */
@@ -1679,10 +1742,12 @@ textarea { height: auto; }
 .dj-saved-del .ic { width: 13px; height: 13px; }
 .cx-search {
   display: inline-flex; align-items: center; gap: 8px;
+  height: 38px;
   background: var(--input-bg); border: 1px solid var(--glass-border);
-  border-radius: 10px; padding: 0 10px;
+  border-radius: 12px; padding: 0 12px;
 }
-.cx-search input { border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 0; }
+.cx-search input { border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 0; height: 100%; }
+.mode-drawer .btn.sm { min-height: 34px; height: 34px; }
 
 /* Экран входа (Gate) — тёплое стекло по центру */
 .gate { position: relative; }
@@ -1990,10 +2055,10 @@ dialog::backdrop {
   border-bottom: 1px solid var(--glass-border);
 }
 .mem-admin-drawer > .studio-stack {
-  padding: 16px 18px 18px;
+  padding: 16px 18px;
 }
 .note-composer {
-  margin-bottom: 14px;
+  margin-bottom: 0;
   padding: 14px 16px !important;
   border-radius: 16px;
   background: var(--glass-inset);
@@ -2026,6 +2091,37 @@ dialog::backdrop {
   display: grid;
   gap: 14px;
   align-content: start;
+}
+.bento-card > .card-head,
+.lounge-card > .card-head,
+.studio-stack > .card-head {
+  margin-bottom: 0 !important;
+}
+.bento-card > .book-grid,
+.bento-card > .notes-grid,
+.bento-card > .recap-box,
+.bento-card > .bunker-banner,
+.bento-card > .role-grid,
+.bento-card > .pod-archive,
+.bento-card > .mode-drawer,
+.bento-card > .dj-bar,
+.bento-card > .quick-live,
+.bento-card > .pc-bar,
+.bento-card > .gpu-act,
+.bento-card > .sched-list,
+.bento-card > .book-list,
+.studio-stack > .book-grid,
+.studio-stack > .notes-grid,
+.studio-stack > .recap-box,
+.studio-stack > .bunker-banner,
+.studio-stack > .role-grid,
+.studio-stack > .pod-archive,
+.studio-stack > .mode-drawer,
+.studio-stack > .dj-bar,
+.studio-stack > .sched-list,
+.studio-stack > .book-list {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 .bento-card > h2,
 .bento-card > .card-head h2 {
@@ -2079,9 +2175,14 @@ dialog::backdrop {
   background: var(--glass-inset);
   border: 1px solid var(--glass-border);
 }
+.qwen-upload,
+#v-custom {
+  padding: 0 !important;
+  overflow: hidden;
+}
 .qwen-upload > summary,
 #v-custom > summary {
-  padding: 11px 14px;
+  padding: 12px 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
