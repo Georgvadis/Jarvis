@@ -1,6 +1,8 @@
 <script>
+  import { untrack } from "svelte";
   import { api, icon, toast } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
+  import { S, reload } from "#state/panelState.js";
 
   const presets = [
     "Ночной Токио",
@@ -13,9 +15,51 @@
   const vibeHints = ["Поспокойнее", "Энергичнее", "Больше электроники", "Атмосферный инди"];
 
   let mood = $state("ночной Токио синтвейв");
+  let savedPresets = $state(untrack(() => S.settings?.dj_presets || []));
   let busy = $state(false);
 
-  let dj = $derived($activity.dj || { active: false, station: "", current_title: "", mood: "", likes: [] });
+  let dj = $derived($activity.dj || { active: false, station: "", current_title: "", mood: "", likes: [], music_sleep_s: 0 });
+  let musicSleepS = $derived(Number(dj.music_sleep_s || 0));
+
+  async function saveDjPresets(nextList, msg) {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("PUT", "/api/settings", { dj_presets: nextList });
+      savedPresets = nextList;
+      await reload();
+      toast(msg);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  function addPreset() {
+    const clean = mood.trim();
+    if (!clean) return toast("Введите название волны", true);
+    if (savedPresets.includes(clean)) return toast("Такая волна уже сохранена");
+    void saveDjPresets([...savedPresets, clean].slice(0, 24), `Волна «${clean}» сохранена`);
+  }
+
+  function removePreset(name) {
+    void saveDjPresets(savedPresets.filter((x) => x !== name), "Волна удалена");
+  }
+
+  async function setMusicSleep(mins) {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/music/sleep", { minutes: mins });
+      await refreshActivity();
+      toast(mins ? `Плавный сон музыки: ${mins} мин` : "Таймер сна отменён");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
 
   async function startDj(targetMood = mood) {
     if (busy) return;
@@ -71,13 +115,37 @@
             <span>{p}</span>
           </button>
         {/each}
+        {#each savedPresets as p (p)}
+          <div class="dj-saved-wrap">
+            <button type="button" class="scen-btn" disabled={busy} onclick={() => { mood = p; startDj(p); }}>
+              {@html icon("heart")}
+              <span>{p}</span>
+            </button>
+            <button type="button" class="dj-saved-del" disabled={busy} onclick={() => removePreset(p)} title="Удалить волну" aria-label={`Удалить волну ${p}`}>
+              {@html icon("x")}
+            </button>
+          </div>
+        {/each}
       </div>
 
       <div class="f">
         <label for="dj-mood">Свой запрос настроения</label>
         <div class="mode-row">
           <input id="dj-mood" type="text" maxlength="140" placeholder="Опишите вайб…" bind:value={mood} disabled={busy}>
+          <button type="button" class="btn ghost" disabled={busy || !mood.trim()} onclick={addPreset} title="Сохранить волну в избранное" aria-label="Сохранить волну">{@html icon("plus")}</button>
           <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Эфир</button>
+        </div>
+      </div>
+
+      <div class="amb-sleep">
+        <span class="amb-sleep-lbl">{@html icon("moon")} {musicSleepS > 0 ? `Плавный сон: ${Math.ceil(musicSleepS / 60)} мин` : "Таймер сна музыки"}</span>
+        <div class="amb-sleep-btns">
+          {#each [15, 30, 60] as m (m)}
+            <button type="button" class="btn sm ghost" disabled={busy} onclick={() => setMusicSleep(m)}>{m}м</button>
+          {/each}
+          {#if musicSleepS > 0}
+            <button type="button" class="btn sm ghost danger" disabled={busy} onclick={() => setMusicSleep(0)}>{@html icon("x")}</button>
+          {/if}
         </div>
       </div>
     </form>

@@ -819,6 +819,207 @@ pub async fn books_delete(
     forward_voice_response(resp, "Не удалось удалить книгу").await
 }
 
+pub async fn books_chapters(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID книги");
+    }
+    let url = format!("{}/books/{}/chapters", local_voice_server(&app), id);
+    let resp = crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось загрузить оглавление книги").await
+}
+
+pub async fn books_jump(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let book_id = value["book_id"].as_str().map(str::to_string);
+    let chapter = value["chapter"].as_u64().unwrap_or(0) as usize;
+    match app.reader.jump_chapter(app.engine.clone(), book_id, chapter).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg, "reader": app.reader.status()})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn books_sleep(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let mins = value["minutes"].as_u64().unwrap_or(0);
+    reply(StatusCode::OK, app.reader.set_sleep(mins))
+}
+
+pub async fn books_quote(State(app): State<App>) -> Response {
+    match app.reader.save_quote(&app.engine).await {
+        Ok(msg) => reply(StatusCode::OK, json!({"ok": true, "message": msg})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn music_sleep(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let mins = value["minutes"].as_u64().unwrap_or(0);
+    reply(StatusCode::OK, app.dj.set_music_sleep(app.engine.clone(), mins))
+}
+
+pub async fn podcasts_list(State(app): State<App>) -> Response {
+    let url = format!("{}/podcasts", local_voice_server(&app));
+    let resp = crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось загрузить архив подкастов").await
+}
+
+pub async fn podcasts_get(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID подкаста");
+    }
+    let url = format!("{}/podcasts/{}", local_voice_server(&app), id);
+    let resp = crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось загрузить выпуск подкаста").await
+}
+
+pub async fn podcasts_play(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID подкаста");
+    }
+    let url = format!("{}/podcasts/{}", local_voice_server(&app), id);
+    let resp = match crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.unwrap_or_default(),
+        Ok(r) => return super::bad(format!("Подкаст не найден (HTTP {})", r.status())),
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    let title = resp["title"].as_str().unwrap_or("Выпуск").to_string();
+    let turns: Vec<(String, String)> = resp["turns"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    let txt = t["text"].as_str()?.trim().to_string();
+                    if txt.is_empty() {
+                        return None;
+                    }
+                    Some((t["speaker"].as_str().unwrap_or("").to_string(), txt))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    match crate::debate::spawn_replay_podcast(app.engine.clone(), title, turns, None, None) {
+        Ok(()) => ok(),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn podcasts_mp3(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID подкаста");
+    }
+    let url = format!("{}/podcasts/{}/mp3", local_voice_server(&app), id);
+    let resp = match crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(180))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    if !resp.status().is_success() {
+        let v: serde_json::Value = resp.json().await.unwrap_or_default();
+        return super::bad(v["detail"].as_str().unwrap_or("Не удалось собрать MP3 подкаста"));
+    }
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return super::bad(format!("Ошибка чтения MP3: {e}")),
+    };
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "audio/mpeg")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"podcast-{id}.mp3\""),
+        )
+        .body(axum::body::Body::from(bytes))
+        .unwrap_or_else(|_| super::bad("Ошибка формирования ответа MP3"))
+}
+
+pub async fn podcasts_telegram(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID подкаста");
+    }
+    let base = local_voice_server(&app);
+    let meta: serde_json::Value = match crate::net::direct()
+        .get(format!("{base}/podcasts/{id}"))
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r.json().await.unwrap_or_default(),
+        Ok(r) => return super::bad(format!("Подкаст не найден (HTTP {})", r.status())),
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    let mp3_resp = match crate::net::direct()
+        .get(format!("{base}/podcasts/{id}/mp3"))
+        .timeout(std::time::Duration::from_secs(180))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Сервер jarvis-voice недоступен: {e}")),
+    };
+    if !mp3_resp.status().is_success() {
+        let v: serde_json::Value = mp3_resp.json().await.unwrap_or_default();
+        return super::bad(v["detail"].as_str().unwrap_or("Не удалось собрать MP3"));
+    }
+    let bytes = match mp3_resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => return super::bad(format!("Ошибка чтения MP3: {e}")),
+    };
+    let title = meta["title"].as_str().unwrap_or("Подкаст YaJarvis");
+    match crate::telegram_bot::send_audio_telegram(&app.plugins, &app.proxy, &bytes, &format!("podcast-{id}.mp3"), title).await {
+        Ok(()) => ok(),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn podcasts_delete(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID подкаста");
+    }
+    let url = format!("{}/podcasts/{}", local_voice_server(&app), id);
+    let resp = crate::net::direct()
+        .delete(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .send()
+        .await;
+    forward_voice_response(resp, "Не удалось удалить выпуск подкаста").await
+}
+
 pub async fn games_status(State(app): State<App>) -> Response {
     reply(StatusCode::OK, app.games.status())
 }

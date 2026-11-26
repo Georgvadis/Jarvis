@@ -348,6 +348,12 @@ impl Tools {
         {
             return Some(reader.recap(eng).await.unwrap_or_else(|e| e));
         }
+        if is_book_quote_command(text)
+            && let Some(reader) = &self.reader
+            && let Some(eng) = self.engine()
+        {
+            return Some(reader.save_quote(&eng).await.unwrap_or_else(|e| e));
+        }
         if crate::briefing::is_briefing_command(text)
             && let Some(eng) = self.engine()
         {
@@ -1213,6 +1219,13 @@ pub fn is_book_recap_command(text: &str) -> bool {
     .any(|p| low.contains(p))
 }
 
+pub fn is_book_quote_command(text: &str) -> bool {
+    let low = text.trim().to_lowercase();
+    ["сохрани цитату", "запиши цитату", "цитату в заметки"]
+        .iter()
+        .any(|p| low.contains(p))
+}
+
 pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<String, String> {
     match id.trim().to_lowercase().as_str() {
         "work" => {
@@ -1332,6 +1345,8 @@ mod tests {
         assert!(is_book_recap_command("перескажи книгу пожалуйста"));
         assert!(is_book_recap_command("напомни книгу"));
         assert!(!is_book_recap_command("включи музыку"));
+        assert!(is_book_quote_command("сохрани цитату в заметки"));
+        assert!(!is_book_quote_command("включи трек"));
     }
 
     #[test]

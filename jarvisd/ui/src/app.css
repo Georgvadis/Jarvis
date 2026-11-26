@@ -2083,3 +2083,42 @@ h5.md-h { font-size: .94em; color: var(--fg2); }
 .pc-send-row input { flex: 1 1 220px; min-width: 0; height: 34px; font-size: 13px; border-radius: 10px; padding: 0 10px; }
 .hist-filter { width: 100%; height: 34px; font-size: 13px; border-radius: 10px; padding: 0 10px; margin-bottom: 8px; background: var(--bg0); }
 .player-ambient { margin-bottom: 20px; }
+
+/* === Студия 2.0: Архив подкастов, Оглавление книг, Волны AI-DJ (lite2fix26) === */
+.pod-archive { margin-top: 18px; }
+.pod-list { display: grid; gap: 10px; margin-top: 10px; }
+.pod-row {
+  display: grid; gap: 8px; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--bg0);
+}
+.pod-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pod-meta { min-width: 0; flex: 1 1 220px; display: grid; gap: 2px; }
+.pod-meta b { font-size: 14px; }
+.pod-meta small { font-size: 12px; color: var(--fg3); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pod-turns {
+  display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line);
+  font-size: 13px; line-height: 1.45; color: var(--fg2);
+}
+.pod-turns p { margin: 0; }
+
+.chap-list {
+  display: grid; gap: 4px; max-height: 220px; overflow-y: auto;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+}
+.chap-btn {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--raise); color: var(--fg2); font-size: 12.5px; text-align: left;
+  cursor: pointer; transition: border-color .15s, color .15s;
+}
+.chap-btn:hover { border-color: var(--acc); color: var(--fg); }
+.chap-btn.on { background: var(--acc-soft); border-color: color-mix(in srgb, var(--acc) 55%, transparent); color: var(--acc-ink); }
+
+.dj-saved-wrap { position: relative; display: flex; }
+.dj-saved-wrap .scen-btn { flex: 1; padding-right: 28px; }
+.dj-saved-del {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg3); cursor: pointer; padding: 0;
+}
+.dj-saved-del:hover { color: var(--bad); background: var(--raise2); }
+.dj-saved-del .ic { width: 13px; height: 13px; }

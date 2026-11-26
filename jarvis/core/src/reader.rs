@@ -20,6 +20,8 @@ struct ReaderState {
     chapters_count: usize,
     para: usize,
     chapter_paras: usize,
+    current_text: String,
+    sleep_until_unix: i64,
     multi_voice: bool,
     last_error: String,
 }
@@ -42,7 +44,13 @@ impl BookReader {
     }
 
     pub fn status(&self) -> Value {
+        let now = jiff::Timestamp::now().as_second();
         let g = self.st.lock().unwrap();
+        let sleep_s = if g.sleep_until_unix > now {
+            (g.sleep_until_unix - now) as u64
+        } else {
+            0
+        };
         json!({
             "running": g.running,
             "book_id": g.book_id,
@@ -52,9 +60,24 @@ impl BookReader {
             "chapters_count": g.chapters_count,
             "para": g.para,
             "chapter_paras": g.chapter_paras,
+            "current_text": g.current_text,
+            "sleep_s": sleep_s,
             "multi_voice": g.multi_voice,
             "last_error": g.last_error,
         })
+    }
+
+    pub fn set_sleep(&self, minutes: u64) -> Value {
+        {
+            let mut g = self.st.lock().unwrap();
+            if minutes == 0 {
+                g.sleep_until_unix = 0;
+            } else {
+                let mins = minutes.clamp(1, 240);
+                g.sleep_until_unix = jiff::Timestamp::now().as_second() + (mins * 60) as i64;
+            }
+        }
+        self.status()
     }
 
     pub fn stop(&self) {
@@ -193,6 +216,21 @@ impl BookReader {
                     self.mark_stopped(generation);
                     return;
                 }
+                let sleep_expired = {
+                    let mut g = self.st.lock().unwrap();
+                    let now = jiff::Timestamp::now().as_second();
+                    if g.sleep_until_unix > 0 && now >= g.sleep_until_unix {
+                        g.sleep_until_unix = 0;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if sleep_expired {
+                    engine.journal.note("книга", "Таймер сна книги сработал", "");
+                    self.mark_stopped(generation);
+                    return;
+                }
                 let ch = item["chapter"].as_u64().unwrap_or(0) as usize;
                 let p = item["para"].as_u64().unwrap_or(0) as usize;
                 let ch_title = item["chapter_title"].as_str().unwrap_or("");
@@ -226,6 +264,7 @@ impl BookReader {
                     g.chapter = ch;
                     g.para = p;
                     g.chapter_title = ch_title.to_string();
+                    g.current_text = raw_text.to_string();
                 }
                 let _ = save_bookmark(&srv, &book_id, ch, p).await;
 
@@ -303,6 +342,112 @@ impl BookReader {
             self.start(engine, Some(book_id), None).await?;
         }
         Ok(format!("Перешёл к главе {}", target_ch + 1))
+    }
+
+    pub async fn jump_chapter(
+        self: &Arc<Self>,
+        engine: Arc<Engine>,
+        book_id: Option<String>,
+        target_ch: usize,
+    ) -> Result<String, String> {
+        let (was_running, cur_id) = {
+            let g = self.st.lock().unwrap();
+            (g.running, g.book_id.clone())
+        };
+        let target_id = book_id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(cur_id);
+        if target_id.is_empty() {
+            return Err("Книга не выбрана".into());
+        }
+        let srv = crate::tools::local_voice_url(&engine.host);
+        save_bookmark(&srv, &target_id, target_ch, 0).await?;
+        {
+            let mut g = self.st.lock().unwrap();
+            if g.book_id == target_id {
+                g.chapter = target_ch;
+                g.para = 0;
+            }
+        }
+        if was_running {
+            self.start(engine, Some(target_id), None).await?;
+        }
+        Ok(format!("Перешёл к главе {}", target_ch + 1))
+    }
+
+    pub async fn save_quote(&self, engine: &Engine) -> Result<String, String> {
+        let (mut quote, mut title, mut ch_title, book_id) = {
+            let g = self.st.lock().unwrap();
+            (
+                g.current_text.clone(),
+                g.title.clone(),
+                g.chapter_title.clone(),
+                g.book_id.clone(),
+            )
+        };
+        if quote.trim().is_empty() {
+            let srv = crate::tools::local_voice_url(&engine.host);
+            let target_id = if !book_id.is_empty() {
+                book_id
+            } else {
+                let list_resp = crate::net::direct()
+                    .get(format!("{srv}/books"))
+                    .timeout(Duration::from_secs(5))
+                    .send()
+                    .await
+                    .map_err(|e| format!("Сервер книг недоступен: {e}"))?;
+                let v: Value = list_resp.json().await.unwrap_or_default();
+                v["books"]
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|b| b["id"].as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            if target_id.is_empty() {
+                return Err("Нет активной книги или сохранённого фрагмента".into());
+            }
+            let slice_val: Value = crate::net::direct()
+                .get(format!("{srv}/books/{target_id}/slice?count=1"))
+                .timeout(Duration::from_secs(6))
+                .send()
+                .await
+                .map_err(|e| format!("Сервер книг недоступен: {e}"))?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            title = slice_val["title"].as_str().unwrap_or("Книга").to_string();
+            ch_title = slice_val["chapter_title"].as_str().unwrap_or("").to_string();
+            quote = slice_val["items"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|i| i["text"].as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+        }
+        let quote = quote.trim();
+        if quote.is_empty() {
+            return Err("Не найден текст цитаты".into());
+        }
+        let source = if ch_title.trim().is_empty() {
+            format!("**{title}**")
+        } else {
+            format!("**{title}**, {ch_title}")
+        };
+        let note_body = format!("> {quote}\n\n— {source}");
+        let note_title = format!("{title} — цитата");
+        let path = crate::tools::save_cybernote(
+            &engine.host,
+            &note_title,
+            &note_body,
+            &["книга".into(), "цитата".into()],
+            "Цитаты из книг",
+        )
+        .await?;
+        engine.journal.note("книга", "Цитата сохранена", &path);
+        Ok(format!("Сохранил цитату из «{title}» в CyberNotes."))
     }
 
     pub async fn recap(&self, engine: Arc<Engine>) -> Result<String, String> {
@@ -389,6 +534,19 @@ impl BookReader {
             return Some("Возвращаю предыдущую главу.".into());
         }
         if low.contains("продолжи") || low.contains("читай") || low.contains("почитай") {
+            if let Some(mins) = parse_sleep_minutes(&low) {
+                self.set_sleep(mins);
+                if !self.is_running() {
+                    let me = self.clone();
+                    let eng = engine.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = me.start(eng.clone(), None, None).await {
+                            eng.say_text(&e);
+                        }
+                    });
+                }
+                return Some(format!("Читаю книгу с таймером сна на {mins} мин."));
+            }
             let me = self.clone();
             let eng = engine.clone();
             tokio::spawn(async move {
@@ -400,6 +558,21 @@ impl BookReader {
         }
         None
     }
+}
+
+pub(crate) fn parse_sleep_minutes(low: &str) -> Option<u64> {
+    if !low.contains("минут") && !low.contains("мин") && !low.contains("таймер сна") {
+        return None;
+    }
+    for tok in low.split_whitespace() {
+        let digits: String = tok.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(n) = digits.parse::<u64>()
+            && (1..=240).contains(&n)
+        {
+            return Some(n);
+        }
+    }
+    None
 }
 
 async fn save_bookmark(srv: &str, book_id: &str, chapter: usize, para: usize) -> Result<(), String> {
@@ -425,6 +598,11 @@ mod tests {
         let r = BookReader::new();
         assert!(!r.is_running());
         assert_eq!(r.status()["running"], false);
+        r.set_sleep(20);
+        assert!(r.status()["sleep_s"].as_u64().unwrap_or(0) > 1000);
+        r.set_sleep(0);
+        assert_eq!(r.status()["sleep_s"], 0);
+        assert_eq!(parse_sleep_minutes("читай книгу 25 минут"), Some(25));
         r.stop();
         assert!(!r.is_running());
     }

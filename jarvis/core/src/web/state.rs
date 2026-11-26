@@ -259,6 +259,7 @@ pub async fn state(State(app): State<App>) -> Json<Value> {
                      "briefing_books": s.briefing_books,
                      "briefing_notes": s.briefing_notes,
                      "briefing_custom": s.briefing_custom,
+                     "dj_presets": s.dj_presets,
                      "onboarded": s.onboarded, "plugins_warned": s.plugins_warned},
         "wake_replies": app.engine.wake_reply_status(),
         "initial_audio": app.engine.initial_audio_diag(),

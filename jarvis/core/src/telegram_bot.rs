@@ -105,6 +105,54 @@ pub async fn notify_telegram(plugins: &Host, proxy: &Proxy, text: &str) {
     }
 }
 
+pub async fn send_audio_telegram(
+    plugins: &Host,
+    proxy: &Proxy,
+    mp3_bytes: &[u8],
+    filename: &str,
+    title: &str,
+) -> Result<(), String> {
+    let token = plugins.plugin_setting_str("telegram-sender", "bot_token");
+    let chat_id = plugins.plugin_setting_str("telegram-sender", "chat_id");
+    if token.trim().is_empty() || chat_id.trim().is_empty() {
+        return Err("Telegram-бот не настроен (укажите bot_token и chat_id)".into());
+    }
+    if mp3_bytes.is_empty() {
+        return Err("Пустой аудиофайл".into());
+    }
+    let boundary = format!("jarvis-mp3-{}", crate::settings::rand_hex(8));
+    let mut body = Vec::with_capacity(mp3_bytes.len() + 1024);
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n{}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"{filename}\"\r\n\
+             Content-Type: audio/mpeg\r\n\r\n",
+            chat_id.trim(),
+            title.trim()
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(mp3_bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let route = proxy.route("plugins");
+    let (_, client) = build_tg_client(&route)?;
+    let url = format!("https://api.telegram.org/bot{}/sendAudio", token.trim());
+    let resp = client
+        .post(&url)
+        .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| format!("Ошибка отправки в Telegram: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Telegram вернул HTTP {}", resp.status()));
+    }
+    Ok(())
+}
+
 pub fn spawn(
     engine: Arc<Engine>,
     plugins: Arc<Host>,

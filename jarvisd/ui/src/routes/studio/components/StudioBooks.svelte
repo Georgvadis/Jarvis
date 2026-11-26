@@ -16,8 +16,12 @@
   let multiVoice = $state(false);
   let confirmId = $state("");
   let recapText = $state("");
+  let tocBookId = $state("");
+  let tocData = $state(null);
+  let tocLoading = $state(false);
 
   let reader = $derived($activity.reader || {});
+  let bookSleepS = $derived(Number(reader.sleep_s || 0));
 
   async function loadBooks() {
     loading = true;
@@ -129,10 +133,76 @@
     try {
       await api("DELETE", "/api/books/" + encodeURIComponent(id), undefined, { signal });
       books = books.filter((b) => b.id !== id);
+      if (tocBookId === id) {
+        tocBookId = "";
+        tocData = null;
+      }
       await refreshActivity();
       toast("Книга удалена");
     } catch (error) {
       if (!signal.aborted) toast(error.message, true);
+    }
+  }
+
+  async function toggleToc(id) {
+    if (tocBookId === id) {
+      tocBookId = "";
+      tocData = null;
+      return;
+    }
+    tocLoading = true;
+    try {
+      const res = await api("GET", `/api/books/${encodeURIComponent(id)}/chapters`, undefined, { signal });
+      if (!signal.aborted) {
+        tocBookId = id;
+        tocData = res;
+      }
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      if (!signal.aborted) tocLoading = false;
+    }
+  }
+
+  async function jumpToChapter(bookId, chapter) {
+    if (busy) return;
+    busy = true;
+    try {
+      const res = await api("POST", "/api/books/jump", { book_id: bookId, chapter }, { signal });
+      await Promise.all([refreshActivity(), loadBooks()]);
+      tocBookId = "";
+      toast(res.message || `Глава ${chapter + 1}`);
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function setBookSleep(mins) {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/books/sleep", { minutes: mins }, { signal });
+      await refreshActivity();
+      toast(mins ? `Таймер сна книги: ${mins} мин` : "Таймер сна книги отменён");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function saveBookQuote() {
+    if (busy) return;
+    busy = true;
+    try {
+      const res = await api("POST", "/api/books/quote", {}, { signal });
+      toast(res.message || "Цитата сохранена");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      busy = false;
     }
   }
 </script>
@@ -182,12 +252,28 @@
     <div class="dj-bar">
       <div class="dj-info">
         <b>{@html icon("book")} {reader.title}</b>
-        <small>{reader.chapter_title || `Глава ${(reader.chapter || 0) + 1}`}</small>
+        <small>
+          {reader.chapter_title || `Глава ${(reader.chapter || 0) + 1}`}
+          {#if bookSleepS > 0} · сон через {Math.ceil(bookSleepS / 60)}м{/if}
+        </small>
       </div>
       <div class="dj-actions">
+        <button type="button" class="ib" title="Сохранить цитату в CyberNotes" aria-label="Сохранить цитату" disabled={busy} onclick={saveBookQuote}>{@html icon("note")}</button>
+        <button type="button" class="ib" title="Оглавление" aria-label="Оглавление" onclick={() => toggleToc(reader.book_id)}>{@html icon("list")}</button>
         <button type="button" class="ib" title="Пред. глава" aria-label="Предыдущая глава" onclick={() => navBook(-1)}>{@html icon("prev")}</button>
         <button type="button" class="ib" title="Пауза" aria-label="Пауза книги" onclick={pauseBook}>{@html icon("pause")}</button>
         <button type="button" class="ib" title="След. глава" aria-label="Следующая глава" onclick={() => navBook(1)}>{@html icon("skip")}</button>
+      </div>
+    </div>
+    <div class="amb-sleep">
+      <span class="amb-sleep-lbl">{@html icon("moon")} {bookSleepS > 0 ? `Сон книги: ${Math.ceil(bookSleepS / 60)} мин` : "Таймер сна книги"}</span>
+      <div class="amb-sleep-btns">
+        {#each [15, 30, 45] as m (m)}
+          <button type="button" class="btn sm ghost" disabled={busy} onclick={() => setBookSleep(m)}>{m}м</button>
+        {/each}
+        {#if bookSleepS > 0}
+          <button type="button" class="btn sm ghost danger" disabled={busy} onclick={() => setBookSleep(0)}>{@html icon("x")}</button>
+        {/if}
       </div>
     </div>
   {/if}
@@ -214,6 +300,7 @@
           <div class="book-card-h">
             <b>{b.title}</b>
             <div class="dj-actions">
+              <button type="button" class="ib" class:on={tocBookId === b.id} title="Оглавление и главы" aria-label="Оглавление" disabled={tocLoading} onclick={() => toggleToc(b.id)}>{@html icon("list")}</button>
               {#if active}
                 <button type="button" class="ib on" title="Пауза" aria-label="Пауза" onclick={pauseBook}>{@html icon("pause")}</button>
               {:else}
@@ -229,6 +316,19 @@
           </div>
           <div class="meta">Глава {b.chapter + 1} из {b.chapters_count} · {b.progress_pct}%</div>
           <progress class="bar" value={b.progress_pct} max="100" aria-label="Прогресс чтения"></progress>
+          {#if tocBookId === b.id && tocData?.chapters?.length}
+            <div class="chap-list">
+              {#each tocData.chapters as ch (ch.index)}
+                <button
+                  type="button"
+                  class="chap-btn"
+                  class:on={b.chapter === ch.index}
+                  disabled={busy}
+                  onclick={() => jumpToChapter(b.id, ch.index)}
+                >{ch.index + 1}. {ch.title}</button>
+              {/each}
+            </div>
+          {/if}
         </article>
       {/each}
     </div>

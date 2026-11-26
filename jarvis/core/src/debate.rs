@@ -80,6 +80,76 @@ pub fn spawn_notebook(engine: Arc<Engine>, params: NotebookParams) {
     });
 }
 
+async fn save_podcast_episode(
+    engine: &Engine,
+    title: &str,
+    kind: &str,
+    source: &str,
+    turns: &[(String, String, String)],
+) {
+    if turns.len() < 2 {
+        return;
+    }
+    let srv = crate::tools::local_voice_url(&engine.host);
+    let json_turns: Vec<serde_json::Value> = turns
+        .iter()
+        .map(|(sp, vc, txt)| json!({"speaker": sp, "voice": vc, "text": txt}))
+        .collect();
+    let _ = crate::net::direct()
+        .post(format!("{srv}/podcasts/save"))
+        .json(&json!({"title": title, "kind": kind, "source": source, "turns": json_turns}))
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await;
+}
+
+pub fn spawn_replay_podcast(
+    engine: Arc<Engine>,
+    title: String,
+    turns: Vec<(String, String)>,
+    p1_id: Option<String>,
+    p2_id: Option<String>,
+) -> Result<(), String> {
+    if turns.is_empty() {
+        return Err("В выпуске нет реплик".into());
+    }
+    if DEBATE_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err("Подкаст или спор уже запущен".into());
+    }
+    let my_gen = DEBATE_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    engine.tools.stop_for(&engine, "debate");
+    tokio::spawn(async move {
+        let _active_guard = ActiveGuard(my_gen);
+        let s = engine.store.get();
+        let (p1, p2) = resolve_duo(&engine, &s, p1_id.as_deref(), p2_id.as_deref(), "Соведущий").await;
+        engine.journal.note("подкаст", &format!("Повтор: {title}"), "");
+        let epoch = engine.speech_epoch_now();
+        for (idx, (speaker, line)) in turns.into_iter().enumerate() {
+            if engine.speech_epoch_now() != epoch || DEBATE_GEN.load(Ordering::Relaxed) != my_gen {
+                break;
+            }
+            let prof = if idx % 2 == 0 { &p1 } else { &p2 };
+            let label = if speaker.trim().is_empty() { prof.name.as_str() } else { speaker.trim() };
+            let clean = crate::sfx::strip_tags(&line);
+            engine.journal.note("подкаст", "", &format!("{label}: {clean}"));
+            let e = engine.clone();
+            let line_copy = line.clone();
+            let prof_clone = prof.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                e.say_aloud_opts(&line_copy, Duration::from_secs(55), Some(&prof_clone), false)
+            })
+            .await;
+            if !matches!(res, Ok(Ok(()))) {
+                break;
+            }
+        }
+    });
+    Ok(())
+}
+
 fn effective_voice(p: &Profile) -> &str {
     if !p.tts_voice.is_empty() {
         p.tts_voice.as_str()
@@ -197,6 +267,7 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
 
     engine.journal.note("подкаст", &format!("Тема спора: {topic}"), "");
     let mut transcript: Vec<(String, String)> = Vec::new();
+    let mut saved_turns: Vec<(String, String, String)> = Vec::new();
     let rounds = params.rounds.clamp(1, 4);
     let total_turns = rounds * 2;
     let epoch = engine.speech_epoch_now();
@@ -260,7 +331,8 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
 
         let clean = crate::sfx::strip_tags(&reply);
         engine.journal.note("подкаст", "", &format!("{}: {clean}", prof.name));
-        transcript.push((prof.name.clone(), clean));
+        transcript.push((prof.name.clone(), clean.clone()));
+        saved_turns.push((prof.name.clone(), effective_voice(prof).to_string(), reply.clone()));
 
         let e = engine.clone();
         let line = reply.clone();
@@ -275,6 +347,7 @@ pub async fn run_debate(engine: Arc<Engine>, params: DebateParams) -> Result<(),
         }
     }
 
+    save_podcast_episode(&engine, &topic, "debate", "", &saved_turns).await;
     Ok(())
 }
 
@@ -347,6 +420,7 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
     let turns = params.turns.clamp(4, 10);
     let epoch = engine.speech_epoch_now();
     let mut dialogue: Vec<(String, String)> = Vec::new();
+    let mut saved_turns: Vec<(String, String, String)> = Vec::new();
 
     for idx in 0..turns {
         if engine.speech_epoch_now() != epoch || DEBATE_GEN.load(Ordering::Relaxed) != my_gen {
@@ -400,6 +474,7 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
         let clean = crate::sfx::strip_tags(&reply);
         engine.journal.note("подкаст", "", &format!("{}: {clean}", prof.name));
         dialogue.push((prof.name.clone(), clean));
+        saved_turns.push((prof.name.clone(), effective_voice(prof).to_string(), reply.clone()));
 
         let e = engine.clone();
         let line = reply.clone();
@@ -414,5 +489,6 @@ pub async fn run_notebook(engine: Arc<Engine>, params: NotebookParams) -> Result
         }
     }
 
+    save_podcast_episode(&engine, &source_title, "notebook", params.url.trim(), &saved_turns).await;
     Ok(())
 }

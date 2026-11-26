@@ -417,6 +417,9 @@ pub struct Settings {
     pub briefing_custom: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(deserialize_with = "nd")]
+    pub dj_presets: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "nd")]
     pub custom_radios: Vec<CustomRadio>,
     pub night: NightSettings,
 
@@ -526,6 +529,7 @@ impl Default for Settings {
             briefing_books: true,
             briefing_notes: true,
             briefing_custom: String::new(),
+            dj_presets: vec![],
             custom_radios: vec![],
             night: NightSettings::default(),
             train_mode: false,

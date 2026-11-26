@@ -1,6 +1,7 @@
 <script>
   import { onMount } from "svelte";
   import { api, icon, toast } from "#helpers/core.js";
+  import { activity, refreshActivity } from "#state/activity.js";
   import { speaker } from "#state/panelState.js";
   import {
     artOf,
@@ -44,6 +45,7 @@
     Boolean($speaker?.youtube?.plugin && ($speaker?.youtube?.account?.signed_in || $speaker?.youtube?.set)),
   );
   let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
+  let musicSleepS = $derived(Number($activity.dj?.music_sleep_s || 0));
   let isLiked = $derived(
     Boolean(!yandex && active && track?.ID && (likedSet.has(track.ID) || state?.liked)),
   );
@@ -52,6 +54,7 @@
     const releasePlayback = mountPlayback(seek, time, bars, (snapshot) => { state = snapshot; });
     const releaseVolume = mountVolume(volume, (value) => { level = value; });
     const releaseLikes = subscribeLikes((ids) => { likedSet = new Set(ids); });
+    void refreshActivity();
     return () => {
       releasePlayback();
       releaseVolume();
@@ -115,6 +118,21 @@
       pending = false;
     }
   }
+
+  async function toggleSleep() {
+    if (pending) return;
+    pending = true;
+    const nextMins = musicSleepS > 0 ? 0 : 30;
+    try {
+      await api("POST", "/api/music/sleep", { minutes: nextMins });
+      await refreshActivity();
+      toast(nextMins ? "Плавный сон музыки: 30 мин" : "Таймер сна отменён");
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      pending = false;
+    }
+  }
 </script>
 
 <section class={["card", styles.card]} id="plh" data-state={playback} aria-labelledby="pl-title">
@@ -168,6 +186,10 @@
           {/if}
         {/if}
         {#if active}
+          <button class="cbtn" class:on={musicSleepS > 0} type="button" disabled={pending}
+            data-tip={musicSleepS > 0 ? `Сон музыки: ${Math.ceil(musicSleepS / 60)}м (выкл)` : "Таймер сна с затуханием (30м)"}
+            aria-label="Таймер сна музыки" aria-pressed={musicSleepS > 0}
+            onclick={toggleSleep}>{@html icon("moon")}</button>
           <button class="cbtn" type="button" disabled={pending} data-tip="Сохранить трек в CyberNotes" aria-label="Сохранить трек в CyberNotes"
             onclick={saveTrackToNotes}>{@html icon("note")}</button>
         {/if}

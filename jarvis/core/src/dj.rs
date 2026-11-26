@@ -21,6 +21,8 @@ struct DjState {
     queue: VecDeque<String>,
     played: Vec<String>,
     likes: Vec<String>,
+    sleep_until_unix: i64,
+    sleep_gen: u64,
 }
 
 pub struct AiDj {
@@ -41,7 +43,13 @@ impl AiDj {
     }
 
     pub fn status(&self) -> Value {
+        let now = jiff::Timestamp::now().as_second();
         let g = self.st.lock().unwrap();
+        let music_sleep_s = if g.sleep_until_unix > now {
+            (g.sleep_until_unix - now) as u64
+        } else {
+            0
+        };
         json!({
             "active": g.active,
             "mood": g.mood,
@@ -51,6 +59,101 @@ impl AiDj {
             "queue_len": g.queue.len(),
             "played_count": g.played.len(),
             "likes": g.likes,
+            "music_sleep_s": music_sleep_s,
+        })
+    }
+
+    pub fn set_music_sleep(self: &Arc<Self>, engine: Arc<Engine>, minutes: u64) -> Value {
+        let s_gen = {
+            let mut g = self.st.lock().unwrap();
+            g.sleep_gen = g.sleep_gen.wrapping_add(1);
+            if minutes == 0 {
+                g.sleep_until_unix = 0;
+                return self.status_locked(&g);
+            }
+            let mins = minutes.clamp(1, 240);
+            g.sleep_until_unix = jiff::Timestamp::now().as_second() + (mins * 60) as i64;
+            g.sleep_gen
+        };
+        let me = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                let (done_fade, matches_gen) = {
+                    let g = me.st.lock().unwrap();
+                    let now = jiff::Timestamp::now().as_second();
+                    (
+                        g.sleep_until_unix > 0 && now >= g.sleep_until_unix - 20,
+                        g.sleep_gen == s_gen && g.sleep_until_unix > 0,
+                    )
+                };
+                if !matches_gen {
+                    return;
+                }
+                if done_fade {
+                    break;
+                }
+            }
+
+            let orig_vol = tokio::task::spawn_blocking(|| crate::speakervol::speaker_volume().unwrap_or(5))
+                .await
+                .unwrap_or(5)
+                .clamp(2, 10);
+            if orig_vol > 1 {
+                let steps = (orig_vol - 1) as u64;
+                let step_ms = (20_000 / steps.max(1)).clamp(1500, 6000);
+                for lvl in (1..orig_vol).rev() {
+                    let still_ok = {
+                        let g = me.st.lock().unwrap();
+                        g.sleep_gen == s_gen && g.sleep_until_unix > 0
+                    };
+                    if !still_ok {
+                        let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(orig_vol)).await;
+                        return;
+                    }
+                    let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(lvl)).await;
+                    tokio::time::sleep(Duration::from_millis(step_ms)).await;
+                }
+            }
+
+            let still_ok = {
+                let mut g = me.st.lock().unwrap();
+                if g.sleep_gen == s_gen && g.sleep_until_unix > 0 {
+                    g.sleep_until_unix = 0;
+                    true
+                } else {
+                    false
+                }
+            };
+            if !still_ok {
+                return;
+            }
+            me.stop(Some(&engine));
+            engine.music.stop_all(&engine.host).await;
+            engine.journal.note("музыка", "Таймер сна: музыка выключена", "");
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(orig_vol)).await;
+        });
+        self.status()
+    }
+
+    fn status_locked(&self, g: &DjState) -> Value {
+        let now = jiff::Timestamp::now().as_second();
+        let music_sleep_s = if g.sleep_until_unix > now {
+            (g.sleep_until_unix - now) as u64
+        } else {
+            0
+        };
+        json!({
+            "active": g.active,
+            "mood": g.mood,
+            "station": g.station,
+            "current_track": g.current_track,
+            "current_title": g.current_title,
+            "queue_len": g.queue.len(),
+            "played_count": g.played.len(),
+            "likes": g.likes,
+            "music_sleep_s": music_sleep_s,
         })
     }
 
@@ -382,5 +485,16 @@ mod tests {
         let (st, tr) = parse_dj_json(raw).unwrap();
         assert_eq!(st, "Neon Drive");
         assert_eq!(tr, vec!["A - B", "C - D"]);
+    }
+
+    #[test]
+    fn dj_status_includes_music_sleep_countdown() {
+        let d = AiDj::new();
+        assert_eq!(d.status()["music_sleep_s"], 0);
+        {
+            let mut g = d.st.lock().unwrap();
+            g.sleep_until_unix = jiff::Timestamp::now().as_second() + 600;
+        }
+        assert!(d.status()["music_sleep_s"].as_u64().unwrap_or(0) >= 595);
     }
 }

@@ -1,7 +1,12 @@
 <script>
-  import { api, icon, toast, upload } from "#helpers/core.js";
+  import { onMount } from "svelte";
+  import { api, icon, toast, toastProgress, upload } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
   import { S } from "#state/panelState.js";
+
+  const controller = new AbortController();
+  const { signal } = controller;
+  const epDateFmt = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
   const languages = [
     ["английский", "Английский"],
@@ -29,10 +34,123 @@
   let bedtimeTopic = $state("");
   let transLang = $state("английский");
   let busy = $state(false);
+  let episodes = $state([]);
+  let epLoading = $state(true);
+  let epBusy = $state("");
+  let expandedEpId = $state("");
+  let expandedEpData = $state(null);
+  let confirmEpId = $state("");
 
   let activeMode = $derived($activity.modes?.mode || "normal");
   let activeLang = $derived($activity.modes?.lang || "");
   let debateActive = $derived(Boolean($activity.debate_active));
+
+  async function loadEpisodes() {
+    epLoading = true;
+    try {
+      const res = await api("GET", "/api/podcasts", undefined, { signal });
+      if (!signal.aborted && Array.isArray(res?.episodes)) episodes = res.episodes;
+    } catch {
+      /* ignore if jarvis-voice temporarily offline */
+    } finally {
+      if (!signal.aborted) epLoading = false;
+    }
+  }
+
+  onMount(() => {
+    void loadEpisodes();
+    return () => controller.abort();
+  });
+
+  async function toggleEpTranscript(id) {
+    if (expandedEpId === id) {
+      expandedEpId = "";
+      expandedEpData = null;
+      return;
+    }
+    epBusy = id;
+    try {
+      const res = await api("GET", `/api/podcasts/${encodeURIComponent(id)}`, undefined, { signal });
+      if (!signal.aborted) {
+        expandedEpId = id;
+        expandedEpData = res;
+      }
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      epBusy = "";
+    }
+  }
+
+  async function playEpisode(id) {
+    if (epBusy) return;
+    epBusy = id;
+    try {
+      await api("POST", `/api/podcasts/${encodeURIComponent(id)}/play`, {}, { signal });
+      await refreshActivity();
+      toast("Воспроизвожу выпуск на колонке");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      epBusy = "";
+    }
+  }
+
+  async function sendEpisodeTelegram(ep) {
+    if (epBusy) return;
+    epBusy = ep.id;
+    const prog = toastProgress("Рендерю MP3 и отправляю в Telegram…");
+    try {
+      await api("POST", `/api/podcasts/${encodeURIComponent(ep.id)}/telegram`, {}, { signal });
+      prog.finish("MP3 отправлен в Telegram");
+      void loadEpisodes();
+    } catch (error) {
+      prog.finish(error.message || "Ошибка отправки MP3", true);
+    } finally {
+      epBusy = "";
+    }
+  }
+
+  async function saveEpisodeNote(ep) {
+    if (epBusy) return;
+    epBusy = ep.id;
+    try {
+      const data = expandedEpData?.id === ep.id
+        ? expandedEpData
+        : await api("GET", `/api/podcasts/${encodeURIComponent(ep.id)}`, undefined, { signal });
+      const lines = (data.turns || []).map((t) => `**${t.speaker || "Ведущий"}:** ${t.text}`);
+      await api("POST", "/api/notes/save", {
+        title: ep.title,
+        content: lines.join("\n\n"),
+        tags: ["подкаст"],
+        folder: "Подкасты",
+      }, { signal });
+      toast("Сохранено в CyberNotes");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      epBusy = "";
+    }
+  }
+
+  async function deleteEpisode(id) {
+    confirmEpId = "";
+    if (epBusy) return;
+    epBusy = id;
+    try {
+      await api("DELETE", `/api/podcasts/${encodeURIComponent(id)}`, undefined, { signal });
+      episodes = episodes.filter((e) => e.id !== id);
+      if (expandedEpId === id) {
+        expandedEpId = "";
+        expandedEpData = null;
+      }
+      toast("Выпуск удалён");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      epBusy = "";
+    }
+  }
 
   function onDropFile(event) {
     event.preventDefault();
@@ -240,3 +358,64 @@
     </section>
   </div>
 </div>
+
+<section class="card pod-archive">
+  <div class="card-head">
+    <h2>{@html icon("podcast")} Архив выпусков и MP3</h2>
+    <button type="button" class="btn sm ghost" disabled={epLoading} onclick={loadEpisodes}>
+      {@html icon("refresh")} Обновить
+    </button>
+  </div>
+  {#if epLoading}
+    <p class="empty">Загружаю архив выпусков…</p>
+  {:else if !episodes.length}
+    <p class="empty">После завершения подкаста или спора выпуск автоматически сохранится здесь.</p>
+  {:else}
+    <div class="pod-list">
+      {#each episodes as ep (ep.id)}
+        <article class="pod-row">
+          <div class="pod-head">
+            <div class="pod-meta">
+              <b>{ep.title}</b>
+              <small>
+                {ep.kind === "debate" ? "Спор" : "Подкаст"} · {ep.turns_count} репл.
+                {#if ep.created_at} · {epDateFmt.format(new Date(ep.created_at * 1000))}{/if}
+                {#if ep.has_mp3} · <span class="badge ok">MP3</span>{/if}
+              </small>
+            </div>
+            <div class="dj-actions">
+              <button type="button" class="ib" title="Прослушать на колонке" aria-label="Прослушать на колонке" disabled={debateActive || epBusy === ep.id} onclick={() => playEpisode(ep.id)}>
+                {@html icon("play", "solid")}
+              </button>
+              <button type="button" class="ib" class:on={expandedEpId === ep.id} title="Текст выпуска" aria-label="Текст выпуска" disabled={epBusy === ep.id} onclick={() => toggleEpTranscript(ep.id)}>
+                {@html icon("eye")}
+              </button>
+              <a class="ib" href={`/api/podcasts/${encodeURIComponent(ep.id)}/mp3`} download={`podcast-${ep.id}.mp3`} title="Скачать MP3" aria-label="Скачать MP3">
+                {@html icon("download")}
+              </a>
+              <button type="button" class="ib" title="Отправить MP3 в Telegram" aria-label="Отправить MP3 в Telegram" disabled={epBusy === ep.id} onclick={() => sendEpisodeTelegram(ep)}>
+                {@html icon("send")}
+              </button>
+              <button type="button" class="ib" title="Сохранить текст в CyberNotes" aria-label="Сохранить в CyberNotes" disabled={epBusy === ep.id} onclick={() => saveEpisodeNote(ep)}>
+                {@html icon("note")}
+              </button>
+              {#if confirmEpId === ep.id}
+                <button type="button" class="ib danger" aria-label="Подтвердить удаление" onclick={() => deleteEpisode(ep.id)}>{@html icon("check")}</button>
+                <button type="button" class="ib" aria-label="Отмена" onclick={() => { confirmEpId = ""; }}>{@html icon("x")}</button>
+              {:else}
+                <button type="button" class="ib danger" title="Удалить выпуск" aria-label="Удалить выпуск" onclick={() => { confirmEpId = ep.id; }}>{@html icon("trash")}</button>
+              {/if}
+            </div>
+          </div>
+          {#if expandedEpId === ep.id && expandedEpData?.turns?.length}
+            <div class="pod-turns">
+              {#each expandedEpData.turns as t, idx (idx)}
+                <p><b>{t.speaker || "Ведущий"}:</b> {t.text}</p>
+              {/each}
+            </div>
+          {/if}
+        </article>
+      {/each}
+    </div>
+  {/if}
+</section>

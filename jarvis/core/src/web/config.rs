@@ -86,6 +86,7 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "briefing_books",
         "briefing_notes",
         "briefing_custom",
+        "dj_presets",
     ];
     let mut out = serde_json::to_value(&*s)?;
     for (k, v) in input {
@@ -177,6 +178,17 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
     next.presence_leave_scenario = next.presence_leave_scenario.trim().chars().take(64).collect();
     next.local_llm_model = next.local_llm_model.trim().chars().filter(|c| !c.is_control() && !c.is_whitespace()).take(120).collect();
     next.briefing_custom = next.briefing_custom.trim().chars().take(300).collect();
+    let mut clean_dj = Vec::new();
+    for item in next.dj_presets {
+        let t = item.trim().chars().take(140).collect::<String>();
+        if !t.is_empty() && !clean_dj.iter().any(|x| x == &t) {
+            clean_dj.push(t);
+            if clean_dj.len() >= 24 {
+                break;
+            }
+        }
+    }
+    next.dj_presets = clean_dj;
     for time in [&next.night.from, &next.night.to] {
         if !time.is_empty() && crate::settings::hhmm(time).is_none() {
             return Err(invalid("Время ночного режима — HH:MM"));
