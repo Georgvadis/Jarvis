@@ -352,6 +352,7 @@ async fn handle_message(
 • /ask <вопрос> — спросить Джарвиса с ответом сюда (/ask! — также озвучить вслух)\n\
 • /timer [минуты|10м|90с|1ч [метка] | list | off] — таймеры и напоминания\n\
 • /scenario <утро|работа|вечер|сон> — быстрый сценарий на колонке\n\
+• /briefing — персональный брифинг (погода, расписание, книга, заметки; /briefing! — также озвучить)\n\
 • /pc <screen|play|next|prev|vol+|vol-|mute|shot|lock|window|clip|open|info|macro> — управление ПК\n\
 • /podcast <ссылка|текст> — подкаст двумя голосами (YouTube / статья / текст)\n\
 • /dj <вайб|next|stop> — AI-DJ под настроение\n\
@@ -741,6 +742,14 @@ async fn handle_message(
         return match engine.clone().ask_text(rest.to_string(), speak).await {
             Ok(ans) => ans,
             Err(e) => format!("Ошибка: {e}"),
+        };
+    }
+
+    if cmd == "/briefing" || cmd == "/briefing!" {
+        let speak = cmd == "/briefing!";
+        return match crate::briefing::run_briefing(engine.clone(), rest, speak).await {
+            Ok(ans) => format!("🌅 {ans}"),
+            Err(e) => format!("Ошибка брифинга: {e}"),
         };
     }
 

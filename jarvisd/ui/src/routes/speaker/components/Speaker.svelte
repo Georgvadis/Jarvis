@@ -120,6 +120,14 @@
   ]);
   let presenceInfo = $state({ state: "unknown" });
   let notesInfo = $state({ available: false, total_notes: 0 });
+  let ollamaInfo = $state({ online: false, models: [], default_model: "" });
+  let localModelInput = $state(untrack(() => S.settings.local_llm_model || ""));
+  let briefingWeather = $state(untrack(() => S.settings.briefing_weather !== false));
+  let briefingSchedule = $state(untrack(() => S.settings.briefing_schedule !== false));
+  let briefingBooks = $state(untrack(() => S.settings.briefing_books !== false));
+  let briefingNotes = $state(untrack(() => S.settings.briefing_notes !== false));
+  let briefingCustom = $state(untrack(() => S.settings.briefing_custom || ""));
+  let briefingBusy = $state(false);
   let settings = $derived(state.settings);
   let vadThreshold = $derived(rangesInEdit.vad_threshold ?? settings.vad_threshold ?? 600);
   let word = $derived(profiles?.find((profile) => profile.id === selected)?.phrase || settings.wake_word || "Джарвис");
@@ -199,13 +207,15 @@
 
   async function loadExtraStatuses() {
     try {
-      const [pr, ns] = await Promise.all([
+      const [pr, ns, ol] = await Promise.all([
         api("GET", "/api/presence", undefined, { signal }),
         api("GET", "/api/notes/status", undefined, { signal }),
+        api("GET", "/api/ollama/models", undefined, { signal }).catch(() => ({ online: false, models: [] })),
       ]);
       if (!signal.aborted) {
         if (pr) presenceInfo = pr;
         if (ns) notesInfo = ns;
+        if (ol) ollamaInfo = ol;
       }
     } catch { /* ignore */ }
     if (pcUrlInput.trim()) void loadPcExtras();
@@ -472,6 +482,35 @@
       toast("Приветствие озвучено");
     } catch (e) {
       toast(e.message, true);
+    }
+  }
+
+  async function saveLocalModel(event) {
+    const val = event.currentTarget.value;
+    localModelInput = val;
+    await save("local_llm_model", () => ({ local_llm_model: val }), val ? `Локальная модель: ${val}` : "Локальная модель: авто");
+  }
+
+  async function saveBriefing() {
+    await save("briefing", () => ({
+      briefing_weather: briefingWeather,
+      briefing_schedule: briefingSchedule,
+      briefing_books: briefingBooks,
+      briefing_notes: briefingNotes,
+      briefing_custom: briefingCustom.trim(),
+    }), "Настройки брифинга сохранены");
+  }
+
+  async function testBriefing() {
+    if (briefingBusy) return;
+    briefingBusy = true;
+    try {
+      await api("POST", "/api/briefing", { speak: true }, { signal });
+      toast("Озвучиваю брифинг");
+    } catch (e) {
+      if (!signal.aborted) toast(e.message, true);
+    } finally {
+      briefingBusy = false;
     }
   }
 </script>
@@ -894,4 +933,65 @@
   {@render settingSection("CyberNotes",
     "База знаний и заметки голосом",
     cybernotesFields, "note")}
+{/if}
+
+{#snippet ollamaFields()}
+  {@render toggle("Авто-фолбэк на локальную Ollama", "local_llm_fallback", settings.local_llm_fallback !== false,
+    (value) => saveToggle("local_llm_fallback", value, "Локальный фолбэк Ollama включён", "Локальный фолбэк выключен"),
+    "Если облачный ИИ или VPN недоступны, колонка отвечает через локальную модель Ollama.")}
+  <div class="f">
+    <label for="s-ollama-model">Локальная модель</label>
+    <div class="row">
+      <select id="s-ollama-model" value={localModelInput} disabled={pending.has("local_llm_model")} onchange={saveLocalModel}>
+        <option value="">По умолчанию сервера ({ollamaInfo.default_model || "gemma4-26b-a4b:latest"})</option>
+        {#each ollamaInfo.models || [] as m (m)}
+          <option value={m}>{m}</option>
+        {/each}
+      </select>
+      <span class="pill-stat" class:on={ollamaInfo.online}>
+        {ollamaInfo.online ? `Онлайн · ${(ollamaInfo.models || []).length}` : "Офлайн"}
+      </span>
+    </div>
+  </div>
+{/snippet}
+{#if tab === "integrations"}
+  {@render settingSection("Локальный ИИ (Ollama)",
+    "Резервный интеллект в домашней сети без облака",
+    ollamaFields, "cpu")}
+{/if}
+
+{#snippet briefingFields()}
+  <label class="sw">
+    <input type="checkbox" bind:checked={briefingWeather}>
+    <span class="tr"></span>
+    Погода по городу ({settings.city || "не задан"})
+  </label>
+  <label class="sw">
+    <input type="checkbox" bind:checked={briefingSchedule}>
+    <span class="tr"></span>
+    Активные таймеры и рутины на сегодня
+  </label>
+  <label class="sw">
+    <input type="checkbox" bind:checked={briefingBooks}>
+    <span class="tr"></span>
+    Прогресс текущей книги
+  </label>
+  <label class="sw">
+    <input type="checkbox" bind:checked={briefingNotes}>
+    <span class="tr"></span>
+    Свежие заметки CyberNotes
+  </label>
+  <div class="f">
+    <label for="s-brief-custom">Дополнительная тема (необяз.)</label>
+    <input id="s-brief-custom" type="text" maxlength="300" placeholder="Например: напомни пить воду и проверять бэкапы" bind:value={briefingCustom}>
+  </div>
+  <div class="row">
+    <button type="button" class="btn primary" disabled={pending.has("briefing")} onclick={saveBriefing}>{@html icon("save")}Сохранить</button>
+    <button type="button" class="btn" disabled={briefingBusy} onclick={testBriefing}>{@html icon("play", "solid")}Озвучить тест</button>
+  </div>
+{/snippet}
+{#if tab === "integrations"}
+  {@render settingSection("Персональный брифинг",
+    "Состав утренней и дневной сводки",
+    briefingFields, "sparkles")}
 {/if}

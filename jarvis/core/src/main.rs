@@ -5,6 +5,7 @@
 mod alice;
 mod alice_music;
 mod ambient;
+mod briefing;
 mod debate;
 mod dj;
 mod focus;

@@ -348,6 +348,15 @@ impl Tools {
         {
             return Some(reader.recap(eng).await.unwrap_or_else(|e| e));
         }
+        if crate::briefing::is_briefing_command(text)
+            && let Some(eng) = self.engine()
+        {
+            return Some(
+                crate::briefing::generate_briefing_text(&eng, "")
+                    .await
+                    .unwrap_or_else(|e| e),
+            );
+        }
         if !self.has_token() || !self.use_ch("yandex") {
             return None;
         }

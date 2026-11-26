@@ -555,6 +555,31 @@ pub async fn gpu_unload(State(app): State<App>) -> Response {
     }
 }
 
+pub async fn ollama_models(State(app): State<App>) -> Response {
+    let url = format!("{}/llm/models", local_voice_server(&app));
+    match crate::net::direct()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(4))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => {
+            let v: serde_json::Value = r.json().await.unwrap_or_else(|_| json!({"ok": false, "online": false, "models": []}));
+            reply(StatusCode::OK, v)
+        }
+        _ => reply(StatusCode::OK, json!({"ok": false, "online": false, "models": []})),
+    }
+}
+
+pub async fn briefing_run(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let speak = value["speak"].as_bool().unwrap_or(true);
+    let hint = value["hint"].as_str().unwrap_or("").trim();
+    match crate::briefing::run_briefing(app.engine.clone(), hint, speak).await {
+        Ok(text) => reply(StatusCode::OK, json!({"ok": true, "text": text})),
+        Err(e) => super::bad(e),
+    }
+}
+
 pub async fn journal(State(app): State<App>) -> Response {
     let (vol, sys) = tokio::join!(
         async { tokio::task::spawn_blocking(super::vol).await.unwrap_or(-1) },

@@ -270,6 +270,8 @@ pub fn router(app: App) -> Router {
         .route("/api/ptt", post(talk::ptt).layer(DefaultBodyLimit::max(8 << 20)))
         .route("/api/gpu-status", get(talk::gpu_status))
         .route("/api/gpu-unload", post(talk::gpu_unload))
+        .route("/api/ollama/models", get(talk::ollama_models))
+        .route("/api/briefing", post(talk::briefing_run))
         .route("/api/stack-health", get(talk::stack_health))
         .route("/api/speaker/volume", post(talk::volume))
         .route("/api/music", get(music::get).post(music::post))

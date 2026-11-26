@@ -138,6 +138,34 @@ impl Scheduler {
         })
     }
 
+    pub fn today_summary(&self) -> String {
+        let now_z = self.store.with(|s| s.now());
+        let day = weekday_num(&now_z);
+        let now_unix = jiff::Timestamp::now().as_second();
+        let g = self.inner.lock().unwrap();
+        let mut parts: Vec<String> = Vec::new();
+        let active_timers: Vec<String> = g
+            .timers
+            .iter()
+            .filter(|t| t.fire_at_unix >= now_unix)
+            .map(|t| format!("{} ({})", t.label, format_duration_ru((t.fire_at_unix - now_unix).max(0) as u64)))
+            .collect();
+        if !active_timers.is_empty() {
+            parts.push(format!("активные таймеры: {}", active_timers.join(", ")));
+        }
+        let mut routines: Vec<&RoutineEntry> = g
+            .routines
+            .iter()
+            .filter(|r| r.enabled && (r.days.is_empty() || r.days.contains(&day)))
+            .collect();
+        routines.sort_by(|a, b| a.time.cmp(&b.time));
+        if !routines.is_empty() {
+            let r_list: Vec<String> = routines.iter().take(6).map(|r| format!("{} {}", r.time, r.title)).collect();
+            parts.push(format!("рутины на сегодня: {}", r_list.join(", ")));
+        }
+        parts.join("; ")
+    }
+
     pub fn add_timer(&self, label: String, seconds: u64) -> Result<Value, String> {
         let secs = seconds.clamp(1, 86400);
         let now = jiff::Timestamp::now().as_second();
@@ -507,15 +535,7 @@ async fn execute_routine(engine: Arc<Engine>, r: RoutineEntry) {
             }
         }
         "briefing" => {
-            let extra = if payload.is_empty() {
-                String::new()
-            } else {
-                format!(" Учти пожелание: {payload}.")
-            };
-            let prompt = format!(
-                "Дай короткий бодрый утренний или дневной брифинг на 3–4 живых предложения: текущее время и дата, погода (если знаешь город), и короткое напутствие.{extra}"
-            );
-            let _ = engine.ask_text(prompt, true).await;
+            let _ = crate::briefing::run_briefing(engine.clone(), &payload, true).await;
         }
         "dj" => {
             let mood = if payload.is_empty() {

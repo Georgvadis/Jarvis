@@ -80,8 +80,33 @@ pub async fn ask_with_history_detail(host:&Host,s:&Settings,p:&Profile,instructi
 
 pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,instructions:&str,history:&[Turn],text:&str,tools:&Tools,defs:Vec<Value>,gemini_pool:Option<&crate::gemini_pool::GeminiPool>)->Result<AskReply,String>{
     let explicit = p.effective_llm_engine();
+    if explicit == "ollama" {
+        let model_override = if !p.effective_llm_model().is_empty() {
+            p.effective_llm_model()
+        } else {
+            s.local_llm_model.as_str()
+        };
+        return ask_local_ollama(host, s, model_override, instructions, history, text, tools, &defs).await;
+    }
+    let cloud_candidate = explicit.is_empty() || matches!(explicit, "openai" | "live" | "chatgpt" | "gemini" | "grok");
+    match ask_primary(host, s, p, instructions, history, text, tools, &defs, gemini_pool).await {
+        Ok(reply) => Ok(reply),
+        Err(err) => {
+            if s.local_llm_fallback && cloud_candidate && !err.contains("необъявленный") {
+                log::warn!("облачный ИИ недоступен ({err}), переключаюсь на локальную Ollama");
+                if let Ok(local_reply) = ask_local_ollama(host, s, &s.local_llm_model, instructions, history, text, tools, &defs).await {
+                    return Ok(local_reply);
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+async fn ask_primary(host:&Host,s:&Settings,p:&Profile,instructions:&str,history:&[Turn],text:&str,tools:&Tools,defs:&[Value],gemini_pool:Option<&crate::gemini_pool::GeminiPool>)->Result<AskReply,String>{
+    let explicit = p.effective_llm_engine();
     if !explicit.is_empty() && !matches!(explicit, "openai" | "live" | "chatgpt" | "gemini" | "grok") {
-        return ask_plugin(host, explicit, p.effective_llm_model(), instructions, history, text, tools, &defs).await;
+        return ask_plugin(host, explicit, p.effective_llm_model(), instructions, history, text, tools, defs).await;
     }
     let id = if !explicit.is_empty() {
         let id = if explicit == "live" { "openai" } else { explicit };
@@ -90,7 +115,7 @@ pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,inst
                 return Err("Войдите в ChatGPT в «Подключениях»".into());
             }
             let auth = host.provider("chatgpt")?.request("auth.token", Value::Null, Duration::from_secs(20)).await?;
-            return crate::chatgpt::ask_codex_with_history_detail(host, auth, p, instructions, history, text, Some(tools), defs)
+            return crate::chatgpt::ask_codex_with_history_detail(host, auth, p, instructions, history, text, Some(tools), defs.to_vec())
                 .await
                 .map(|r| AskReply { text: r.text, close_dialog: r.close_dialog });
         }
@@ -107,7 +132,7 @@ pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,inst
         let preferred=if ["openai","live",""].contains(&p.engine.as_str()){"openai"}else{p.engine.as_str()};
         if preferred=="chatgpt" && crate::chatgpt::signed_in(&s.chatgpt){
             let auth=host.provider("chatgpt")?.request("auth.token",Value::Null,Duration::from_secs(20)).await?;
-            return crate::chatgpt::ask_codex_with_history_detail(host,auth,p,instructions,history,text,Some(tools),defs)
+            return crate::chatgpt::ask_codex_with_history_detail(host,auth,p,instructions,history,text,Some(tools),defs.to_vec())
                 .await
                 .map(|r| AskReply { text: r.text, close_dialog: r.close_dialog });
         }
@@ -115,7 +140,7 @@ pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,inst
         if id=="chatgpt" {
             if !crate::chatgpt::signed_in(&s.chatgpt){return Err("Добавьте API-ключ или войдите в ChatGPT в «Подключениях»".into());}
             let auth=host.provider(id)?.request("auth.token",Value::Null,Duration::from_secs(20)).await?;
-            return crate::chatgpt::ask_codex_with_history_detail(host,auth,p,instructions,history,text,Some(tools),defs)
+            return crate::chatgpt::ask_codex_with_history_detail(host,auth,p,instructions,history,text,Some(tools),defs.to_vec())
                 .await
                 .map(|r| AskReply { text: r.text, close_dialog: r.close_dialog });
         }
@@ -141,12 +166,12 @@ pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,inst
     for _ in 0..5 {
         let body=match id {
             "gemini"=>{
-                let declarations=crate::gemini::declarations(&defs);
+                let declarations=crate::gemini::declarations(defs);
                 let mut body=json!({"contents":contents,"systemInstruction":{"parts":[{"text":instructions}]}});
                 let mut tools=vec![];if !declarations.is_empty(){tools.push(json!({"functionDeclarations":declarations}));}if p.web_search{tools.push(json!({"googleSearch":{}}));}if !tools.is_empty(){body["tools"]=tools.into();}body
             },
             "grok"=>{let tools:Vec<_>=defs.iter().filter(|d|d["type"]=="function").map(|d|json!({"type":"function","function":{"name":d["name"],"description":d["description"],"parameters":d["parameters"]}})).collect();let mut body=json!({"model":model,"messages":messages,"stream":false});if !tools.is_empty(){body["tools"]=tools.into();}body},
-            _=>{let mut tools=defs.clone();if p.web_search{tools.push(json!({"type":"web_search"}));}json!({"model":model,"instructions":instructions,"input":input,"tools":tools,"reasoning":{"effort":crate::chatgpt::effort(model,&p.effort)},"store":false,"stream":false})},
+            _=>{let mut tools=defs.to_vec();if p.web_search{tools.push(json!({"type":"web_search"}));}json!({"model":model,"instructions":instructions,"input":input,"tools":tools,"reasoning":{"effort":crate::chatgpt::effort(model,&p.effort)},"store":false,"stream":false})},
         };
         let response = if id == "gemini" {
             let tz = jiff::tz::TimeZone::get(&s.timezone).unwrap_or(jiff::tz::TimeZone::UTC);
@@ -212,7 +237,7 @@ pub async fn ask_with_history_detail_pool(host:&Host,s:&Settings,p:&Profile,inst
         }
         let mut gemini_results=vec![];
         for call in calls {
-            let result = run_tool(tools, &defs, &call).await?;
+            let result = run_tool(tools, defs, &call).await?;
             music_turn.observe_tool(&call.name, &call.arguments, &result);
             match id {
                 "gemini"=>{let mut value=json!({"name":call.name,"response":{"result":result}});if !call.id.is_empty(){value["id"]=call.id.into();}gemini_results.push(json!({"functionResponse":value}));},
@@ -245,6 +270,132 @@ async fn run_tool(tools: &Tools, defs: &[Value], call: &Call) -> Result<String, 
             format!("Инструмент не ответил за {limit} с")
         }
     })
+}
+
+fn local_ollama_schemas(defs: &[Value]) -> Vec<Value> {
+    defs.iter()
+        .filter(|d| {
+            d["type"] == "function"
+                && !matches!(
+                    d["name"].as_str(),
+                    Some("home_assistant" | "xiaomi_home" | "smart_life" | "smart_home")
+                )
+        })
+        .take(16)
+        .map(|def| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": def["name"],
+                    "description": def["description"],
+                    "parameters": def["parameters"],
+                }
+            })
+        })
+        .collect()
+}
+
+pub async fn ask_local_ollama(
+    host: &Host,
+    _s: &Settings,
+    model_override: &str,
+    instructions: &str,
+    history: &[Turn],
+    text: &str,
+    tools: &Tools,
+    defs: &[Value],
+) -> Result<AskReply, String> {
+    let srv = crate::tools::local_voice_url(host);
+    let schemas = local_ollama_schemas(defs);
+    let mut messages = Vec::with_capacity(history.len() + 2);
+    messages.push(json!({"role": "system", "content": instructions}));
+    for turn in history {
+        messages.push(json!({"role": turn.role, "content": turn.content}));
+    }
+    messages.push(json!({"role": "user", "content": text}));
+
+    let mut music_turn = crate::music::MusicTurnTracker::default();
+    let model = model_override.trim();
+
+    for _ in 0..4 {
+        let mut payload = json!({
+            "messages": messages,
+            "tools": schemas,
+        });
+        if !model.is_empty() {
+            payload["model"] = json!(model);
+        }
+        let resp = crate::net::direct()
+            .post(format!("{srv}/llm/chat"))
+            .json(&payload)
+            .timeout(Duration::from_secs(75))
+            .send()
+            .await
+            .map_err(|e| format!("Локальный ИИ (Ollama) недоступен: {e}"))?;
+        let status = resp.status();
+        let data: Value = resp.json().await.unwrap_or_default();
+        if !status.is_success() {
+            let msg = data["detail"].as_str().unwrap_or("Ошибка локальной модели Ollama");
+            return Err(msg.to_string());
+        }
+
+        let answer = data["text"].as_str().unwrap_or_default().trim();
+        let calls = data.get("tool_calls").and_then(Value::as_array).filter(|c| !c.is_empty());
+        let Some(calls) = calls else {
+            if answer.is_empty() {
+                return Err("Локальная модель Ollama ничего не ответила".into());
+            }
+            return Ok(AskReply {
+                text: answer.to_string(),
+                close_dialog: music_turn.should_close(answer),
+            });
+        };
+        if calls.len() > 16 {
+            return Err("Ollama вернула слишком много вызовов инструментов".into());
+        }
+
+        let mut parsed = Vec::with_capacity(calls.len());
+        let mut ids = std::collections::HashSet::new();
+        for (idx, call) in calls.iter().enumerate() {
+            let id = call["id"]
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 128)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("ollama_{idx}"));
+            let name = call["name"].as_str().ok_or("Неверный вызов инструмента от Ollama")?;
+            let arguments = call["arguments"].as_str().unwrap_or("{}");
+            if !ids.insert(id.clone())
+                || arguments.len() > 32 * 1024
+                || !serde_json::from_str::<Value>(arguments).is_ok_and(|v| v.is_object())
+                || !schemas.iter().any(|s| s["function"]["name"] == name)
+            {
+                return Err("Ollama вызвала неверный или необъявленный инструмент".into());
+            }
+            parsed.push(Call {
+                id,
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            });
+        }
+        let tool_calls: Vec<_> = parsed
+            .iter()
+            .map(|c| {
+                json!({
+                    "id": c.id,
+                    "type": "function",
+                    "function": {"name": c.name, "arguments": c.arguments}
+                })
+            })
+            .collect();
+        messages.push(json!({"role": "assistant", "content": answer, "tool_calls": tool_calls}));
+        for call in parsed {
+            let output = run_tool(tools, defs, &call).await?;
+            music_turn.observe_tool(&call.name, &call.arguments, &output);
+            messages.push(json!({"role": "tool", "tool_call_id": call.id, "content": output}));
+        }
+    }
+
+    Err("Локальная модель Ollama не закончила за 4 шага".into())
 }
 
 async fn ask_plugin(host: &Host, id: &str, model: &str, instructions: &str, history: &[Turn], text: &str, tools: &Tools, defs: &[Value]) -> Result<AskReply, String> {
@@ -495,6 +646,20 @@ fn decode(id:&str,response:&Value)->Result<(String,Vec<Call>),String>{
     let (answer,calls)=decode("gemini",&json!({"candidates":[{"content":{"parts":[{"text":"private","thought":true},{"text":"Ответ"},{"functionCall":{"name":"test","args":{"a":1},"id":"x"}}]}}]})).unwrap();assert_eq!(answer,"Ответ");assert_eq!(calls[0].name,"test");assert_eq!(calls[0].arguments,"{\"a\":1}");
     let (_,calls)=decode("openai",&json!({"output":[{"type":"function_call","name":"x","arguments":"{}","call_id":"id"}]})).unwrap();assert_eq!(calls[0].id,"id");
 }
+
+    #[test]
+    fn filters_smart_home_from_ollama_schemas() {
+        let defs = vec![
+            json!({"type": "function", "name": "home_assistant", "description": "d", "parameters": {}}),
+            json!({"type": "function", "name": "smart_home", "description": "d", "parameters": {}}),
+            json!({"type": "function", "name": "play_music", "description": "m", "parameters": {}}),
+            json!({"type": "function", "name": "save_note", "description": "n", "parameters": {}}),
+        ];
+        let out = local_ollama_schemas(&defs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["function"]["name"], "play_music");
+        assert_eq!(out[1]["function"]["name"], "save_note");
+    }
 
     #[cfg(feature = "lua")]
     #[tokio::test]

@@ -307,15 +307,7 @@ impl ScenarioStore {
                         .await;
                     }
                     "briefing" => {
-                        let extra = if step.value.trim().is_empty() {
-                            String::new()
-                        } else {
-                            format!(" Учти пожелание: {}.", step.value.trim())
-                        };
-                        let prompt = format!(
-                            "Дай короткий бодрый брифинг на 3–4 живых предложения: текущее время, дата, погода (если знаешь город) и краткое напутствие.{extra}"
-                        );
-                        let _ = engine.clone().ask_text(prompt, true).await;
+                        let _ = crate::briefing::run_briefing(engine.clone(), &step.value, true).await;
                     }
                     "pc" => {
                         let act = step.value.trim();

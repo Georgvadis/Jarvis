@@ -401,6 +401,20 @@ pub struct Settings {
     pub presence_notify_away_timers: bool,
     #[serde(default = "default_true")]
     pub cybernotes_enabled: bool,
+    #[serde(default = "default_true")]
+    pub local_llm_fallback: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub local_llm_model: String,
+    #[serde(default = "default_true")]
+    pub briefing_weather: bool,
+    #[serde(default = "default_true")]
+    pub briefing_schedule: bool,
+    #[serde(default = "default_true")]
+    pub briefing_books: bool,
+    #[serde(default = "default_true")]
+    pub briefing_notes: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub briefing_custom: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(deserialize_with = "nd")]
     pub custom_radios: Vec<CustomRadio>,
@@ -505,6 +519,13 @@ impl Default for Settings {
             presence_leave_scenario: String::new(),
             presence_notify_away_timers: true,
             cybernotes_enabled: true,
+            local_llm_fallback: true,
+            local_llm_model: String::new(),
+            briefing_weather: true,
+            briefing_schedule: true,
+            briefing_books: true,
+            briefing_notes: true,
+            briefing_custom: String::new(),
             custom_radios: vec![],
             night: NightSettings::default(),
             train_mode: false,

@@ -51,6 +51,19 @@
     }
   }
 
+  async function quickBriefing() {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/briefing", { speak: true });
+      toast("Запускаю брифинг");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function pcCmd(action) {
     if (pcBusy) return;
     pcBusy = action;
@@ -125,6 +138,10 @@
     <button type="button" class="btn sm ghost" disabled={busy} onclick={quickTimer5m}>
       {@html icon("clock")}
       <span>Таймер 5м</span>
+    </button>
+    <button type="button" class="btn sm ghost" disabled={busy} onclick={quickBriefing}>
+      {@html icon("sparkles")}
+      <span>Брифинг</span>
     </button>
     <a class="btn sm ghost" href="/studio?tab=schedule" title="Расписание и таймеры" aria-label="Расписание и таймеры">
       {@html icon("bell")}

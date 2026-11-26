@@ -359,6 +359,21 @@
     draft = "Запиши заметку: ";
     sayInput?.focus();
   }
+
+  async function chipBriefing() {
+    if (chipBusy) return;
+    chipBusy = "briefing";
+    try {
+      await api("POST", "/api/briefing", { speak }, { signal });
+      stickToBottom = true;
+      void poll();
+      toast("Брифинг готов");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      chipBusy = "";
+    }
+  }
 </script>
 
 <header class="tg-h">
@@ -451,6 +466,9 @@
   </button>
   <button type="button" class="chat-chip" onclick={chipNote}>
     {@html icon("note")} Заметка
+  </button>
+  <button type="button" class="chat-chip" disabled={chipBusy === "briefing"} onclick={chipBriefing}>
+    {@html icon("sparkles")} Брифинг
   </button>
 </div>
 
