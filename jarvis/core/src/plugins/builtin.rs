@@ -169,7 +169,7 @@ impl Builtin {
             let manifest = manifest.clone();
             Box::pin(async move {
                 let host = host.upgrade().ok_or("Ядро завершилось")?;
-                if id == "chatgpt" && method == "voice.event" {
+                if id == "chatgpt" && (method == "voice.event" || method == "codex.delta") {
                     (host.hooks.event)(&manifest, &method, params);
                     return Ok(Value::Null);
                 }

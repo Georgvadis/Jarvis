@@ -104,7 +104,7 @@ impl Engine {
                 let _ = amb.start("ocean");
                 amb.set_sleep(20);
             }
-            let (context, defs) = if active_mode == SpecialMode::Normal {
+            let (context, defs) = if matches!(active_mode, SpecialMode::Normal | SpecialMode::Chat) {
                 self.tools.prepare().await
             } else {
                 (String::new(), Vec::new())

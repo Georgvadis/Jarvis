@@ -148,9 +148,11 @@ impl ChatGpt {
     async fn codex(&self,params:Value)->Result<Value,String>{
         let auth=self.token().await?;let access=auth["access"].as_str().ok_or("Нет токена ChatGPT")?;let account=auth["account"].as_str().ok_or("Нет аккаунта ChatGPT")?;
         let session=params["session"].as_str().unwrap_or("");if session.len()>128{return Err("Неверный ID сессии".into());}
+        let stream_id=params["stream_id"].as_str().filter(|s|!s.is_empty()).map(str::to_owned);
         let client=self.client().await?;let response=client.post(&self.codex).bearer_auth(access).header("chatgpt-account-id",account).header("Accept","text/event-stream").header("OpenAI-Beta","responses=experimental").header("originator","codex_cli_rs").header("session_id",session).json(&params["body"]).send().await.map_err(|e|net_error("Нет соединения с ChatGPT",&e))?;
         if !response.status().is_success(){return Err(format!("ChatGPT ответил {}",response.status().as_u16()));}
-        sse(response).await
+        let cb=stream_id.map(|sid|(self.services.clone(),sid));
+        sse_with(response,cb).await
     }
 }
 impl Drop for ChatGpt{fn drop(&mut self){self.stop();}}
@@ -196,7 +198,11 @@ fn tokens_to_auth(tokens:&Value,before:&Value)->Result<Value,String>{
     after["expires"]=claims(access)["exp"].as_i64().unwrap_or(now()+tokens["expires_in"].as_i64().unwrap_or(3600)).into();
     if after["account"].as_str().unwrap_or("").is_empty() || after["refresh"].as_str().unwrap_or("").is_empty(){return Err("OpenAI не выдал аккаунт или refresh token".into());}Ok(after)
 }
-async fn sse(mut response:reqwest::Response)->Result<Value,String>{
+#[cfg(test)]
+async fn sse(response:reqwest::Response)->Result<Value,String>{
+    sse_with(response,None).await
+}
+async fn sse_with(mut response:reqwest::Response,delta_cb:Option<(Callback,String)>)->Result<Value,String>{
     let mut pending=Vec::new();let mut output=Vec::new();let mut complete=false;let mut total=0;
     'stream: while let Some(chunk)=response.chunk().await.map_err(|_|"Обрыв ответа ChatGPT")?{
         total+=chunk.len();if total>16*1024*1024{return Err("Слишком большой ответ ChatGPT".into());}pending.extend(chunk);
@@ -204,13 +210,23 @@ async fn sse(mut response:reqwest::Response)->Result<Value,String>{
             let line:Vec<_>=pending.drain(..=end).collect();let text=std::str::from_utf8(&line).map_err(|_|"Неверная кодировка ChatGPT")?.trim_end();
             let Some(data)=text.strip_prefix("data:").map(str::trim_start)else{continue;};if data=="[DONE]"{continue;}
             let event:Value=serde_json::from_str(data).map_err(|_|"Неверное SSE-событие ChatGPT")?;
-            match event["type"].as_str(){Some("response.output_item.done")=>output.push(event["item"].clone()),Some("response.completed")=>{
-                complete=true;
-                // Codex can send a compact terminal event with output:[] after complete
-                // output_item.done events, notably when web_search is enabled.
-                // An empty summary must not erase the answer or pending tool calls.
-                if let Some(items)=event["response"]["output"].as_array().filter(|items|!items.is_empty()){output=items.clone();}
-            },Some("response.failed"|"response.incomplete"|"error")=>return Err("ChatGPT не завершил запрос".into()),_=>{}}
+            match event["type"].as_str(){
+                Some("response.output_text.delta")=>{
+                    if let (Some((cb,sid)),Some(delta))=(&delta_cb,event["delta"].as_str()) && !delta.is_empty(){
+                        let _=(cb)("codex.delta".into(),json!({"id":sid,"delta":delta})).await;
+                    }
+                }
+                Some("response.output_item.done")=>output.push(event["item"].clone()),
+                Some("response.completed")=>{
+                    complete=true;
+                    // Codex can send a compact terminal event with output:[] after complete
+                    // output_item.done events, notably when web_search is enabled.
+                    // An empty summary must not erase the answer or pending tool calls.
+                    if let Some(items)=event["response"]["output"].as_array().filter(|items|!items.is_empty()){output=items.clone();}
+                }
+                Some("response.failed"|"response.incomplete"|"error")=>return Err("ChatGPT не завершил запрос".into()),
+                _=>{}
+            }
             if output.len()>512{return Err("Слишком много элементов ответа ChatGPT".into());}if complete{break 'stream;}
         }
     }

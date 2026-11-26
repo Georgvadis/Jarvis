@@ -752,11 +752,11 @@ impl Tools {
             defs.push(json!({
                 "type": "function",
                 "name": "control_mode_or_game",
-                "description": "Запустить или остановить интерактивные режимы и голосовые игры колонки: RPG-квест (rpg), викторина (quiz), угадай мелодию (melody), нуарный детектив (detective), синхронный переводчик (translator) или выйти из режима (stop).",
+                "description": "Запустить или остановить интерактивные режимы и голосовые игры колонки: свободный диалог (chat — длинная живая беседа без повторных окликов), RPG-квест (rpg), викторина (quiz), угадай мелодию (melody), нуарный детектив (detective), синхронный переводчик (translator) или выйти из режима (stop).",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["rpg", "quiz", "melody", "detective", "translator", "stop"]},
+                        "action": {"type": "string", "enum": ["chat", "rpg", "quiz", "melody", "detective", "translator", "stop"]},
                         "theme": {"type": "string", "description": "тема игры (например «аниме опенинги» для melody или сюжет для detective)"},
                         "language": {"type": "string", "description": "язык перевода для translator (например «английский», «японский»)"}
                     },
@@ -1200,6 +1200,11 @@ impl Tools {
                     }
                     "Режим остановлен, возвращаюсь к обычному общению.".into()
                 }
+                "chat" => self
+                    .modes
+                    .as_ref()
+                    .map(|m| m.activate(crate::modes::SpecialMode::Chat, self.ambient.as_deref()))
+                    .unwrap_or_else(|| "Режим диалога недоступен.".into()),
                 "rpg" => self
                     .modes
                     .as_ref()

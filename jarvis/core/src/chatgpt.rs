@@ -96,6 +96,19 @@ pub struct BrainReply {
 pub type Brain = Arc<dyn Fn(String) -> BoxFut<Result<BrainReply, String>> + Send + Sync>;
 
 static SESSIONS: LazyLock<Mutex<HashMap<String, Weak<ChatGptSession>>>> = LazyLock::new(Mutex::default);
+static CODEX_STREAMS: LazyLock<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> = LazyLock::new(Mutex::default);
+
+pub fn module_codex_delta(data: Value) {
+    let Some(id) = data["id"].as_str() else { return; };
+    let Some(delta) = data["delta"].as_str() else { return; };
+    if delta.is_empty() {
+        return;
+    }
+    let tx = CODEX_STREAMS.lock().unwrap().get(id).cloned();
+    if let Some(tx) = tx {
+        let _ = tx.send(delta.to_string());
+    }
+}
 
 pub struct ChatGptSession {
     id: String,
@@ -487,7 +500,21 @@ pub async fn ask_codex_with_history(host: &Host, auth: Value, p: &Profile, instr
         .map(|reply| reply.text)
 }
 
-pub async fn ask_codex_with_history_detail(host: &Host, auth: Value, p: &Profile, instructions: &str, history: &[crate::llm::Turn], text: &str, tools: Option<&Tools>, mut defs: Vec<Value>) -> Result<BrainReply, String> {
+pub async fn ask_codex_with_history_detail(host: &Host, auth: Value, p: &Profile, instructions: &str, history: &[crate::llm::Turn], text: &str, tools: Option<&Tools>, defs: Vec<Value>) -> Result<BrainReply, String> {
+    ask_codex_with_history_detail_stream(host, auth, p, instructions, history, text, tools, defs, None).await
+}
+
+pub async fn ask_codex_with_history_detail_stream(
+    host: &Host,
+    auth: Value,
+    p: &Profile,
+    instructions: &str,
+    history: &[crate::llm::Turn],
+    text: &str,
+    tools: Option<&Tools>,
+    mut defs: Vec<Value>,
+    on_delta: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+) -> Result<BrainReply, String> {
     let model = if p.effective_llm_model().is_empty() { BACKEND_MODELS[0].to_string() } else { p.effective_llm_model().to_string() };
     let effort = effort(&model, &p.effort);
     if p.web_search {
@@ -500,11 +527,30 @@ pub async fn ask_codex_with_history_detail(host: &Host, auth: Value, p: &Profile
     input.push(json!({"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}));
     let session = new_id();
     let mut music_turn = crate::music::MusicTurnTracker::default();
+    struct StreamGuard(Option<String>);
+    impl Drop for StreamGuard {
+        fn drop(&mut self) {
+            if let Some(id) = self.0.take() {
+                CODEX_STREAMS.lock().unwrap().remove(&id);
+            }
+        }
+    }
     for _ in 0..5 {
         let n = host.provider("chatgpt")?;
         let body = json!({"model": model, "instructions": instructions, "input": input, "tools": defs, "tool_choice": "auto",
             "parallel_tool_calls": false, "reasoning": {"effort": effort}, "store": false, "stream": true, "include": []});
-        let r = n.request("codex.request", json!({"auth": auth, "session": session, "body": body}), Duration::from_secs(60)).await?;
+        let stream_id = on_delta.as_ref().map(|tx| {
+            let sid = new_id();
+            CODEX_STREAMS.lock().unwrap().insert(sid.clone(), tx.clone());
+            sid
+        });
+        let _guard = StreamGuard(stream_id.clone());
+        let mut req = json!({"auth": auth, "session": session, "body": body});
+        if let Some(sid) = &stream_id {
+            req["stream_id"] = json!(sid);
+        }
+        let r = n.request("codex.request", req, Duration::from_secs(60)).await?;
+        drop(_guard);
         let answer = r.get("answer").or(r.get("Answer")).and_then(Value::as_str).unwrap_or("").trim().to_string();
         let calls = r.get("calls").or(r.get("Calls")).and_then(Value::as_array).cloned().unwrap_or_default();
         if calls.is_empty() {

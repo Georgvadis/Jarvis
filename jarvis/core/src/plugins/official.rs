@@ -62,7 +62,7 @@ impl Official {
                     }
                     if matches!(
                         (manifest.id.as_str(), method.as_str()),
-                        ("chatgpt", "voice.event")
+                        ("chatgpt", "voice.event" | "codex.delta")
                             | (
                                 "youtube",
                                 "music.state" | "music.play" | "music.related_end"

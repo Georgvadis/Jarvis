@@ -149,6 +149,7 @@ impl Classic {
         }
         let is_whisper = is_whisper || is_bedtime;
         let mut close_after = false;
+        let mut already_spoken = false;
         let answer=if !is_bedtime && active_mode == SpecialMode::Normal {
             if let Some(answer)=context.host.command(command).await{Some(answer)}
             else if let Some(answer)=context.tools.ha_vacuum(command).await{Some(answer)}
@@ -161,7 +162,7 @@ impl Classic {
             } else {
                 context.tools.modes.as_ref().map(|m| m.history()).unwrap_or_default()
             };
-            let (extra,defs)=if active_mode == SpecialMode::Normal { context.tools.prepare().await } else { (String::new(), Vec::new()) };
+            let (extra,defs)=if matches!(active_mode, SpecialMode::Normal | SpecialMode::Chat) { context.tools.prepare().await } else { (String::new(), Vec::new()) };
             let llm_provider = {
                 let e = context.profile.effective_llm_engine();
                 if e.is_empty() { "classic" } else { e }
@@ -183,9 +184,58 @@ impl Classic {
                 whisper_hint,
             );
             let t_llm0 = std::time::Instant::now();
-            let reply=match crate::llm::ask_with_history_detail_pool(&context.host,&context.settings,&context.profile,&sys_prompt,&history,text,&context.tools,defs,context.gemini_pool.as_deref()).await {
-                Ok(r) => r,
-                Err(e) => { self.record_failure(context, llm_provider, crate::voice_error::Stage::Connect, &e); return Err(e); }
+            let can_stream_chatgpt = llm_provider == "chatgpt"
+                && crate::chatgpt::signed_in(&context.settings.chatgpt)
+                && matches!(active_mode, SpecialMode::Normal | SpecialMode::Chat);
+            let streamed_reply = if can_stream_chatgpt {
+                if let Ok(prov) = context.host.provider("chatgpt")
+                    && let Ok(auth) = prov.request("auth.token", json!(null), Duration::from_secs(20)).await
+                {
+                    let (delta_tx, delta_rx) = mpsc::unbounded_channel::<String>();
+                    let me_s = self.clone();
+                    let ctx_s = context.clone();
+                    let stream_task = tokio::spawn(async move {
+                        me_s.speak_stream_deltas(&ctx_s, delta_rx, generation, is_whisper).await
+                    });
+                    match crate::chatgpt::ask_codex_with_history_detail_stream(
+                        &context.host,
+                        auth,
+                        &context.profile,
+                        &sys_prompt,
+                        &history,
+                        text,
+                        Some(&context.tools),
+                        defs.clone(),
+                        Some(delta_tx),
+                    )
+                    .await
+                    {
+                        Ok(r) => {
+                            let spoken = stream_task.await.ok().and_then(|res| res.ok()).unwrap_or(0);
+                            if spoken > 0 {
+                                already_spoken = true;
+                            }
+                            Some(crate::llm::AskReply { text: r.text, close_dialog: r.close_dialog })
+                        }
+                        Err(e) => {
+                            stream_task.abort();
+                            log::warn!("ChatGPT stream: {e}, пробую стандартный путь/фолбэк");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let reply = if let Some(r) = streamed_reply {
+                r
+            } else {
+                match crate::llm::ask_with_history_detail_pool(&context.host,&context.settings,&context.profile,&sys_prompt,&history,text,&context.tools,defs,context.gemini_pool.as_deref()).await {
+                    Ok(r) => r,
+                    Err(e) => { self.record_failure(context, llm_provider, crate::voice_error::Stage::Connect, &e); return Err(e); }
+                }
             };
             self.dialog.set_timings(None, Some(t_llm0.elapsed().as_millis() as u64), None);
             close_after = active_mode == SpecialMode::Normal && reply.close_dialog && !crate::music::wants_keep_talking(text);
@@ -209,7 +259,10 @@ impl Classic {
             self.dialog.request_close();
             return Ok(());
         }
-        self.speak(context,&answer,generation,is_whisper).await?;self.dialog.finish_turn("");Ok(())
+        if !already_spoken {
+            self.speak(context,&answer,generation,is_whisper).await?;
+        }
+        self.dialog.finish_turn("");Ok(())
     }
     async fn synthesize_provider(&self,context:&Context,provider:&str,voice:&str,model:&str,text:&str,emotion:Option<&str>)->Result<Vec<i16>,String>{
         let result=match provider {
@@ -298,7 +351,56 @@ impl Classic {
         }
         Ok(())
     }
+    /// Потоковая озвучка по мере прихода предложений от LLM: первое предложение летит в TTS сразу,
+    /// пока нейросеть ещё дописывает остальной ответ.
+    async fn speak_stream_deltas(
+        self: &Arc<Self>,
+        context: &Arc<Context>,
+        mut rx: mpsc::UnboundedReceiver<String>,
+        generation: u64,
+        whisper: bool,
+    ) -> Result<usize, String> {
+        let mut buf = String::new();
+        let mut full = String::new();
+        let mut spoken = 0usize;
+        while let Some(delta) = rx.recv().await {
+            if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                return Ok(spoken);
+            }
+            buf.push_str(&delta);
+            full.push_str(&delta);
+            while let Some(chunk) = pop_ready_sentence(&mut buf) {
+                if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                    return Ok(spoken);
+                }
+                self.dialog.on_bot(&crate::sfx::strip_tags(&full));
+                self.speak_inner(context, &chunk, generation, whisper, false).await?;
+                spoken += 1;
+                let pause = vec![0i16; 2880]; // 120 мс между предложениями
+                let _ = self.send_pcm_samples(&pause, generation).await;
+            }
+        }
+        if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+            return Ok(spoken);
+        }
+        let rest = buf.trim();
+        if !rest.is_empty() {
+            self.dialog.on_bot(&crate::sfx::strip_tags(&full));
+            self.speak_inner(context, rest, generation, whisper, false).await?;
+            spoken += 1;
+        }
+        if spoken > 0 {
+            let tail = vec![0i16; 5760]; // 240 мс хвост тишины для ALSA
+            let _ = self.send_pcm_samples(&tail, generation).await;
+        }
+        Ok(spoken)
+    }
+
     async fn speak(self: &Arc<Self>,context:&Arc<Context>,text:&str,generation:u64,whisper:bool)->Result<(),String>{
+        self.speak_inner(context, text, generation, whisper, true).await
+    }
+
+    async fn speak_inner(self: &Arc<Self>,context:&Arc<Context>,text:&str,generation:u64,whisper:bool,add_tail:bool)->Result<(),String>{
         let segments = crate::sfx::parse_segments(text);
         if segments.is_empty() { return Ok(()); }
         let t_tts0 = std::time::Instant::now();
@@ -401,9 +503,11 @@ impl Classic {
                 }
             }
         }
-        // Мягкий хвост тишины (240 мс при 24 кГц), чтобы ALSA не съедала последний слог
-        let tail = vec![0i16; 5760];
-        let _ = self.send_pcm_samples(&tail, generation).await;
+        if add_tail {
+            // Мягкий хвост тишины (240 мс при 24 кГц), чтобы ALSA не съедала последний слог
+            let tail = vec![0i16; 5760];
+            let _ = self.send_pcm_samples(&tail, generation).await;
+        }
         Ok(())
     }
 }
@@ -674,6 +778,49 @@ fn tts_cache_put(key: &str, samples: &[i16]) {
         bytes.extend_from_slice(&s.to_le_bytes());
     }
     let _ = std::fs::write(dir.join(format!("{key}.pcm")), bytes);
+}
+
+/// Вырезает из потокового буфера первое полностью законченное предложение (не короче 25 символов),
+/// чтобы сразу отправить его в TTS, пока LLM ещё генерирует остальной текст.
+fn pop_ready_sentence(buf: &mut String) -> Option<String> {
+    let mut chars = buf.char_indices().peekable();
+    let mut char_count = 0usize;
+    let mut cut_at: Option<usize> = None;
+    while let Some((idx, c)) = chars.next() {
+        char_count += 1;
+        let next_ws = chars.peek().is_some_and(|&(_, n)| n.is_whitespace());
+        if matches!(c, '.' | '!' | '?' | '…' | '\n') && next_ws && char_count >= 25 {
+            let end = idx + c.len_utf8();
+            let prefix = buf[..end].trim();
+            let is_abbrev = c == '.' && (
+                prefix.ends_with(" т.д.")
+                    || prefix.ends_with(" т.п.")
+                    || prefix.ends_with(" др.")
+                    || prefix.ends_with(" ул.")
+                    || prefix.ends_with(" г.")
+            );
+            // Не обрываем незакрытый тег [emotion] или [sfx:...]
+            let open_br = prefix.matches('[').count();
+            let close_br = prefix.matches(']').count();
+            if !is_abbrev && open_br == close_br {
+                cut_at = Some(end);
+                break;
+            }
+        }
+        if char_count >= 260 && matches!(c, ',' | ';' | '—') && next_ws {
+            let end = idx + c.len_utf8();
+            let prefix = buf[..end].trim();
+            if prefix.matches('[').count() == prefix.matches(']').count() {
+                cut_at = Some(end);
+                break;
+            }
+        }
+    }
+    let end = cut_at?;
+    let head = buf[..end].trim().to_string();
+    let rest = buf[end..].trim_start().to_string();
+    *buf = rest;
+    if head.is_empty() { None } else { Some(head) }
 }
 
 fn split_sentences(text: &str) -> Vec<String> {

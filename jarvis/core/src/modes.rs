@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 pub enum SpecialMode {
     #[default]
     Normal,
+    Chat,
     Translator(String),
     Rpg,
     Quiz,
@@ -49,6 +50,7 @@ impl ModeManager {
         let mode = self.current();
         match mode {
             SpecialMode::Normal => json!({"mode": "normal", "lang": ""}),
+            SpecialMode::Chat => json!({"mode": "chat", "lang": ""}),
             SpecialMode::Rpg => json!({"mode": "rpg", "lang": ""}),
             SpecialMode::Quiz => json!({"mode": "quiz", "lang": ""}),
             SpecialMode::Translator(lang) => json!({"mode": "translator", "lang": lang}),
@@ -110,7 +112,7 @@ impl ModeManager {
                         started_amb = amb.start("jazz").is_ok();
                     }
                 }
-                SpecialMode::Normal | SpecialMode::Translator(_) => {
+                SpecialMode::Normal | SpecialMode::Chat | SpecialMode::Translator(_) => {
                     if prev_started {
                         amb.stop();
                     }
@@ -119,6 +121,7 @@ impl ModeManager {
         }
         let greeting = match &mode {
             SpecialMode::Normal => "Режим выключен, возвращаюсь к обычному общению.".into(),
+            SpecialMode::Chat => "Давай поболтаем! Я тебя внимательно слушаю — просто говори, я не буду перебивать и отключаться.".into(),
             SpecialMode::Translator(lang) => {
                 format!("Режим переводчика на {lang} включён. Говорите фразу — я сразу переведу.")
             }
@@ -221,6 +224,15 @@ impl ModeManager {
             return Some(self.activate(SpecialMode::Rpg, ambient));
         }
 
+        if t.contains("давай поболтаем")
+            || t.contains("поговори со мной")
+            || t.contains("режим диалога")
+            || t.contains("свободный диалог")
+            || t == "поболтаем"
+        {
+            return Some(self.activate(SpecialMode::Chat, ambient));
+        }
+
         if (t.contains("викторин") || t.contains("квиз"))
             && (t.contains("запусти")
                 || t.contains("сыграем")
@@ -249,6 +261,9 @@ impl ModeManager {
     ) -> String {
         match mode {
             SpecialMode::Normal => format!("{base}\n{rules}\n{extra}{whisper_hint}"),
+            SpecialMode::Chat => format!(
+                "{base}\n{rules}\n{extra}\n[Режим «Свободный диалог»: вы с хозяином просто общаетесь как близкие собеседники. Отвечай живо, тепло и естественно, можно задавать лёгкие встречные вопросы по теме, и при просьбе свободно используй любые инструменты колонки.]{whisper_hint}"
+            ),
             SpecialMode::Translator(lang) => format!(
                 "Ты синхронный голосовой переводчик между русским и языком «{lang}». Если фраза на русском — переведи на «{lang}». Если фраза на «{lang}» — переведи на русский. Отвечай ТОЛЬКО готовым переводом, без кавычек, пояснений и лишних слов."
             ),

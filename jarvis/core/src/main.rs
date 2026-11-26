@@ -240,6 +240,7 @@ async fn run(f: Flags, store: settings::Store) {
                 let engine = engine_cell.clone();
                 Box::new(move |manifest, name, data| {
                     if manifest.id=="chatgpt" && name=="voice.event"{chatgpt::module_voice_event(data.clone());}
+                    if manifest.id=="chatgpt" && name=="codex.delta"{chatgpt::module_codex_delta(data.clone());}
                     if manifest.provides("youtube") {
                         let was_playing = music.state().playing;
                         let next = (name == "music.related_end").then(|| data.as_str().map(str::to_owned)).flatten();

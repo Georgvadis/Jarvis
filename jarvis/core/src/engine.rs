@@ -1442,8 +1442,18 @@ impl Engine {
                     }
                 }
             }
-            if !self.player.has_queued() && x.dialog().idle(idle) {
-                log::info!("разговор: тишина {idle:.0} с — окончен");
+            let effective_idle = if self
+                .tools
+                .modes
+                .as_ref()
+                .is_some_and(|m| m.current() == crate::modes::SpecialMode::Chat)
+            {
+                idle.max(35.0)
+            } else {
+                idle
+            };
+            if !self.player.has_queued() && x.dialog().idle(effective_idle) {
+                log::info!("разговор: тишина {effective_idle:.0} с — окончен");
                 self.player.finish(Duration::from_secs(12));
                 x.dialog().finish_turn("");
                 close(&sess);
