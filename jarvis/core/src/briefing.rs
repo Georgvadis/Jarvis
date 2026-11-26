@@ -42,34 +42,50 @@ fn encode_city_path(city: &str) -> String {
     out
 }
 
+pub async fn fetch_weather_fast(city: &str, tz: &str) -> Result<String, String> {
+    let clean = city.trim();
+    let effective = if !clean.is_empty() {
+        clean.to_string()
+    } else if let Some(tz_city) = tz.split('/').next_back().filter(|s| !s.is_empty() && *s != "UTC") {
+        tz_city.replace('_', " ")
+    } else {
+        String::new()
+    };
+    let path = if effective.is_empty() {
+        String::new()
+    } else {
+        encode_city_path(&effective)
+    };
+    let url = format!(
+        "https://wttr.in/{path}?format=%l:+%C,+%t+(ощущается+%f),+ветер+%w,+влажность+%h&lang=ru"
+    );
+    let resp = crate::net::direct()
+        .get(&url)
+        .timeout(Duration::from_secs(4))
+        .send()
+        .await
+        .map_err(|e| format!("Погодный сервис не ответил: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Погодный сервис вернул HTTP {}", resp.status().as_u16()));
+    }
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let line = body.lines().next().unwrap_or("").trim().to_string();
+    if line.is_empty()
+        || line.len() > 220
+        || line.contains('<')
+        || line.to_lowercase().contains("unknown location")
+    {
+        return Err("Не удалось распознать город для прогноза погоды.".into());
+    }
+    Ok(line)
+}
+
 async fn fetch_weather(city: &str) -> Option<String> {
     let clean = city.trim();
     if clean.is_empty() {
         return None;
     }
-    let url = format!(
-        "https://wttr.in/{}?format=%C,+%t+(ощущается+%f),+ветер+%w&lang=ru",
-        encode_city_path(clean)
-    );
-    let resp = crate::net::direct()
-        .get(&url)
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let body = resp.text().await.ok()?;
-    let line = body.lines().next().unwrap_or("").trim().to_string();
-    if line.is_empty()
-        || line.len() > 160
-        || line.contains('<')
-        || line.to_lowercase().contains("unknown location")
-    {
-        return None;
-    }
-    Some(format!("{clean}: {line}"))
+    fetch_weather_fast(clean, "").await.ok()
 }
 
 async fn fetch_book_summary(engine: &Engine, srv: &str) -> Option<String> {

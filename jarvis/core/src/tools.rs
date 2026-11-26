@@ -470,6 +470,13 @@ impl Tools {
             let title = st["title"].as_str().unwrap_or("книга");
             live_parts.push(format!("читается книга «{title}»"));
         }
+        if let Some(f) = &self.focus {
+            let st = f.status();
+            if st["running"].as_bool().unwrap_or(false) {
+                let rem = crate::scheduler::format_duration_ru(st["remaining_s"].as_u64().unwrap_or(0));
+                live_parts.push(format!("идёт фокус-сессия (осталось {rem})"));
+            }
+        }
         if let Some(sch) = &self.scheduler {
             let timers = sch.active_timers_json();
             if let Some(arr) = timers.as_array()
@@ -485,6 +492,13 @@ impl Tools {
                     })
                     .collect();
                 live_parts.push(format!("активные таймеры: {}", items.join(", ")));
+            }
+            let st = sch.status();
+            if let Some(routines) = st["routines"].as_array() {
+                let enabled_n = routines.iter().filter(|r| r["enabled"].as_bool().unwrap_or(false)).count();
+                if enabled_n > 0 {
+                    live_parts.push(format!("активных будильников/рутин: {enabled_n}"));
+                }
             }
         }
         if !live_parts.is_empty() {
@@ -764,6 +778,89 @@ impl Tools {
                 }
             }));
         }
+        if self.scheduler.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "manage_alarm",
+                "description": "Нативные будильники и регулярные рутины на колонке (без Алисы): поставить будильник или ежедневное/по дням недели напоминание, посмотреть список, включить/выключить или удалить будильник.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["add", "list", "toggle", "delete"], "description": "add — добавить будильник/рутину; list — список; toggle — вкл/выкл; delete — удалить"},
+                        "time": {"type": "string", "description": "время в формате ЧЧ:ММ, например 08:30 (для add)"},
+                        "title": {"type": "string", "description": "название будильника или рутины, например «Подъём» или «Выпить воды»"},
+                        "days": {"type": "array", "items": {"type": "integer"}, "description": "дни недели 1..7 (1=Пн, 7=Вс); пустой массив — каждый день"},
+                        "routine_action": {"type": "string", "enum": ["say", "briefing", "scenario", "ambient", "dj"], "description": "что сделать в это время: say (озвучить фразу, по умолчанию), briefing (брифинг), scenario (сценарий), ambient (фоновый звук), dj (AI-DJ)"},
+                        "payload": {"type": "string", "description": "фраза для say, имя сценария (morning/work/evening/sleep), пресет фона (fireplace/rain/ocean/lofi) или настроение DJ"},
+                        "volume": {"type": "integer", "description": "громкость 1..10 (необязательно)"},
+                        "id_or_query": {"type": "string", "description": "id, время «08:30», часть названия или «all» (для toggle/delete)"},
+                        "enabled": {"type": "boolean", "description": "включить или выключить (для toggle)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        if self.focus.is_some() {
+            defs.push(json!({
+                "type": "function",
+                "name": "manage_focus",
+                "description": "Помодоро / фокус-сессия на колонке с живым таймером на переднем LED-экране и мягким дождём: запустить на N минут, узнать остаток времени или остановить.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["start", "stop", "status"]},
+                        "minutes": {"type": "integer", "description": "длительность фокуса в минутах от 1 до 99 (по умолчанию 25)"}
+                    },
+                    "required": ["action"]
+                }
+            }));
+        }
+        defs.push(json!({
+            "type": "function",
+            "name": "control_speaker_settings",
+            "description": "Управление настройками самой колонки: ночной режим (night_mode), включение/выключение и яркость/цвет LED-кольца (led_enabled, led_brightness, led_color), а также скорость речи ассистента (speech_speed или speed_adjust).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "night_mode": {"type": "string", "enum": ["on", "off"], "description": "включить или выключить ночной режим"},
+                    "led_enabled": {"type": "boolean", "description": "включить или полностью погасить подсветку LED-кольца"},
+                    "led_brightness": {"type": "integer", "description": "яркость подсветки кольца от 5 до 100"},
+                    "led_color": {"type": "string", "description": "цвет кольца: янтарный, тёплый, белый, синий, голубой, фиолетовый, розовый, зелёный, красный или HEX #rrggbb"},
+                    "speech_speed": {"type": "number", "description": "точная скорость речи от 0.75 до 1.35 (1.0 — обычная)"},
+                    "speed_adjust": {"type": "string", "enum": ["faster", "slower", "normal"], "description": "говорить чуть быстрее, медленнее или вернуть обычную скорость"}
+                }
+            }
+        }));
+        defs.push(json!({
+            "type": "function",
+            "name": "get_weather",
+            "description": "Быстро узнать текущую погоду (температура, ощущения, ветер, влажность) по городу хозяина или указанному городу без медленного веб-поиска. Всегда используй этот инструмент, когда спрашивают про погоду сейчас.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string", "description": "название города (если не назван — оставь пустым, возьмётся город колонки)"}
+                }
+            }
+        }));
+        defs.push(json!({
+            "type": "function",
+            "name": "start_debate",
+            "description": "Запустить живой спор / дебаты двумя голосами на заданную тему прямо на колонке.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "тема спора, например «Кошки против собак» или «Удалёнка против офиса»"},
+                    "rounds": {"type": "integer", "description": "количество раундов от 1 до 4 (по умолчанию 2)"}
+                },
+                "required": ["topic"]
+            }
+        }));
+        defs.push(json!({
+            "type": "function",
+            "name": "stop_all",
+            "description": "Остановить сразу всё, что сейчас играет или запущено на колонке: музыку, камин/фоновый шум/радио, аудиокнигу, AI-DJ, фокус-сессию, подкаст/спор и активный игровой режим.",
+            "parameters": {"type": "object", "properties": {}}
+        }));
         defs
     }
 
@@ -1249,6 +1346,284 @@ impl Tools {
                 }
                 _ => "Неизвестный режим.".into(),
             };
+        }
+        if name == "manage_alarm" {
+            let Some(sch) = &self.scheduler else {
+                return "Модуль будильников недоступен.".into();
+            };
+            let act = field("action").to_lowercase();
+            return match act.as_str() {
+                "add" => {
+                    let time = field("time");
+                    let title = field("title");
+                    let days: Vec<u8> = a
+                        .get("days")
+                        .and_then(Value::as_array)
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let r_act = {
+                        let raw = field("routine_action").to_lowercase();
+                        if raw.is_empty() { "say".into() } else { raw }
+                    };
+                    let mut payload = field("payload");
+                    if r_act == "say" && payload.is_empty() {
+                        payload = if title.is_empty() {
+                            "[sfx:bell] Доброе утро! Пора вставать.".into()
+                        } else {
+                            format!("[sfx:bell] Напоминание: {title}.")
+                        };
+                    }
+                    let vol = a.get("volume").and_then(Value::as_i64);
+                    match sch.add_routine(title.clone(), time.clone(), days.clone(), r_act, payload, vol) {
+                        Ok(_) => {
+                            let days_txt = if days.is_empty() { "каждый день".into() } else { format!("по дням {:?}", days) };
+                            let lbl = if title.is_empty() { "Будильник".into() } else { title };
+                            format!("Поставила «{lbl}» на {time} ({days_txt}).")
+                        }
+                        Err(e) => e,
+                    }
+                }
+                "list" => {
+                    let st = sch.status();
+                    let Some(arr) = st["routines"].as_array() else {
+                        return "Будильников и рутин пока нет.".into();
+                    };
+                    if arr.is_empty() {
+                        return "Будильников и рутин пока нет.".into();
+                    }
+                    let lines: Vec<String> = arr
+                        .iter()
+                        .map(|r| {
+                            let id = r["id"].as_str().unwrap_or("");
+                            let t = r["time"].as_str().unwrap_or("");
+                            let title = r["title"].as_str().unwrap_or("Будильник");
+                            let on = if r["enabled"].as_bool().unwrap_or(false) { "вкл" } else { "выкл" };
+                            format!("{t} — {title} ({on}, id:{id})")
+                        })
+                        .collect();
+                    format!("Будильники и расписание: {}.", lines.join("; "))
+                }
+                "toggle" | "delete" => {
+                    let q = field("id_or_query").to_lowercase();
+                    let st = sch.status();
+                    let arr = st["routines"].as_array().cloned().unwrap_or_default();
+                    if act == "delete" && matches!(q.as_str(), "all" | "все" | "всё") {
+                        let mut removed = 0usize;
+                        for r in &arr {
+                            if let Some(id) = r["id"].as_str() && sch.delete_routine(id).is_ok() {
+                                removed += 1;
+                            }
+                        }
+                        return if removed > 0 {
+                            format!("Удалила все будильники ({removed}).")
+                        } else {
+                            "Удалять нечего — будильников нет.".into()
+                        };
+                    }
+                    let matched = arr.iter().find(|r| {
+                        let id = r["id"].as_str().unwrap_or("").to_lowercase();
+                        let t = r["time"].as_str().unwrap_or("").to_lowercase();
+                        let title = r["title"].as_str().unwrap_or("").to_lowercase();
+                        !q.is_empty() && (id == q || t == q || title.contains(&q))
+                    });
+                    let Some(target) = matched else {
+                        return "Не нашла подходящий будильник. Назови время или название.".into();
+                    };
+                    let id = target["id"].as_str().unwrap_or("");
+                    let title = target["title"].as_str().unwrap_or("Будильник");
+                    let t = target["time"].as_str().unwrap_or("");
+                    if act == "delete" {
+                        match sch.delete_routine(id) {
+                            Ok(_) => format!("Удалила «{title}» на {t}."),
+                            Err(e) => e,
+                        }
+                    } else {
+                        let en = a.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+                        match sch.toggle_routine(id, en) {
+                            Ok(_) => format!("{} «{title}» на {t}.", if en { "Включила" } else { "Выключила" }),
+                            Err(e) => e,
+                        }
+                    }
+                }
+                _ => "Неизвестное действие с будильником.".into(),
+            };
+        }
+        if name == "manage_focus" {
+            let Some(f) = &self.focus else {
+                return "Фокус-режим недоступен.".into();
+            };
+            let act = field("action").to_lowercase();
+            return match act.as_str() {
+                "start" => {
+                    let mins = a.get("minutes").and_then(Value::as_u64).unwrap_or(25).clamp(1, 99);
+                    if let Some(eng) = self.engine() {
+                        f.start(eng, mins)
+                    } else {
+                        "Движок колонки не готов для запуска фокуса.".into()
+                    }
+                }
+                "stop" => {
+                    f.stop();
+                    "Фокус-сессия остановлена.".into()
+                }
+                "status" => {
+                    let st = f.status();
+                    if st["running"].as_bool().unwrap_or(false) {
+                        let rem = crate::scheduler::format_duration_ru(st["remaining_s"].as_u64().unwrap_or(0));
+                        format!("Фокус-сессия идёт, осталось {rem}.")
+                    } else {
+                        "Сейчас фокус-сессия не запущена.".into()
+                    }
+                }
+                _ => "Неизвестное действие с фокусом.".into(),
+            };
+        }
+        if name == "control_speaker_settings" {
+            let night_mode = field("night_mode").to_lowercase();
+            let led_enabled = a.get("led_enabled").and_then(Value::as_bool);
+            let led_brightness = a.get("led_brightness").and_then(Value::as_i64);
+            let led_color_raw = field("led_color").to_lowercase();
+            let speech_speed = a.get("speech_speed").and_then(Value::as_f64);
+            let speed_adjust = field("speed_adjust").to_lowercase();
+
+            let parsed_color: Option<String> = if led_color_raw.is_empty() {
+                None
+            } else if led_color_raw.starts_with('#') && led_color_raw.len() == 7 {
+                Some(led_color_raw.clone())
+            } else {
+                match led_color_raw.as_str() {
+                    c if c.contains("янтар") || c.contains("тёпл") || c.contains("тепл") || c.contains("оранж") || c.contains("камин") => Some("#ff9a2e".into()),
+                    c if c.contains("бел") => Some("#ffffff".into()),
+                    c if c.contains("голуб") || c.contains("бирюз") => Some("#38bdf8".into()),
+                    c if c.contains("син") => Some("#3b82f6".into()),
+                    c if c.contains("фиолет") || c.contains("сирен") => Some("#8b5cf6".into()),
+                    c if c.contains("розов") => Some("#f472b6".into()),
+                    c if c.contains("зел") => Some("#22c55e".into()),
+                    c if c.contains("красн") => Some("#ef4444".into()),
+                    c if c.contains("жёлт") || c.contains("желт") || c.contains("золот") => Some("#facc15".into()),
+                    _ => None,
+                }
+            };
+
+            let mut changes: Vec<String> = Vec::new();
+            let mut new_led: Option<crate::settings::LedSettings> = None;
+            let _ = self.store.update(|s| {
+                if night_mode == "on" {
+                    s.night.enabled = true;
+                    changes.push("ночной режим включён".into());
+                } else if night_mode == "off" {
+                    s.night.enabled = false;
+                    changes.push("ночной режим выключен".into());
+                }
+                let active_id = s.active.clone();
+                let fallback_led = s.led.clone();
+                let p_idx = s.profiles.iter().position(|p| p.id == active_id).or_else(|| (!s.profiles.is_empty()).then_some(0));
+                if let Some(i) = p_idx {
+                    let p = &mut s.profiles[i];
+                    if led_enabled.is_some() || led_brightness.is_some() || parsed_color.is_some() {
+                        let led = p.led.get_or_insert_with(|| fallback_led.clone());
+                        if let Some(en) = led_enabled {
+                            led.enabled = en;
+                            s.led.enabled = en;
+                            changes.push(if en { "подсветка кольца включена".into() } else { "подсветка кольца выключена".into() });
+                        }
+                        if let Some(br) = led_brightness {
+                            let b = br.clamp(5, 100);
+                            led.brightness = b;
+                            s.led.brightness = b;
+                            changes.push(format!("яркость кольца {b}%"));
+                        }
+                        if let Some(ref hex) = parsed_color {
+                            led.speaking = hex.clone();
+                            led.listening = hex.clone();
+                            led.enabled = true;
+                            s.led.speaking = hex.clone();
+                            s.led.listening = hex.clone();
+                            s.led.enabled = true;
+                            changes.push(format!("цвет кольца {led_color_raw}"));
+                        }
+                        new_led = Some(led.clone());
+                    }
+                    if let Some(sp) = speech_speed {
+                        let cl = sp.clamp(0.75, 1.35);
+                        p.tts_speed = cl;
+                        changes.push(format!("скорость речи {:.2}x", cl));
+                    } else if !speed_adjust.is_empty() {
+                        let next = match speed_adjust.as_str() {
+                            "faster" => (p.tts_speed + 0.12).clamp(0.75, 1.35),
+                            "slower" => (p.tts_speed - 0.12).clamp(0.75, 1.35),
+                            "normal" => 1.0,
+                            _ => p.tts_speed,
+                        };
+                        p.tts_speed = next;
+                        changes.push(format!("скорость речи {:.2}x", next));
+                    }
+                }
+                Ok::<(), std::io::Error>(())
+            });
+            if let (Some(leds), Some(cfg)) = (&self.leds, new_led) {
+                leds.configure(&cfg);
+                if let Some(ref hex) = parsed_color {
+                    leds.show(crate::led::Mode::Speaking, hex, cfg.brightness.max(30), Duration::from_secs(4));
+                }
+            }
+            return if changes.is_empty() {
+                "Не указано, какую настройку изменить.".into()
+            } else {
+                format!("Готово: {}.", changes.join(", "))
+            };
+        }
+        if name == "get_weather" {
+            let req_city = field("city");
+            let (city, tz) = self.store.with(|s| {
+                let p = s.active_profile();
+                let c = if !req_city.is_empty() {
+                    req_city.clone()
+                } else if !p.city.trim().is_empty() {
+                    p.city.clone()
+                } else {
+                    s.city.clone()
+                };
+                let t = if !p.timezone.trim().is_empty() { p.timezone.clone() } else { s.timezone.clone() };
+                (c, t)
+            });
+            return match crate::briefing::fetch_weather_fast(&city, &tz).await {
+                Ok(w) => w,
+                Err(e) => e,
+            };
+        }
+        if name == "start_debate" {
+            let topic = field("topic");
+            if topic.is_empty() {
+                return "Назови тему для спора.".into();
+            }
+            let rounds = a.get("rounds").and_then(Value::as_u64).unwrap_or(2).clamp(1, 4) as usize;
+            if let Some(eng) = self.engine() {
+                let mut params = crate::debate::DebateParams::from_topic(topic.clone());
+                params.rounds = rounds;
+                crate::debate::spawn_debate(eng, params);
+                return format!("Запускаю спор на тему «{topic}»!");
+            }
+            if let Some(cb) = &self.on_debate {
+                cb(topic.clone());
+                return format!("Запускаю спор на тему «{topic}»!");
+            }
+            return "Режим спора недоступен.".into();
+        }
+        if name == "stop_all" {
+            let eng = self.engine();
+            self.stop_all_activities(eng.as_deref(), true);
+            if let Some(amb) = &self.ambient {
+                amb.stop();
+            }
+            if let Some(f) = &self.focus {
+                f.stop();
+            }
+            return "Всё остановила — полная тишина.".into();
         }
         if name != "smart_home" {
             if let Some(res) = self.host.call_tool(name, args).await {
