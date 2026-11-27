@@ -1026,7 +1026,10 @@ pub async fn games_status(State(app): State<App>) -> Response {
 
 pub async fn games_melody(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let theme = value["theme"].as_str().unwrap_or("аниме опенинги").to_string();
-    match app.games.start_melody(app.engine.clone(), theme).await {
+    let rounds = value["rounds"].as_u64().unwrap_or(5) as usize;
+    let snippet_s = value["snippet_s"].as_u64().unwrap_or(8) as u8;
+    let seek_s = if value["from_start"].as_bool().unwrap_or(false) { 0.0 } else { 30.0 };
+    match app.games.start_melody_opts(app.engine.clone(), theme, rounds, snippet_s, seek_s, true).await {
         Ok(st) => reply(StatusCode::OK, st),
         Err(e) => super::bad(e),
     }

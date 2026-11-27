@@ -41,6 +41,8 @@ struct MelodyState {
     tracks: Vec<MelodyItem>,
     round: usize,
     score: usize,
+    snippet_s: u8,
+    seek_s: f64,
     awaiting_answer: bool,
     round_gen: u64,
 }
@@ -185,6 +187,18 @@ impl GameManager {
     }
 
     pub async fn start_melody(self: &Arc<Self>, engine: Arc<Engine>, theme: String) -> Result<Value, String> {
+        self.start_melody_opts(engine, theme, 5, 8, 30.0, true).await
+    }
+
+    pub async fn start_melody_opts(
+        self: &Arc<Self>,
+        engine: Arc<Engine>,
+        theme: String,
+        rounds: usize,
+        snippet_s: u8,
+        seek_s: f64,
+        announce: bool,
+    ) -> Result<Value, String> {
         if engine.host.provider("youtube").is_err() {
             return Err("Для игры «Угадай мелодию» нужен включённый модуль YouTube".into());
         }
@@ -192,43 +206,59 @@ impl GameManager {
         self.stop_all(None);
         self.ambient.stop();
 
+        let rounds = rounds.clamp(3, 10);
+        let snippet_s = snippet_s.clamp(5, 20);
+        let seek_s = seek_s.clamp(0.0, 90.0);
         let theme_clean = if theme.trim().is_empty() {
             "аниме опенинги".into()
         } else {
             theme.trim().to_string()
         };
+
+        // Инкрементируем round_gen ДО подбора треков, чтобы двойной клик не запустил две игры подряд
+        let round_gen = {
+            let mut m = self.melody.lock().unwrap();
+            m.round_gen = m.round_gen.wrapping_add(1);
+            m.round_gen
+        };
+
         let mut items = build_melody_pool(&engine, &theme_clean).await;
         shuffle_slice(&mut items);
-        items.truncate(5);
+        items.truncate(rounds);
         if items.is_empty() {
             return Err("Не удалось подобрать треки для темы".into());
         }
 
-        let round_gen = {
+        {
             let mut m = self.melody.lock().unwrap();
+            if m.round_gen != round_gen {
+                return Ok(self.status());
+            }
             m.active = true;
             m.theme = theme_clean.clone();
             m.tracks = items;
             m.round = 0;
             m.score = 0;
+            m.snippet_s = snippet_s;
+            m.seek_s = seek_s;
             m.awaiting_answer = false;
-            m.round_gen = m.round_gen.wrapping_add(1);
-            m.round_gen
-        };
+        }
         self.modes.set_mode(crate::modes::SpecialMode::Melody, Some(&self.ambient));
         engine.journal.note("игра", &format!("Угадай мелодию: {theme_clean}"), "");
 
         let me = self.clone();
         let eng = engine.clone();
         tokio::spawn(async move {
-            let e0 = eng.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                let _ = e0.say_aloud(
-                    "[sfx:chime] Стартуем «Угадай мелодию»! Слушай отрывок 8 секунд и называй трек.",
-                    Duration::from_secs(20),
-                );
-            })
-            .await;
+            if announce {
+                let e0 = eng.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = e0.say_aloud(
+                        "[sfx:chime] Угадай мелодию! Слушай отрывок.",
+                        Duration::from_secs(12),
+                    );
+                })
+                .await;
+            }
             me.play_melody_round(eng, round_gen).await;
         });
 
@@ -320,9 +350,15 @@ impl GameManager {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        let _ = engine.music.call(&engine.host, "seek", json!({"delta": 35.0, "abs": true})).await;
+        let (snippet_s, seek_s) = {
+            let m = self.melody.lock().unwrap();
+            (m.snippet_s.clamp(5, 20), m.seek_s)
+        };
+        if seek_s > 0.5 {
+            let _ = engine.music.call(&engine.host, "seek", json!({"delta": seek_s, "abs": true})).await;
+        }
 
-        for rem in (1..=8u8).rev() {
+        for rem in (1..=snippet_s).rev() {
             if self.melody.lock().unwrap().round_gen != round_gen {
                 engine.leds.set_clock_digits(None, false);
                 let _ = engine.music.call(&engine.host, "stop", Value::Null).await;
@@ -797,7 +833,7 @@ pub fn fast_game_command(games: &Arc<GameManager>, engine: &Arc<Engine>, text: &
             "хиты"
         };
         tokio::spawn(async move {
-            let _ = gm.start_melody(eng, theme.into()).await;
+            let _ = gm.start_melody_opts(eng, theme.into(), 5, 8, 30.0, false).await;
         });
         return Some(format!("Запускаю «Угадай мелодию» ({theme})!"));
     }
@@ -845,6 +881,17 @@ async fn build_melody_pool(engine: &Engine, theme: &str) -> Vec<MelodyItem> {
             MelodyItem { query: "Witcher 3 Silver for Monsters".into(), display: "Ведьмак 3 — Silver for Monsters".into(), aliases: vec!["ведьмак".into(), "witcher".into()] },
             MelodyItem { query: "Cyberpunk 2077 Rebel Path".into(), display: "Cyberpunk 2077 — The Rebel Path".into(), aliases: vec!["киберпанк".into(), "cyberpunk".into()] },
             MelodyItem { query: "Nier Automata Weight of the World".into(), display: "NieR: Automata OST".into(), aliases: vec!["ниер".into(), "nier".into()] },
+        ];
+    }
+    if low.contains("хит") || low.contains("2000") || low.contains("поп") {
+        return vec![
+            MelodyItem { query: "Eminem Lose Yourself".into(), display: "Eminem — Lose Yourself".into(), aliases: vec!["eminem".into(), "эминем".into(), "lose yourself".into()] },
+            MelodyItem { query: "Daft Punk Get Lucky".into(), display: "Daft Punk — Get Lucky".into(), aliases: vec!["daft punk".into(), "дафт панк".into(), "get lucky".into()] },
+            MelodyItem { query: "The Weeknd Blinding Lights".into(), display: "The Weeknd — Blinding Lights".into(), aliases: vec!["weeknd".into(), "уикенд".into(), "blinding lights".into()] },
+            MelodyItem { query: "Lady Gaga Poker Face".into(), display: "Lady Gaga — Poker Face".into(), aliases: vec!["lady gaga".into(), "леди гага".into(), "гага".into(), "poker face".into()] },
+            MelodyItem { query: "Shakira Hips Don't Lie".into(), display: "Shakira — Hips Don't Lie".into(), aliases: vec!["shakira".into(), "шакира".into()] },
+            MelodyItem { query: "Coldplay Viva La Vida".into(), display: "Coldplay — Viva La Vida".into(), aliases: vec!["coldplay".into(), "колдплей".into(), "viva la vida".into()] },
+            MelodyItem { query: "Rihanna Umbrella".into(), display: "Rihanna — Umbrella".into(), aliases: vec!["rihanna".into(), "рианна".into(), "umbrella".into()] },
         ];
     }
 

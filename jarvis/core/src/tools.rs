@@ -1633,7 +1633,7 @@ impl Tools {
                 "melody" => {
                     if let (Some(g), Some(eng)) = (&self.games, self.engine()) {
                         let theme = field("theme");
-                        match Box::pin(g.start_melody(eng, if theme.is_empty() { "популярные хиты".into() } else { theme })).await {
+                        match Box::pin(g.start_melody_opts(eng, if theme.is_empty() { "хиты".into() } else { theme }, 5, 8, 30.0, false)).await {
                             Ok(_) => "Запустил игру «Угадай мелодию»!".into(),
                             Err(e) => e,
                         }

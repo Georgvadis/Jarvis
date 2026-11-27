@@ -4,6 +4,8 @@
 
   const PARTY_STORAGE = "jarvis.partyPlayers";
   const melodyThemes = ["Аниме-опенинги", "Хиты 2000-х", "Рок", "Игры"];
+  const melodyRoundsList = [3, 5, 8];
+  const melodySnippetList = [5, 8, 12, 15];
   const GAME_CARDS = [
     { id: "melody", title: "Угадай мелодию", hint: "8 сек · счёт", ic: "music" },
     { id: "detective", title: "Нуарный детектив", hint: "Улики и допрос", ic: "eye" },
@@ -47,11 +49,20 @@
     return games.active_game === id;
   }
 
+  let melodyRounds = $state(5);
+  let melodySnippet = $state(8);
+  let melodyFromStart = $state(false);
+
   async function startMelody(theme = melodyTheme) {
     if (busy) return;
     busy = true;
     try {
-      await api("POST", "/api/games/melody", { theme });
+      await api("POST", "/api/games/melody", {
+        theme,
+        rounds: melodyRounds,
+        snippet_s: melodySnippet,
+        from_start: melodyFromStart,
+      });
       await refreshActivity();
       toast("Угадай мелодию запущена");
     } catch (error) {
@@ -189,8 +200,34 @@
       <form class="studio-stack" onsubmit={(e) => { e.preventDefault(); startMelody(melodyTheme); }}>
         <div class="chip-row">
           {#each melodyThemes as theme (theme)}
-            <button type="button" class="btn sm" onclick={() => { melodyTheme = theme; startMelody(theme); }}>{theme}</button>
+            <button type="button" class="btn sm" class:primary={melodyTheme === theme} disabled={busy}
+              onclick={() => { melodyTheme = theme; }}>{theme}</button>
           {/each}
+        </div>
+        <div class="grid g2">
+          <div class="f">
+            <span class="lbl">Раундов</span>
+            <div class="seg" role="group" aria-label="Количество раундов">
+              {#each melodyRoundsList as n (n)}
+                <button type="button" class:on={melodyRounds === n} disabled={busy} onclick={() => { melodyRounds = n; }}>{n}</button>
+              {/each}
+            </div>
+          </div>
+          <div class="f">
+            <span class="lbl">Длина отрывка</span>
+            <div class="seg" role="group" aria-label="Длина отрывка">
+              {#each melodySnippetList as s (s)}
+                <button type="button" class:on={melodySnippet === s} disabled={busy} onclick={() => { melodySnippet = s; }}>{s} с</button>
+              {/each}
+            </div>
+          </div>
+        </div>
+        <div class="f">
+          <span class="lbl">Откуда включать</span>
+          <div class="seg" role="group" aria-label="Позиция старта трека">
+            <button type="button" class:on={!melodyFromStart} disabled={busy} onclick={() => { melodyFromStart = false; }}>С середины (30 с)</button>
+            <button type="button" class:on={melodyFromStart} disabled={busy} onclick={() => { melodyFromStart = true; }}>С начала</button>
+          </div>
         </div>
         <div class="mode-row">
           <input type="text" maxlength="100" placeholder="Любая тема…" bind:value={melodyTheme} disabled={busy}>
