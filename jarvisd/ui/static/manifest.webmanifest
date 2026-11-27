@@ -1,12 +1,12 @@
 {
-  "name": "YaJarvis",
-  "short_name": "YaJarvis",
-  "description": "Управление умной колонкой YaJarvis",
+  "name": "Jarvis",
+  "short_name": "Jarvis",
+  "description": "Управление умной колонкой Jarvis",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#111116",
-  "theme_color": "#111116",
+  "background_color": "#110d0a",
+  "theme_color": "#110d0a",
   "icons": [
     {
       "src": "/icon-192.png",

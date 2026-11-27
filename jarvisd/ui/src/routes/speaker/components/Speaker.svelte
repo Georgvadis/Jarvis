@@ -655,7 +655,7 @@
               <p class="note">{wakeReplies.missing}</p>
             {:else if wakeReplies.running}
               <div class="row">
-                <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={cancelWakeGenerate}>Остановить</button>
+                <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={cancelWakeGenerate}>{@html icon("stop", "solid")}Остановить</button>
               </div>
             {:else if showWakeConfirm && missingCount > 0}
               <div class="wr-warn">
@@ -663,15 +663,15 @@
                   Будет сгенерировано <b>{missingCount}</b> коротких фраз голосом «{wakeReplies.voice}» через <b>{wakeReplies.engine_name}</b>.
                 </p>
                 <div class="row">
-                  <button type="button" class="btn sm primary" disabled={wakeBusy} onclick={startWakeGenerate}>Сгенерировать</button>
-                  <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { showWakeConfirm = false; }}>Не сейчас</button>
+                  <button type="button" class="btn sm primary" disabled={wakeBusy} onclick={startWakeGenerate}>{@html icon("sparkles")}Сгенерировать</button>
+                  <button type="button" class="btn sm ghost" disabled={wakeBusy} onclick={() => { showWakeConfirm = false; }}>{@html icon("x")}Не сейчас</button>
                 </div>
               </div>
             {:else}
               <div class="row">
                 {#if missingCount > 0}
                   <button type="button" class="btn sm" disabled={wakeBusy} onclick={() => { showWakeConfirm = true; }}>
-                    {wakeReplies.ready > 0 ? `Догенерировать (${missingCount})` : `Сгенерировать (${missingCount})`}
+                    {@html icon("sparkles")}{wakeReplies.ready > 0 ? `Догенерировать (${missingCount})` : `Сгенерировать (${missingCount})`}
                   </button>
                 {/if}
                 {#if wakeReplies.ready > 0}

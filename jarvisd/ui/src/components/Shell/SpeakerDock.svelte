@@ -22,6 +22,7 @@
   let isTalking = $derived(orb.state === "listening" || orb.state === "thinking" || orb.state === "speaking");
   let djActive = $derived(Boolean($activity.dj?.active));
   let topActivity = $derived(!active && liveItems.length ? liveItems[0] : null);
+  let progressPct = $derived(active && state?.dur > 0 ? Math.min(100, Math.max(0, ((state.pos || 0) / state.dur) * 100)) : 0);
 
   const steps = Array.from({ length: 10 }, (_, i) => i + 1);
 
@@ -81,7 +82,12 @@
 </script>
 
 <div class="dock-wrap">
-<footer class="dock" aria-label="Панель колонки">
+<footer class="dock" class:talking={isTalking} aria-label="Панель колонки">
+  {#if active && progressPct > 0}
+    <div class="dock-progress" aria-hidden="true">
+      <span style:width={`${progressPct.toFixed(2)}%`}></span>
+    </div>
+  {/if}
   {#if active}
     <a class="dock-track" href="/player">
       <div class="dock-art">

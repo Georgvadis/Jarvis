@@ -12,7 +12,7 @@
     const header = response.headers.get("Content-Disposition") || "";
     const match = header.match(/filename="?([^";\s]+)"?/i);
     if (match?.[1]) return match[1];
-    return `yajarvis-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+    return `jarvis-backup-${new Date().toISOString().slice(0, 10)}.zip`;
   }
 
   async function downloadBackup() {
@@ -97,6 +97,6 @@
     </div>
   {/if}
   <small class="muted">
-    В архиве сохраняются настройки, ключи, ассистенты, память и данные плагинов (без аудиозаписей обучения). Храните файл в надёжном месте.
+    Настройки, ключи, ассистенты, память и плагины (без аудиозаписей обучения).
   </small>
 </div>

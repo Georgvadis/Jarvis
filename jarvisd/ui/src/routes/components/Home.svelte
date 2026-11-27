@@ -4,7 +4,6 @@
   import { activity, fmtClock, refreshActivity, runActivityNext, runScenario, stopActivityItem, summarizeActivity } from "#state/activity.js";
   import { getPanel } from "#state/panelContext.js";
   import { S, speaker } from "#state/panelState.js";
-  import { artOf, musicAct, musicData, setArt, subscribeMusic } from "#state/player.js";
   import HomeAmbient from "./HomeAmbient/HomeAmbient.svelte";
   import HomeChat from "./HomeChat/HomeChat.svelte";
   import { readOverview } from "./HomeOverview/overview.js";
@@ -28,8 +27,6 @@
   let sys = $state.raw(S.sys || {});
   let chat = $state();
   let now = $state(new Date());
-  let music = $state.raw(null);
-  let heroCover = $state();
 
   let loungeTab = $state("ambient");
   let chatExpanded = $state(false);
@@ -46,14 +43,8 @@
 
   let liveItems = $derived(summarizeActivity($activity));
   let nonAmbientLive = $derived(liveItems.filter((i) => i.id !== "ambient"));
-  let topActivity = $derived(nonAmbientLive[0] || liveItems[0] || null);
   let activeTimers = $derived(Array.isArray($activity.timers) ? $activity.timers : []);
-
-  let musicActive = $derived(Boolean(music?.playing || music?.paused));
-  let musicPlaying = $derived(Boolean(music?.playing && !music?.paused));
-  let yandex = $derived(music?.source === "yandex");
-  let track = $derived(music?.track || {});
-  let trackImage = $derived(musicActive ? artOf(track, false, music) : "");
+  let anyActive = $derived(Boolean(liveItems.length || isTalking));
 
   let clockText = $derived(timeFmt.format(now));
   let dateText = $derived(dateFmt.format(now));
@@ -67,18 +58,11 @@
 
   onMount(() => {
     const offPoll = onPoll(refresh);
-    const offMusic = subscribeMusic((snap) => { music = snap; });
-    void musicData();
     const clockTimer = setInterval(() => { now = new Date(); }, 15000);
     return () => {
       offPoll();
-      offMusic();
       clearInterval(clockTimer);
     };
-  });
-
-  $effect(() => {
-    if (heroCover) setArt(heroCover, trackImage, trackImage);
   });
 
   function refresh() {
@@ -104,14 +88,13 @@
     }
   }
 
-  async function toggleAmbient(id) {
+  async function stopAll() {
     if (busy) return;
-    busy = "amb:" + id;
-    const next = ambActive === id ? "" : id;
+    busy = "stopall";
     try {
-      await api("POST", "/api/ambient", { id: next });
+      await api("POST", "/api/stop", {});
       await refreshActivity();
-      if (!next) toast("Фон выключен");
+      toast("Остановлено");
     } catch (e) {
       toast(e.message, true);
     } finally {
@@ -184,16 +167,6 @@
     }
   }
 
-  async function controlMusic(event, action) {
-    if (busy) return;
-    busy = "m:" + action;
-    try {
-      await musicAct(action, event.currentTarget, { disableControl: false });
-    } finally {
-      busy = "";
-    }
-  }
-
   async function pcCmd(action) {
     if (pcBusy) return;
     pcBusy = action;
@@ -238,114 +211,38 @@
       <HomeStrip {activeProfile} {sys} />
     </div>
 
-    <div class="hearth-main">
-      <div class="hearth-intro">
-        <div class="hearth-title-row">
-          <span class="hearth-flame-orb" class:talking={isTalking} aria-hidden="true">
-            {@html icon("flame")}
-          </span>
-          <div class="hearth-copy">
-            <div class="hearth-clock-line">
-              <span class="hearth-clock">{clockText}</span>
-              <h1>{greeting}</h1>
-            </div>
-            <span class="hearth-date">{dateText}</span>
+    <div class="hearth-main hearth-main-compact">
+      <div class="hearth-title-row">
+        <span class="hearth-flame-orb" class:talking={isTalking} aria-hidden="true">
+          {@html icon("flame")}
+        </span>
+        <div class="hearth-copy">
+          <div class="hearth-clock-line">
+            <span class="hearth-clock">{clockText}</span>
+            <h1>{greeting}</h1>
           </div>
-        </div>
-
-        <div class="hearth-actions">
-          <button type="button" class="btn primary hearth-cta" disabled={busy === "talk"} onclick={toggleTalk}>
-            {@html icon(isTalking ? "stop" : "mic", isTalking ? "solid" : "")}
-            <span>{isTalking ? "Остановить" : "Поговорить"}</span>
-          </button>
-          <button type="button" class="btn hearth-pill-btn" class:on={fireplaceOn} disabled={busy === "amb:fireplace"} onclick={() => toggleAmbient("fireplace")}>
-            {@html icon("flame")}
-            <span>{fireplaceOn ? "Камин горит" : "Зажечь камин"}</span>
-          </button>
-          <button type="button" class="btn hearth-pill-btn" class:on={focusRunning} disabled={busy === "focus"} onclick={toggleFocus}>
-            {@html icon("bolt")}
-            <span>{focusRunning ? `Фокус ${fmtClock(focusRem)}` : "Фокус 25м"}</span>
-          </button>
-          <button type="button" class="btn hearth-pill-btn" disabled={busy === "briefing"} onclick={runBriefing}>
-            {@html icon("sparkles")}
-            <span>Брифинг</span>
-          </button>
+          <span class="hearth-date">{dateText}</span>
         </div>
       </div>
 
-      <div class="hearth-now">
-        {#if musicActive}
-          <div class="hearth-now-top">
-            <a class="hearth-now-art" href="/player" aria-label="Открыть медиа">
-              {@html icon("music")}
-              <img bind:this={heroCover} alt="">
-            </a>
-            <div class="hearth-now-meta">
-              <span class="hearth-now-kicker">{yandex ? "Яндекс Музыка" : "YouTube"}{music?.paused ? " · пауза" : ""}</span>
-              <b title={track.Title || "…"}>{track.Title || "…"}</b>
-              <small>{track.Author || "Сейчас играет"}</small>
-            </div>
-            <div class="hearth-now-ctl">
-              <button type="button" class="ib" aria-label="Предыдущий"
-                disabled={busy === "m:prev" || (!yandex && (music?.history?.length || 0) < 2)}
-                onclick={(e) => controlMusic(e, "prev")}>
-                {@html icon("prev", "solid")}
-              </button>
-              <button type="button" class="dock-play" aria-label={musicPlaying ? "Пауза" : "Продолжить"}
-                disabled={busy === "m:toggle"}
-                onclick={(e) => controlMusic(e, "toggle")}>
-                {@html icon(musicPlaying ? "pause" : "play", "solid")}
-              </button>
-              <button type="button" class="ib" aria-label="Следующий"
-                disabled={busy === "m:next" || (!yandex && !music?.next?.length)}
-                onclick={(e) => controlMusic(e, "next")}>
-                {@html icon("skip", "solid")}
-              </button>
-            </div>
-          </div>
-        {:else if topActivity}
-          <div class="hearth-now-top">
-            <a class="hearth-now-art" href={topActivity.href} aria-label={topActivity.title}>
-              {@html icon(topActivity.id === "ambient" ? "flame" : "layers")}
-            </a>
-            <div class="hearth-now-meta">
-              <span class="hearth-now-kicker">Сейчас активно</span>
-              <b>{topActivity.title}</b>
-              {#if topActivity.subtitle}<small>{topActivity.subtitle}</small>{/if}
-            </div>
-            <div class="hearth-now-ctl">
-              {#if topActivity.canNext}
-                <button type="button" class="ib" aria-label={topActivity.nextLabel || "Далее"} onclick={() => void runActivityNext(topActivity)}>
-                  {@html icon("skip")}
-                </button>
-              {/if}
-              <button type="button" class="ib danger" aria-label="Остановить" onclick={() => void stopActivityItem(topActivity)}>
-                {@html icon("stop", "solid")}
-              </button>
-            </div>
-          </div>
-        {:else}
-          <div class="hearth-now-top">
-            <a class="hearth-now-art" href="/player" aria-label="Открыть медиа">
-              {@html icon("flame")}
-            </a>
-            <div class="hearth-now-meta">
-              <span class="hearth-now-kicker">Атмосфера дома</span>
-              <b>Сейчас тихо</b>
-              <small>Включите фон в один клик</small>
-            </div>
-          </div>
-          <div class="hearth-now-quick">
-            <button type="button" class="hearth-mini-chip" class:on={ambActive === "fireplace"} onclick={() => toggleAmbient("fireplace")}>
-              {@html icon("flame")}<span>Камин</span>
-            </button>
-            <button type="button" class="hearth-mini-chip" class:on={ambActive === "rain"} onclick={() => toggleAmbient("rain")}>
-              {@html icon("droplets")}<span>Дождь</span>
-            </button>
-            <button type="button" class="hearth-mini-chip" class:on={ambActive === "lofi"} onclick={() => toggleAmbient("lofi")}>
-              {@html icon("radio")}<span>Lo-Fi</span>
-            </button>
-          </div>
+      <div class="hearth-actions">
+        <button type="button" class="btn primary hearth-cta" disabled={busy === "talk"} onclick={toggleTalk}>
+          {@html icon(isTalking ? "stop" : "mic", isTalking ? "solid" : "")}
+          <span>{isTalking ? "Остановить" : "Поговорить"}</span>
+        </button>
+        <button type="button" class="btn hearth-pill-btn" class:on={focusRunning} disabled={busy === "focus"} onclick={toggleFocus}>
+          {@html icon("bolt")}
+          <span>{focusRunning ? `Фокус ${fmtClock(focusRem)}` : "Фокус 25м"}</span>
+        </button>
+        <button type="button" class="btn hearth-pill-btn" disabled={busy === "briefing"} onclick={runBriefing}>
+          {@html icon("sparkles")}
+          <span>Брифинг</span>
+        </button>
+        {#if anyActive}
+          <button type="button" class="btn hearth-pill-btn danger-soft" disabled={busy === "stopall"} onclick={stopAll} title="Остановить все активные режимы">
+            {@html icon("stop", "solid")}
+            <span>Стоп всё</span>
+          </button>
         {/if}
       </div>
     </div>
@@ -385,10 +282,10 @@
           <div class="lounge-head">
             <div class="lounge-tabs" role="tablist" aria-label="Панель уюта">
               <button type="button" role="tab" aria-selected={loungeTab === "ambient"} class="lounge-tab" class:on={loungeTab === "ambient"} onclick={() => { loungeTab = "ambient"; }}>
-                {@html icon("flame")}<span>Камин и фон</span>
+                {@html icon("flame")}<span>Атмосфера</span>
               </button>
               <button type="button" role="tab" aria-selected={loungeTab === "tools"} class="lounge-tab" class:on={loungeTab === "tools"} onclick={() => { loungeTab = "tools"; }}>
-                {@html icon("clock")}<span>Таймеры и ПК</span>
+                {@html icon("clock")}<span>Таймеры и дом</span>
                 {#if activeTimers.length || nonAmbientLive.length}<span class="sdot"></span>{/if}
               </button>
             </div>
@@ -473,7 +370,11 @@
                   </div>
                 </div>
               {:else}
-                <p class="empty-msg">Таймеры и активные режимы появятся здесь. Для управления компьютером подключите <a class="md-link" href="/speaker?tab=integrations">ПК-компаньон</a>.</p>
+                <a class="lounge-pc-cta" href="/speaker?tab=integrations">
+                  {@html icon("monitor")}
+                  <span>Подключить ПК-компаньон</span>
+                  {@html icon("right")}
+                </a>
               {/if}
             {/if}
           </div>

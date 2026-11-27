@@ -142,7 +142,7 @@
           <span class="brand-mark-dot" id="orb" data-s={orb.state} title={orb.text}></span>
         </span>
         <span class="top-brand-copy">
-          <b>YaJarvis</b>
+          <b>Jarvis</b>
           <small>{orb.text || "Готов"}</small>
         </span>
       </a>
@@ -181,6 +181,7 @@
             >
               <span class={"av sm c" + activeProfile.color}>{activeProfile.initial}</span>
               <span class="top-asst-name">{activeProfile.name}</span>
+              <span class="top-asst-chev" class:open={asstOpen} aria-hidden="true">{@html icon("chevronDown")}</span>
             </button>
 
             {#if asstOpen}
@@ -194,10 +195,12 @@
                       <span class={"av c" + profile.color}>{profile.initial}</span>
                       <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.detail}</div></div>
                     </a>
-                    <button type="button" class="prof-act" class:on={profile.active}
-                      title={profile.active ? "Активный" : `Активировать «${profile.name}»`}
+                    <button type="button" class="asst-act-pill" class:on={profile.active}
+                      title={profile.active ? "Активный ассистент" : `Выбрать «${profile.name}»`}
                       aria-label={profile.active ? "Активный" : `Активировать ${profile.name}`}
-                      onclick={(event) => quickActivate(event, profile)}><i></i></button>
+                      onclick={(event) => quickActivate(event, profile)}>
+                      {#if profile.active}{@html icon("check")}<span>Активен</span>{:else}<span>Выбрать</span>{/if}
+                    </button>
                   </div>
                 {/each}
                 <div class="asst-pop-foot">
@@ -209,8 +212,9 @@
           </div>
         {/if}
 
-        <button type="button" class="ib top-ib" title="Быстрые команды (Ctrl+K)" aria-label="Поиск команд" onclick={() => { closePopovers(); cmdOpen = true; }}>
+        <button type="button" class="top-cmd-btn" title="Быстрые команды (Ctrl+K)" aria-label="Поиск команд" onclick={() => { closePopovers(); cmdOpen = true; }}>
           {@html icon("search")}
+          <kbd class="top-cmd-kbd">⌘K</kbd>
         </button>
 
         <div class="top-theme">
@@ -253,7 +257,9 @@
               </div>
               <div class="theme-pop-foot">
                 <small class="mono">v{sidebar?.version ?? "…"}</small>
-                <button class="btn sm ghost" id="logout" type="button" onclick={logout}>Выйти</button>
+                <button class="btn sm ghost" id="logout" type="button" onclick={logout}>
+                  {@html icon("logOut")}<span>Выйти</span>
+                </button>
               </div>
             </div>
           {/if}
@@ -269,7 +275,7 @@
         {@html icon("flame")}
         <span class="brand-mark-dot" data-s={orb.state}></span>
       </span>
-      <b>YaJarvis</b>
+      <b>Jarvis</b>
     </a>
     <div class="mbar-actions">
       {#if activeProfile}

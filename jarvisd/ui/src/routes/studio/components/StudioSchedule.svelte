@@ -444,12 +444,12 @@
               </div>
               <div class="sched-actions">
                 {#if confirmDeleteId === r.id}
-                  <button type="button" class="btn danger sm" disabled={busy} onclick={() => deleteRoutine(r.id)}>{@html icon("check")}</button>
-                  <button type="button" class="btn ghost sm" disabled={busy} onclick={() => { confirmDeleteId = ""; }}>{@html icon("x")}</button>
+                  <button type="button" class="ib danger" disabled={busy} aria-label="Подтвердить удаление" onclick={() => deleteRoutine(r.id)}>{@html icon("check")}</button>
+                  <button type="button" class="ib" disabled={busy} aria-label="Отмена" onclick={() => { confirmDeleteId = ""; }}>{@html icon("x")}</button>
                 {:else}
-                  <button type="button" class="btn ghost sm" disabled={busy} title="Запустить" onclick={() => runRoutineNow(r)}>{@html icon("play", "solid")}</button>
-                  <button type="button" class="btn ghost sm" disabled={busy} title="Изменить" onclick={() => startEdit(r)}>{@html icon("edit")}</button>
-                  <button type="button" class="btn ghost danger sm" disabled={busy} title="Удалить" onclick={() => { confirmDeleteId = r.id; }}>{@html icon("trash")}</button>
+                  <button type="button" class="ib" disabled={busy} title="Запустить" aria-label="Запустить" onclick={() => runRoutineNow(r)}>{@html icon("play", "solid")}</button>
+                  <button type="button" class="ib" disabled={busy} title="Изменить" aria-label="Изменить" onclick={() => startEdit(r)}>{@html icon("edit")}</button>
+                  <button type="button" class="ib danger" disabled={busy} title="Удалить" aria-label="Удалить" onclick={() => { confirmDeleteId = r.id; }}>{@html icon("trash")}</button>
                 {/if}
               </div>
             </div>

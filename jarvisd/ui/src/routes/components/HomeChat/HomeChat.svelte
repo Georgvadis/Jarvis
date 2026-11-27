@@ -3,7 +3,7 @@
   import { api, icon, ring, toast, upload } from "#helpers/core.js";
   import { profilePath } from "#helpers/paths.js";
   import { refreshActivity } from "#state/activity.js";
-  import { avatar, journal, S, speakerState } from "#state/panelState.js";
+  import { avatar, journal, S, speaker, speakerState } from "#state/panelState.js";
   import { chatMessages } from "./messages.js";
   import Message from "./Message/Message.svelte";
 
@@ -50,6 +50,7 @@
   let status = $derived(snapshot.talking ? "говорит и слушает…"
     : snapshot.state.title.replace(/^Жду/, "ждёт").replace(/^Микрофон/, "микрофон"));
   let typing = $derived(draft.trim() !== "");
+  let hasPc = $derived(Boolean($speaker?.settings?.pc_agent_url?.trim()));
 
   onMount(() => {
     animate = true;
@@ -411,9 +412,11 @@
 </div>
 
 <div class="chat-chips" aria-label="Быстрые команды">
-  <button type="button" class="chat-chip" disabled={chipBusy === "screen"} onclick={chipScreen}>
-    {@html icon("monitor")} Экран ПК
-  </button>
+  {#if hasPc}
+    <button type="button" class="chat-chip" disabled={chipBusy === "screen"} onclick={chipScreen}>
+      {@html icon("monitor")} Экран ПК
+    </button>
+  {/if}
   <button type="button" class="chat-chip" disabled={chipBusy === "recap"} onclick={chipRecap}>
     {@html icon("book")} Суть книги
   </button>
@@ -424,7 +427,9 @@
 
 <form class="tg-f" class:direct={directTts} id="say-form" onsubmit={send}>
   {#if directTts}
-    <span class="tg-direct-tag">TTS</span>
+    <span class="tg-direct-tag" title="Прямая озвучка на колонке">TTS</span>
+  {:else if !speak}
+    <span class="tg-silent-tag" title="Ответ только текстом">Тихо</span>
   {/if}
   <input type="text" id="say" maxlength="600" bind:this={sayInput} bind:value={draft} autocomplete="off"
     aria-label={directTts ? "Озвучить текст на колонке" : "Сообщение ассистенту"}

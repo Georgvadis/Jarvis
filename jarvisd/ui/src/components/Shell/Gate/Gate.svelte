@@ -39,14 +39,17 @@
   <form id="gate-form" class="gate-card" autocomplete="on" onsubmit={submit}>
     <div class="gate-brand">
       <span class="brand-mark" aria-hidden="true">{@html icon("flame")}</span>
-      <span>YaJarvis</span>
+      <span>Jarvis</span>
     </div>
-    <p id="gate-text" class="gate-text">{setup ? "Задайте пароль для панели управления" : "Вход в панель управления"}</p>
+    <p id="gate-text" class="gate-text">{setup ? "Задайте пароль для панели" : "Вход в панель"}</p>
     <input id="gate-pass" type="password" autocomplete={setup ? "new-password" : "current-password"}
       placeholder="Пароль" required bind:this={input} bind:value={password}>
     <input id="gate-pass2" type="password" autocomplete="new-password" placeholder="Пароль ещё раз"
       class:hidden={!setup} bind:value={confirmation}>
-    <button class="btn primary" id="gate-btn" type="submit" disabled={pending}>{setup ? "Сохранить пароль" : "Войти"}</button>
+    <button class="btn primary" id="gate-btn" type="submit" disabled={pending}>
+      {@html icon(setup ? "save" : "logIn")}
+      <span>{setup ? "Сохранить пароль" : "Войти"}</span>
+    </button>
     <p id="gate-err" class="err">{error}</p>
     <details id="gate-forgot" class="gate-forgot" class:hidden={setup}>
       <summary>Забыли пароль?</summary>

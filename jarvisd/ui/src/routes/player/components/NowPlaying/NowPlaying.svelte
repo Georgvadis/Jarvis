@@ -34,7 +34,7 @@
   let source = $derived(yandex ? "Яндекс Музыка" : "YouTube");
   let playback = $derived(active ? (state.loading ? "loading" : state.paused ? "paused" : "playing") : state?.loading ? "loading" : "idle");
   let title = $derived(active ? track.Title || "…" : playback === "loading" ? "Ищу и включаю…" : "Ничего не играет");
-  let artist = $derived(active ? track.Author || source : "Скажите «Джарвис, включи с ютуба …» или попросите Алису");
+  let artist = $derived(active ? track.Author || source : "Выберите трек или скажите «Джарвис, включи музыку»");
   let kicker = $derived(
     active
       ? source + (state.loading ? " · переключаю…" : state.paused ? " · пауза" : "")

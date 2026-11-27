@@ -1,4 +1,4 @@
-const CACHE = "yajarvis-shell-v7";
+const CACHE = "jarvis-shell-v8";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -18,7 +18,7 @@ function offlinePage() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>YaJarvis — ожидание колонки</title>
+<title>Jarvis — ожидание колонки</title>
 </head>
 <body>
 <main>

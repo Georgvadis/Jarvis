@@ -288,8 +288,8 @@
 {#snippet editorActions(small = false)}
   <div class="row">
     <span class="spacer"></span>
-    <button class={["btn ghost", { sm: small }]} type="button" disabled={busy} onclick={cancelEdit}>Отмена</button>
-    <button class={["btn primary", { sm: small }]} type="submit" disabled={busy}>Сохранить</button>
+    <button class={["btn ghost", { sm: small }]} type="button" disabled={busy} onclick={cancelEdit}>{@html icon("x")}Отмена</button>
+    <button class={["btn primary", { sm: small }]} type="submit" disabled={busy}>{@html icon("save")}Сохранить</button>
   </div>
 {/snippet}
 
@@ -375,7 +375,7 @@
                 <form class={[styles.fact, styles.editFact]} onsubmit={(event) => saveFact(event, index)}>
                   <input type="text" aria-label="Факт" bind:value={draft} use:focus disabled={busy}>
                   <button class="btn sm primary" type="submit" disabled={busy}>{@html icon("save")}Сохранить</button>
-                  <button class="btn sm ghost" type="button" onclick={cancelEdit} disabled={busy}>Отмена</button>
+                  <button class="btn sm ghost" type="button" onclick={cancelEdit} disabled={busy}>{@html icon("x")}Отмена</button>
                 </form>
               {:else}
                 <div class={styles.fact}>
