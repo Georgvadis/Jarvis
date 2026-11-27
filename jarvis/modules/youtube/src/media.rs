@@ -13,7 +13,9 @@ use tokio::io::AsyncWriteExt;
 
 const FIRST_CHUNK: u64 = 64 << 10;
 const CHUNK: u64 = 256 << 10;
-const PREFETCH_CHUNKS: usize = 4;
+const PREFETCH_CHUNKS: usize = 6;
+const CHUNK_REQ_TIMEOUT: Duration = Duration::from_secs(10);
+const CHUNK_BODY_TIMEOUT: Duration = Duration::from_secs(14);
 const CLUSTER: u32 = 0x1f43b675;
 const SAMPLE_RATE: usize = 48_000;
 const CHANNELS: usize = 2;
@@ -63,6 +65,7 @@ async fn prefetch(
                     .get(stream.url.clone())
                     .header("User-Agent", stream.agent)
                     .header("Range", format!("bytes={pos}-{end}"))
+                    .timeout(CHUNK_REQ_TIMEOUT)
                     .send()
                     .await;
                 match response {
@@ -112,8 +115,8 @@ async fn prefetch(
                             return send_err(&tx, invalid("Размер аудио YouTube изменился"))
                                 .await;
                         }
-                        match bytes(response, want as usize).await {
-                            Ok(data) if data.len() as u64 == last_byte - start + 1 => {
+                        match tokio::time::timeout(CHUNK_BODY_TIMEOUT, bytes(response, want as usize)).await {
+                            Ok(Ok(data)) if data.len() as u64 == last_byte - start + 1 => {
                                 total = content_total;
                                 pos += data.len() as u64;
                                 first = false;
@@ -413,7 +416,7 @@ pub async fn play(
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("Нет входа aplay"))?;
-    let lead = Duration::from_millis(350);
+    let lead = Duration::from_millis(500);
     let mut next_write = Instant::now();
     write_audio(&mut stdin, data).await?;
     next_write += Duration::from_secs_f64(data.len() as f64 / BYTES_PER_SEC);

@@ -247,6 +247,14 @@ async fn ask_primary(host:&Host,s:&Settings,p:&Profile,instructions:&str,history
             }
         }
         if !gemini_results.is_empty(){contents.push(json!({"role":"user","parts":gemini_results}));}
+        if !crate::music::wants_keep_talking(text)
+            && let Some(title) = music_turn.can_instant_close()
+        {
+            return Ok(AskReply {
+                text: format!("Включил «{title}»."),
+                close_dialog: true,
+            });
+        }
     }
     Err("Модель не закончила за 5 шагов".into())
 }
@@ -258,7 +266,8 @@ async fn run_tool(tools: &Tools, defs: &[Value], call: &Call) -> Result<String, 
         return Err("Модель вызвала необъявленный инструмент".into());
     }
     let limit = match call.name.as_str() {
-        "play_music" => 35,
+        "play_music" => 30,
+        "music_control" => 20,
         "look_at_screen" | "start_notebook_podcast" => 40,
         _ => 15,
     };
@@ -394,6 +403,14 @@ pub async fn ask_local_ollama(
             music_turn.observe_tool(&call.name, &call.arguments, &output);
             messages.push(json!({"role": "tool", "tool_call_id": call.id, "content": output}));
         }
+        if !crate::music::wants_keep_talking(text)
+            && let Some(title) = music_turn.can_instant_close()
+        {
+            return Ok(AskReply {
+                text: format!("Включил «{title}»."),
+                close_dialog: true,
+            });
+        }
     }
 
     Err("Локальная модель Ollama не закончила за 4 шага".into())
@@ -448,6 +465,14 @@ async fn ask_plugin(host: &Host, id: &str, model: &str, instructions: &str, hist
             let output = run_tool(tools, defs, &call).await?;
             music_turn.observe_tool(&call.name, &call.arguments, &output);
             messages.push(json!({"role":"tool","tool_call_id":call.id,"content":output}));
+        }
+        if !crate::music::wants_keep_talking(text)
+            && let Some(title) = music_turn.can_instant_close()
+        {
+            return Ok(AskReply {
+                text: format!("Включил «{title}»."),
+                close_dialog: true,
+            });
         }
     }
     Err("Текстовый плагин не закончил за 5 шагов".into())

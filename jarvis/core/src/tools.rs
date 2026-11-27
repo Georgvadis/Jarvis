@@ -483,6 +483,19 @@ impl Tools {
             }
         }
     }
+    pub fn stop_audio_for_standalone_music(&self) {
+        if let Some(amb) = &self.ambient {
+            amb.stop();
+        }
+        if let Some(r) = &self.reader {
+            r.stop();
+        }
+        if let Some(d) = &self.dj {
+            d.stop(None);
+        }
+        crate::debate::stop();
+    }
+
     pub async fn cancel_loading_music(&self) {
         if let Some(cancel) = &self.music_cancel {
             cancel().await;
@@ -605,8 +618,18 @@ impl Tools {
                     dj.stop(Some(&eng));
                     return Some("Выключаю AI-DJ.".into());
                 }
-                if dj.is_active() && (low == "дальше" || low.contains("следующий трек")) {
-                    dj.next();
+                if dj.is_active()
+                    && (low == "дальше"
+                        || low == "скип"
+                        || low == "скипни"
+                        || low.starts_with("следующ")
+                        || low.starts_with("переключи")
+                        || low.contains("следующий трек")
+                        || low.contains("следующую песню")
+                        || low.contains("другой трек")
+                        || low.contains("другую песню"))
+                {
+                    dj.next_with(&eng);
                     return Some("Переключаю на следующий трек подборки.".into());
                 }
                 for pat in ["поставь вайб ", "включи вайб ", "диджей поставь ", "диджей включи ", "режим диджея "] {
@@ -744,8 +767,14 @@ impl Tools {
             if low.contains("что сейчас играет") || low.contains("какой трек играет") || low.contains("что за песня играет") {
                 let st = eng.music.state();
                 if st.playing {
-                    let title = st.cur["title"].as_str().or(st.cur["Title"].as_str()).unwrap_or("").trim();
-                    let artist = st.cur["artist"].as_str().or(st.cur["Artist"].as_str()).unwrap_or("").trim();
+                    let title = st.cur["Title"].as_str().or(st.cur["title"].as_str()).unwrap_or("").trim();
+                    let artist = st.cur["Author"]
+                        .as_str()
+                        .or(st.cur["author"].as_str())
+                        .or(st.cur["Artist"].as_str())
+                        .or(st.cur["artist"].as_str())
+                        .unwrap_or("")
+                        .trim();
                     if !title.is_empty() {
                         return Some(if !artist.is_empty() {
                             format!("Сейчас играет «{title}» — {artist}.")
@@ -754,15 +783,28 @@ impl Tools {
                         });
                     }
                 }
+                let alice_desc = {
+                    let a = eng.music.alice.lock().unwrap();
+                    a.playing().then(|| a.description())
+                };
+                if let Some(desc) = alice_desc {
+                    return Some(desc);
+                }
                 return Some("Сейчас музыка не играет.".into());
             }
             if (low.contains("сохрани трек") || low.contains("скинь трек") || low.contains("отправь трек"))
                 && (low.contains("телеграм") || low.contains("telegram") || low.contains("сохрани трек"))
             {
                 let st = eng.music.state();
-                let title = st.cur["title"].as_str().or(st.cur["Title"].as_str()).unwrap_or("").trim();
-                let artist = st.cur["artist"].as_str().or(st.cur["Artist"].as_str()).unwrap_or("").trim();
-                let vid = st.cur["id"].as_str().or(st.cur["ID"].as_str()).unwrap_or("").trim();
+                let title = st.cur["Title"].as_str().or(st.cur["title"].as_str()).unwrap_or("").trim();
+                let artist = st.cur["Author"]
+                    .as_str()
+                    .or(st.cur["author"].as_str())
+                    .or(st.cur["Artist"].as_str())
+                    .or(st.cur["artist"].as_str())
+                    .unwrap_or("")
+                    .trim();
+                let vid = st.cur["ID"].as_str().or(st.cur["id"].as_str()).unwrap_or("").trim();
                 if !title.is_empty() {
                     let link = if !vid.is_empty() {
                         format!("\nhttps://music.youtube.com/watch?v={vid}")
@@ -910,8 +952,18 @@ impl Tools {
         if let Some(eng) = self.engine() {
             let ms = eng.music.state();
             if ms.playing || ms.paused {
-                let t = ms.cur["title"].as_str().unwrap_or("").trim();
-                let a = ms.cur["author"].as_str().unwrap_or("").trim();
+                let t = ms.cur["Title"]
+                    .as_str()
+                    .or_else(|| ms.cur["title"].as_str())
+                    .unwrap_or("")
+                    .trim();
+                let a = ms.cur["Author"]
+                    .as_str()
+                    .or_else(|| ms.cur["author"].as_str())
+                    .or_else(|| ms.cur["Artist"].as_str())
+                    .or_else(|| ms.cur["artist"].as_str())
+                    .unwrap_or("")
+                    .trim();
                 if !t.is_empty() {
                     let st_word = if ms.paused { "на паузе" } else { "сейчас играет" };
                     if a.is_empty() {
@@ -919,6 +971,14 @@ impl Tools {
                     } else {
                         live_parts.push(format!("{st_word}: «{t}» — {a}"));
                     }
+                }
+            } else {
+                let alice_desc = {
+                    let a = eng.music.alice.lock().unwrap();
+                    a.playing().then(|| a.description())
+                };
+                if let Some(desc) = alice_desc {
+                    live_parts.push(desc);
                 }
             }
         }
@@ -1017,9 +1077,9 @@ impl Tools {
         }
         if self.music_ctl.is_some() && self.host.provider("youtube").is_ok() {
             defs.push(json!({"type": "function", "name": "music_control",
-                "description": "Управлять тем, что сейчас играет в YouTube Music / YouTube (или Яндекс Музыке): пауза, продолжить, перемотка вперёд/назад, с начала, следующий трек, похожее (радио), повтор (на репит), добавить текущую песню в избранное/лайки («мне понравилась песня», «добавь в избранное» -> команда «поставь лайк»), убрать из избранного («убери лайк»), выключить, что играет.",
+                "description": "Управлять тем, что сейчас играет в YouTube Music / YouTube (или Яндекс Музыке): пауза, продолжить, перемотка вперёд/назад, с начала, следующий трек (сразу включает следующий трек очереди/радио), предыдущий трек, повтор (на репит), добавить текущую песню в избранное/лайки («мне понравилась песня», «добавь в избранное» -> команда «поставь лайк»), убрать из избранного («убери лайк»), выключить, что играет.",
                 "parameters": {"type": "object", "properties": {
-                    "command": {"type": "string", "description": "команда по-русски: «пауза», «продолжи», «перемотай вперёд на 2 минуты», «назад на 30 секунд», «сначала», «следующее», «включи похожее», «включи повтор», «выключи повтор», «поставь лайк», «убери лайк», «выключи музыку», «что играет»"}},
+                    "command": {"type": "string", "description": "команда по-русски: «пауза», «продолжи», «перемотай вперёд на 2 минуты», «назад на 30 секунд», «сначала», «следующий трек», «предыдущий трек», «включи повтор», «выключи повтор», «поставь лайк», «убери лайк», «выключи музыку», «что играет»"}},
                     "required": ["command"]}}));
         }
         if self.use_ch("yandexmusic") {
@@ -1401,6 +1461,7 @@ impl Tools {
             if q.is_empty() {
                 return "Скажи, что включить в Яндекс Музыке.".into();
             }
+            self.stop_audio_for_standalone_music();
             if let Some(eng) = self.engine() {
                 let _ = eng.music.call(&self.host, "stop", Value::Null).await;
             }
@@ -1420,6 +1481,7 @@ impl Tools {
             }
             if fastcmd::yandex_music_request(&q) {
                 if self.use_ch("yandexmusic") {
+                    self.stop_audio_for_standalone_music();
                     if let Some(eng) = self.engine() {
                         let _ = eng.music.call(&self.host, "stop", Value::Null).await;
                     }
@@ -1439,8 +1501,9 @@ impl Tools {
             {
                 return mq(q).await;
             }
+            self.stop_audio_for_standalone_music();
             let res = m(q.clone()).await;
-            if res.starts_with("Не получилось:") && self.use_ch("yandexmusic") {
+            if res.starts_with("Не получилось:") && !res.contains("операция отменена") && self.use_ch("yandexmusic") {
                 let cmd = format_yandex_music_cmd(&q);
                 if let Ok(Ok(())) = tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
                     return format!("В YouTube Music не нашлось, поэтому включил в Яндекс Музыке: {q}.");
@@ -2710,7 +2773,7 @@ pub fn run_scenario(engine: Arc<crate::engine::Engine>, id: &str) -> Result<Stri
     }
 }
 
-fn format_yandex_music_cmd(query: &str) -> String {
+pub(crate) fn format_yandex_music_cmd(query: &str) -> String {
     let q = query.trim();
     let low = q.to_lowercase().replace('ё', "е");
     if low.starts_with("включи ") || low.starts_with("поставь ") || low.starts_with("запусти ") {

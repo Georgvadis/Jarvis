@@ -398,7 +398,9 @@ async fn run(f: Flags, store: settings::Store) {
         *target = Some(Arc::new(move |q| {
             let (music, host, amb) = (music.clone(), host.clone(), amb.clone());
             Box::pin(async move {
-                amb.stop();
+                if !queue {
+                    amb.stop();
+                }
                 music.play(&host, &q, queue).await
             })
         }));

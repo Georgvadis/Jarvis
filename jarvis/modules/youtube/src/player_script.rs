@@ -15,13 +15,14 @@ use std::{
 
 const EJS: &str = include_str!("ejs.js");
 const WEB_AGENT: &str = super::remote::WEB_AGENT;
-const MAX_PARSE_HEAP: usize = 36 << 20;
+const MAX_PARSE_HEAP: usize = 48 << 20;
 const MAX_SOLVER_HEAP: usize = 16 << 20;
 const MAX_CACHE_BYTES: usize = 2 << 20;
 const MAX_CACHE_UNPACKED: usize = 6 << 20;
 const JS_TIMEOUT: Duration = Duration::from_secs(180);
 const SOLVER_LOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const DISK_VERIFY_TTL: Duration = Duration::from_secs(6 * 3600);
+const MEMORY_CACHE_TTL: Duration = Duration::from_secs(6 * 3600);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct CachedPlayer {
@@ -69,7 +70,7 @@ impl Prepared {
             Instant::now() >= *cutoff.lock().unwrap()
         })));
         let context = Context::full(&runtime).map_err(|_| "Не создать окружение плеера YouTube")?;
-        let chunks = context
+        context
             .with(|ctx| {
                 ctx.eval::<(), _>(EJS)
                     .catch(&ctx)
@@ -82,29 +83,66 @@ impl Prepared {
                     .call((&head[2], head.get(1).is_some()))
                     .catch(&ctx)
                     .map_err(|e| e.to_string())?;
-                let add: Function = job.get("add").map_err(|e| e.to_string())?;
-                let finish: Function = job.get("finish").map_err(|e| e.to_string())?;
-                let mut start = 0;
-                let mut index = 0;
-                while index < cuts.len() {
-                    let mut part = (index + 31).min(cuts.len() - 1);
-                    loop {
-                        let end = cuts[part];
-                        if add
-                            .call::<_, bool>((&body[start..end],))
+                ctx.globals()
+                    .set("__jarvis_job", job)
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("Не разобрать текущий плеер YouTube: {e}"))?;
+        let mut start = 0;
+        let mut index = 0;
+        let mut since_gc = 0usize;
+        while index < cuts.len() {
+            // Pick a batch up to ~24 KiB (at most 32 statements) so meriyah's temporary
+            // AST stays small and never pushes QuickJS over MAX_PARSE_HEAP on 2.5MB players.
+            let mut part = index;
+            while part + 1 < cuts.len()
+                && part - index < 31
+                && cuts[part + 1] - start <= 24 << 10
+            {
+                part += 1;
+            }
+            loop {
+                let end = cuts[part];
+                let ok = context
+                    .with(|ctx| {
+                        let job: Object = ctx
+                            .globals()
+                            .get("__jarvis_job")
+                            .map_err(|e| e.to_string())?;
+                        let add: Function = job.get("add").map_err(|e| e.to_string())?;
+                        add.call::<_, bool>((&body[start..end],))
                             .catch(&ctx)
-                            .map_err(|e| format!("parse {start}..{end}: {e}"))?
-                        {
-                            start = end;
-                            index = part + 1;
-                            break;
-                        }
-                        if part == cuts.len() - 1 || end - start > 256 << 10 {
-                            return Err("Неизвестный синтаксис плеера".to_string());
-                        }
-                        part = (part + 8).min(cuts.len() - 1);
+                            .map_err(|e| format!("parse {start}..{end}: {e}"))
+                    })
+                    .map_err(|e| format!("Не разобрать текущий плеер YouTube: {e}"))?;
+                if ok {
+                    since_gc += end - start;
+                    start = end;
+                    index = part + 1;
+                    if since_gc >= 192 << 10 {
+                        runtime.run_gc();
+                        since_gc = 0;
                     }
+                    break;
                 }
+                if part == cuts.len() - 1 || end - start > 256 << 10 {
+                    return Err(
+                        "Не разобрать текущий плеер YouTube: Неизвестный синтаксис плеера"
+                            .to_string(),
+                    );
+                }
+                runtime.run_gc();
+                part = (part + 1).min(cuts.len() - 1);
+            }
+        }
+        runtime.run_gc();
+        let chunks = context
+            .with(|ctx| {
+                let job: Object = ctx
+                    .globals()
+                    .get("__jarvis_job")
+                    .map_err(|e| e.to_string())?;
+                let finish: Function = job.get("finish").map_err(|e| e.to_string())?;
                 finish
                     .call::<_, Vec<String>>(())
                     .catch(&ctx)
@@ -307,7 +345,7 @@ impl Scripts {
             .unwrap()
             .current
             .as_ref()
-            .is_some_and(|(at, _, _, _)| at.elapsed() < Duration::from_secs(1800))
+            .is_some_and(|(at, _, _, _)| at.elapsed() < MEMORY_CACHE_TTL)
     }
 
     pub fn has_warm_cache(&self) -> bool {
@@ -315,7 +353,7 @@ impl Scripts {
         if state
             .current
             .as_ref()
-            .is_some_and(|(at, _, _, _)| at.elapsed() < Duration::from_secs(1800))
+            .is_some_and(|(at, _, _, _)| at.elapsed() < MEMORY_CACHE_TTL)
         {
             return true;
         }
@@ -401,11 +439,14 @@ impl Scripts {
     {
         let mut rx = {
             let mut state = self.0.lock().unwrap();
-            if let Some((at, used, _, prepared)) = state.current.as_mut()
-                && at.elapsed() < Duration::from_secs(1800)
-            {
+            if let Some((at, used, _, prepared)) = state.current.as_mut() {
                 *used = Instant::now();
-                return Ok(prepared.clone());
+                let ready = prepared.clone();
+                if at.elapsed() >= MEMORY_CACHE_TTL && state.inflight.is_none() {
+                    // Keep playback instant by serving the existing solver while refreshing in background.
+                    let _ = self.spawn_load(&mut state, loader);
+                }
+                return Ok(ready);
             }
             if let Some((at, error)) = &state.failed
                 && at.elapsed() < Duration::from_secs(120)
@@ -425,7 +466,7 @@ impl Scripts {
         if state
             .current
             .as_ref()
-            .is_some_and(|(at, _, _, _)| at.elapsed() < Duration::from_secs(1800))
+            .is_some_and(|(at, _, _, _)| at.elapsed() < MEMORY_CACHE_TTL)
             || state
                 .failed
                 .as_ref()
@@ -436,7 +477,10 @@ impl Scripts {
         }
         let cache_path = state.cache_path.clone();
         let _ = self.spawn_load(&mut state, move |shared| async move {
-            load_script(&client, &shared, cache_path, true).await
+            // Fast-load warm disk cache immediately on boot (no blocking network roundtrip);
+            // remote freshness check runs lazily if disk cache is older than DISK_VERIFY_TTL.
+            let verify = cache_path.as_deref().is_none_or(|p| !disk_cache_fresh(p));
+            load_script(&client, &shared, cache_path, verify).await
         });
     }
     pub async fn get(&self, client: &Client) -> Result<Arc<Prepared>, String> {
@@ -521,7 +565,8 @@ async fn load_script(
             }
             return Ok(ScriptLoad::Reused(prepared.clone()));
         }
-        state.current.take();
+        // Keep the existing warm solver live while the new player compiles in background
+        // so live playback never stalls on a 15-30s recompile.
     }
     // Check if disk cache already holds this exact player ID (e.g. after reboot or idle eviction).
     if let Some(path) = cache_path.as_deref()
@@ -551,40 +596,64 @@ async fn load_script(
         }
     }
     let tv_url = format!("https://www.youtube.com/s/player/{id}/tv-player-ias.vflset/tv-player-ias.js");
-    let source = match fetch(client, &tv_url, super::remote::TV_AGENT, 8 << 20).await {
-        Ok(source) => source,
-        Err(_) => {
-            let web_url = format!("https://www.youtube.com/s/player/{id}/player_ias.vflset/en_US/base.js");
-            fetch(client, &web_url, WEB_AGENT, 8 << 20)
-                .await
-                .map_err(|e| (false, e))?
-        }
-    };
+    let web_url = format!("https://www.youtube.com/s/player/{id}/player_ias.vflset/en_US/base.js");
     let started = Instant::now();
-    let (send, result) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("youtube-script".into())
-        .stack_size(8 << 20)
-        .spawn(move || {
-            let parsed = Prepared::extract_chunks(source).and_then(|(ts, chunks)| {
-                let prepared = Prepared::from_chunks(ts, &chunks)?;
-                Ok((ts, chunks, prepared))
-            });
-            let _ = send.send(parsed);
-        })
-        .map_err(|_| (false, "Не запустить движок плеера".to_owned()))?;
-    let (timestamp, chunks, prepared) = match result
-        .await
-        .map_err(|_| "Движок плеера завершился".to_owned())
-        .and_then(|result| result)
-    {
-        Ok((ts, chunks, prepared)) => (ts, chunks, Arc::new(prepared)),
-        Err(error) => {
-            log::debug!("YouTube: {error}");
-            #[cfg(test)]
-            eprintln!("Player parser: {error}");
-            return Err((true, "Не разобрать текущий плеер YouTube".to_owned()));
+    let mut last_error = String::new();
+    let mut parsed_result = None;
+    for (url, agent) in [(&tv_url, super::remote::TV_AGENT), (&web_url, WEB_AGENT)] {
+        let source = match fetch(client, url, agent, 8 << 20).await {
+            Ok(source) => source,
+            Err(e) => {
+                last_error = e;
+                continue;
+            }
+        };
+        let (send, result) = tokio::sync::oneshot::channel();
+        if std::thread::Builder::new()
+            .name("youtube-script".into())
+            .stack_size(8 << 20)
+            .spawn(move || {
+                let parsed = Prepared::extract_chunks(source).and_then(|(ts, chunks)| {
+                    let prepared = Prepared::from_chunks(ts, &chunks)?;
+                    Ok((ts, chunks, prepared))
+                });
+                let _ = send.send(parsed);
+            })
+            .is_err()
+        {
+            return Err((false, "Не запустить движок плеера".to_owned()));
         }
+        match result
+            .await
+            .map_err(|_| "Движок плеера завершился".to_owned())
+            .and_then(|result| result)
+        {
+            Ok((ts, chunks, prepared)) => {
+                parsed_result = Some((ts, chunks, Arc::new(prepared)));
+                break;
+            }
+            Err(error) => {
+                log::debug!("YouTube: {error} ({url})");
+                #[cfg(test)]
+                eprintln!("Player parser ({url}): {error}");
+                last_error = error;
+            }
+        }
+    }
+    let Some((timestamp, chunks, prepared)) = parsed_result else {
+        let deterministic = last_error.contains("Неизвестный")
+            || last_error.contains("Не разобрать")
+            || last_error.contains("Нет версии");
+        return Err((
+            deterministic,
+            if deterministic {
+                "Не разобрать текущий плеер YouTube".to_owned()
+            } else if last_error.is_empty() {
+                "Не скачать плеер YouTube".to_owned()
+            } else {
+                last_error
+            },
+        ));
     };
     if let Some(path) = cache_path.as_deref() {
         write_disk_cache(
@@ -606,6 +675,7 @@ async fn fetch(client: &Client, url: &str, agent: &str, limit: usize) -> Result<
     let resp = client
         .get(url)
         .header("User-Agent", agent)
+        .timeout(Duration::from_secs(12))
         .send()
         .await
         .map_err(|_| "Не скачать плеер YouTube")?;
@@ -687,7 +757,27 @@ fn boundaries(bytes: &[u8]) -> Vec<usize> {
                 }
             }
             b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth -= 1,
+            b')' | b']' => depth -= 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let tail = &bytes[i..];
+                    let k = tail
+                        .iter()
+                        .position(|b| !b.is_ascii_whitespace())
+                        .unwrap_or(tail.len());
+                    let tail = &tail[k..];
+                    if [&b"function"[..], b"var", b"let", b"const", b"class"]
+                        .iter()
+                        .any(|w| {
+                            tail.starts_with(w)
+                                && !tail.get(w.len()).is_some_and(|b| word_byte(*b))
+                        })
+                    {
+                        cuts.push(i);
+                    }
+                }
+            }
             b';' if depth == 0 => {
                 let tail = &bytes[i..];
                 let k = tail

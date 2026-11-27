@@ -457,7 +457,7 @@ impl AiDj {
                 let st = engine.music.state();
                 if st.playing || st.paused {
                     seen_playing = true;
-                    if let Some(t) = st.cur.get("title").and_then(Value::as_str).filter(|x| !x.is_empty()) {
+                    if let Some(t) = st.cur.get("Title").or_else(|| st.cur.get("title")).and_then(Value::as_str).filter(|x| !x.is_empty()) {
                         let mut g = self.st.lock().unwrap();
                         if g.generation == generation {
                             g.current_title = t.to_string();

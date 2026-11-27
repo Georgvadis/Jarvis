@@ -275,6 +275,7 @@ impl Account {
             .await?
             .post(format!("https://www.youtube.com/o/oauth2/{path}"))
             .header("User-Agent", TV_AGENT)
+            .timeout(Duration::from_secs(10))
             .form(&fields)
             .send()
             .await

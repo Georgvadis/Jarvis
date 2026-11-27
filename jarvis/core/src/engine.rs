@@ -808,15 +808,61 @@ impl Engine {
         let w = phrase.to_lowercase();
         let has = |s: &str| w.contains(s);
         if !self.talking() {
-            if !self.music_playing() { return; }
+            let music_paused = self.music.state().paused
+                || self.music.alice.lock().unwrap().paused_since().is_some();
+            if !self.music_playing() {
+                if music_paused && has("продолж") {
+                    let m = self.music.clone();
+                    let h = self.host.clone();
+                    self.rt.spawn(async move {
+                        let _ = m.transport(&h, "resume", serde_json::Value::Null).await;
+                    });
+                }
+                return;
+            }
             if has("стоп") || has("пауза") {
                 let op = if has("пауза") { "pause" } else { "stop" };
-                let _ = self.rt.block_on(self.music.transport(&self.host, op, serde_json::Value::Null));
+                let m = self.music.clone();
+                let h = self.host.clone();
+                self.rt.spawn(async move {
+                    let _ = m.transport(&h, op, serde_json::Value::Null).await;
+                });
+                return;
+            }
+            if has("следующ") || has("дальше") {
+                if let Some(dj) = &self.tools.dj
+                    && dj.is_active()
+                {
+                    dj.next_with(self);
+                } else {
+                    let m = self.music.clone();
+                    let h = self.host.clone();
+                    self.rt.spawn(async move {
+                        let _ = m.transport(&h, "next", serde_json::Value::Null).await;
+                    });
+                }
+                return;
+            }
+            if has("предыдущ") || has("назад") {
+                let m = self.music.clone();
+                let h = self.host.clone();
+                self.rt.spawn(async move {
+                    let _ = m.transport(&h, "prev", serde_json::Value::Null).await;
+                });
+                return;
+            }
+            if has("лайк") {
+                let m = self.music.clone();
+                let h = self.host.clone();
+                self.rt.spawn(async move {
+                    let _ = m.call(&h, "like", serde_json::json!({"liked": true})).await;
+                });
                 return;
             }
             if has("громче") || has("тише") {
-                let level = crate::speakervol::speaker_volume().unwrap_or(5) + if has("тише") { -1 } else { 1 };
-                let _ = crate::speakervol::set_alice_volume(level.clamp(0,10));
+                let level = (crate::speakervol::speaker_volume().unwrap_or(5) + if has("тише") { -1 } else { 1 }).clamp(0, 10);
+                flash_volume_clock(self, level);
+                let _ = crate::speakervol::set_alice_volume(level);
             }
             return;
         }
@@ -825,9 +871,16 @@ impl Engine {
             self.end_chat(&format!("сказали «{phrase}»"));
             self.journal.note("стоп", phrase, "");
         } else if has("пауза") {
-            log::info!("Джарвис: «{phrase}» — стоп (встроенный распознаватель)");
-            self.stop(&format!("сказали «{phrase}»"));
-            self.journal.note("стоп", phrase, "");
+            log::info!("Джарвис: «{phrase}» — пауза музыки и закрытие разговора (встроенный распознаватель)");
+            self.end_chat(&format!("сказали «{phrase}»"));
+            if self.music_playing() {
+                let m = self.music.clone();
+                let h = self.host.clone();
+                self.rt.spawn(async move {
+                    let _ = m.transport(&h, "pause", serde_json::Value::Null).await;
+                });
+            }
+            self.journal.note("пауза", phrase, "");
         } else if has("громче") || has("тише") {
             if self.music_playing() {
                 // Когда играет музыка — регулируем реальную громкость колонки на ±1 и сразу возвращаем музыку
@@ -1531,7 +1584,19 @@ impl Engine {
             }
             if x.dialog().close_requested() {
                 log::info!("разговор: музыка включена — закрываю разговор");
-                self.player.stop(true);
+                if x.dialog().muted() {
+                    self.player.stop(true);
+                } else {
+                    while let Ok(pcm) = out.try_recv() {
+                        if !self.player.playing() && loud_at(&pcm, 180) {
+                            let _ = self.start_voice(&*x);
+                        }
+                        if self.player.playing() {
+                            let _ = self.player.write_wait(&pcm, || x.dialog().muted());
+                        }
+                    }
+                    self.player.finish(Duration::from_secs(6));
+                }
                 x.dialog().finish_turn("");
                 close(&sess);
                 return None;

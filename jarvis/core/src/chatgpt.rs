@@ -655,7 +655,8 @@ pub async fn ask_codex_with_history_detail_stream(
             if !defs.iter().any(|d|d["name"]==name){return Err("Модель вызвала необъявленный инструмент".into());}
             let args = c.get("arguments").and_then(Value::as_str).unwrap_or("");
             let limit = match name {
-                "play_music" => 35,
+                "play_music" => 30,
+                "music_control" => 20,
                 "look_at_screen" | "start_notebook_podcast" => 40,
                 _ => 15,
             };
@@ -672,6 +673,14 @@ pub async fn ask_codex_with_history_detail_stream(
             log::info!("подписка: {name}({args}) → {result}");
             if full_output.is_none(){input.push(json!({"type": "function_call", "name": c["name"], "arguments": c["arguments"], "call_id": c["call_id"]}));}
             input.push(json!({"type": "function_call_output", "call_id": c["call_id"], "output": result}));
+        }
+        if !crate::music::wants_keep_talking(text)
+            && let Some(title) = music_turn.can_instant_close()
+        {
+            return Ok(BrainReply {
+                text: format!("Включил «{title}»."),
+                close_dialog: true,
+            });
         }
     }
     Err("модель не закончила за 5 шагов".into())

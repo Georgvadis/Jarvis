@@ -15,6 +15,7 @@ pub const WEB_VERSION: &str = "2.20261112.01.00";
 pub const TV_AGENT: &str = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1";
 const TV_VERSION: &str = "4.20240101";
 const TV_BROWSE_VERSION: &str = "7.20260114.12.00";
+const YTM_VERSION: &str = "1.20260101.01.00";
 const VR_VERSION: &str = "1.65.10";
 const VR_AGENT: &str = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
 
@@ -751,6 +752,52 @@ impl Remote {
             ["sectionListRenderer"]["contents"];
         Ok(parse_playlists(section))
     }
+    pub async fn search_music_songs(&self, query: &str) -> Result<Vec<Track>, String> {
+        let clean = query.trim();
+        if clean.is_empty() {
+            return Err("Что включить?".into());
+        }
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": YTM_VERSION,
+                    "hl": "ru",
+                    "gl": "RU"
+                }
+            },
+            "query": clean,
+            "params": "EgWKAQIIAWoKEAMQBBAJEAoQBQ%3D%3D"
+        });
+        let client = self.host.client().await?;
+        let data = post_ytm(&client, "search", &body).await?;
+        self.note_visitor(&data);
+        Ok(parse_ytm_search_songs(&data))
+    }
+
+    pub async fn related_music(&self, id: &str) -> Result<Vec<Track>, String> {
+        if !valid_id(id) {
+            return Err("Неверный ID видео YouTube".into());
+        }
+        let body = json!({
+            "context": {
+                "client": {
+                    "clientName": "WEB_REMIX",
+                    "clientVersion": YTM_VERSION,
+                    "hl": "ru",
+                    "gl": "RU"
+                }
+            },
+            "videoId": id,
+            "playlistId": format!("RDAMVM{id}"),
+            "isAudioOnly": true
+        });
+        let client = self.host.client().await?;
+        let data = post_ytm(&client, "next", &body).await?;
+        self.note_visitor(&data);
+        Ok(parse_ytm_radio_next(&data, id))
+    }
+
     pub async fn related(&self, id: &str, mut headers: HeaderMap) -> Result<Vec<Track>, String> {
         strip_bearer(&mut headers);
         let client = self.host.client().await?;
@@ -827,19 +874,18 @@ impl Remote {
             headers.insert("Origin",reqwest::header::HeaderValue::from_static("https://www.youtube.com"));
             let body=json!({"context":{"client":context},"videoId":id,
                 "playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS","signatureTimestamp":prepared.timestamp}}});
-            let start=Instant::now();
             let data=post(&client,"player",TV_AGENT,&body,headers).await?;
-            formats(&data,id,"TVHTML5",TV_AGENT,Some(&prepared),start+ad_wait(&data)).await
+            formats(&data,id,"TVHTML5",TV_AGENT,Some(&prepared),Instant::now()).await
         }.await;
         match tv {
             Ok(v) => Ok(v),
-            Err(e) if !auth.is_empty() || login_required(&e) => Err(e),
+            Err(e) if !auth.is_empty() => Err(e),
             Err(error) => {
                 log::debug!("YouTube: телевизионный плеер недоступен: {error}");
                 match backup {
                     Some(Ok(value)) => Ok(value),
                     Some(Err(_)) => Err(error),
-                    None => vr(&client, id, &visitor).await,
+                    None => vr(&client, id, &visitor).await.or(Err(error)),
                 }
             }
         }
@@ -903,11 +949,222 @@ async fn post(
         ))
         .header("User-Agent", agent)
         .headers(headers)
+        .timeout(Duration::from_secs(10))
         .json(body)
         .send()
         .await
         .map_err(|_| "Нет соединения с YouTube")?;
     response_json(response).await
+}
+
+async fn post_ytm(client: &Client, path: &str, body: &Value) -> Result<Value, String> {
+    let response = client
+        .post(format!(
+            "https://music.youtube.com/youtubei/v1/{path}?prettyPrint=false"
+        ))
+        .header("Origin", "https://music.youtube.com")
+        .header("User-Agent", WEB_AGENT)
+        .timeout(Duration::from_secs(8))
+        .json(body)
+        .send()
+        .await
+        .map_err(|_| "Нет соединения с YouTube Music")?;
+    response_json(response).await
+}
+
+fn parse_duration_secs(s: &str) -> u32 {
+    let parts: Vec<u32> = s
+        .trim()
+        .split(':')
+        .filter_map(|p| p.trim().parse::<u32>().ok())
+        .collect();
+    match parts.as_slice() {
+        [m, sec] => m * 60 + sec,
+        [h, m, sec] => h * 3600 + m * 60 + sec,
+        _ => 0,
+    }
+}
+
+pub(crate) fn is_spam_music_track(title: &str, author: &str, duration_s: u32) -> bool {
+    if duration_s > 540 || (duration_s > 0 && duration_s < 45) {
+        return true;
+    }
+    let meta = format!("{} {}", title.to_lowercase(), author.to_lowercase()).replace('ё', "е");
+    [
+        "подборка",
+        "в машину",
+        "сборник",
+        "мегамикс",
+        "megamix",
+        "nonstop",
+        "non-stop",
+        "full album",
+        "полный альбом",
+        "1 час",
+        "2 часа",
+        "3 часа",
+        "randomchik",
+        "музыка для души",
+        "best hits",
+        "top 100",
+        "топ 100",
+        "миксы",
+        "дискотека 202",
+        "клубная музыка 202",
+        "новинки 202",
+        "хиты 202",
+    ]
+    .iter()
+    .any(|w| meta.contains(w))
+}
+
+pub(crate) fn parse_ytm_search_songs(root: &Value) -> Vec<Track> {
+    fn walk(v: &Value, out: &mut Vec<Track>, seen: &mut HashSet<String>, depth: u8) {
+        if out.len() >= 15 || depth > 18 {
+            return;
+        }
+        match v {
+            Value::Object(map) => {
+                if let Some(it) = map.get("musicResponsiveListItemRenderer") {
+                    let vid = it["playlistItemData"]["videoId"]
+                        .as_str()
+                        .or_else(|| {
+                            it["overlay"]["musicItemThumbnailOverlayRenderer"]["content"]
+                                ["musicPlayButtonRenderer"]["playNavigationEndpoint"]
+                                ["watchEndpoint"]["videoId"]
+                                .as_str()
+                        })
+                        .unwrap_or("")
+                        .trim();
+                    if valid_id(vid) && !seen.contains(vid) {
+                        let cols = it["flexColumns"].as_array();
+                        let title = cols
+                            .and_then(|c| c.first())
+                            .map(|c| {
+                                label(&c["musicResponsiveListItemFlexColumnRenderer"]["text"])
+                                    .trim()
+                                    .to_string()
+                            })
+                            .unwrap_or_default();
+                        let sub_runs = cols
+                            .and_then(|c| c.get(1))
+                            .and_then(|c| {
+                                c["musicResponsiveListItemFlexColumnRenderer"]["text"]["runs"]
+                                    .as_array()
+                            });
+                        let mut author = String::new();
+                        let mut duration_s = 0u32;
+                        if let Some(runs) = sub_runs {
+                            let texts: Vec<&str> = runs
+                                .iter()
+                                .filter_map(|r| r.get("text").and_then(Value::as_str))
+                                .map(str::trim)
+                                .filter(|s| {
+                                    !s.is_empty()
+                                        && *s != "•"
+                                        && *s != "Песня"
+                                        && *s != "Song"
+                                        && *s != "Видео"
+                                        && *s != "Video"
+                                })
+                                .collect();
+                            if let Some(first) = texts.first() {
+                                author = (*first).to_string();
+                            }
+                            if let Some(last) = texts.last() {
+                                duration_s = parse_duration_secs(last);
+                            }
+                        }
+                        if !title.is_empty() && !is_spam_music_track(&title, &author, duration_s) {
+                            seen.insert(vid.to_string());
+                            out.push(Track {
+                                id: vid.to_string(),
+                                title,
+                                author,
+                            });
+                        }
+                    }
+                    return;
+                }
+                for val in map.values() {
+                    if out.len() >= 15 {
+                        break;
+                    }
+                    walk(val, out, seen, depth + 1);
+                }
+            }
+            Value::Array(arr) => {
+                for val in arr {
+                    if out.len() >= 15 {
+                        break;
+                    }
+                    walk(val, out, seen, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out, &mut HashSet::new(), 0);
+    out
+}
+
+pub(crate) fn parse_ytm_radio_next(root: &Value, seed_id: &str) -> Vec<Track> {
+    fn walk(v: &Value, out: &mut Vec<Track>, seen: &mut HashSet<String>, depth: u8) {
+        if out.len() >= 24 || depth > 18 {
+            return;
+        }
+        match v {
+            Value::Object(map) => {
+                if let Some(it) = map.get("playlistPanelVideoRenderer") {
+                    let vid = it["videoId"].as_str().unwrap_or("").trim();
+                    if valid_id(vid) && !seen.contains(vid) {
+                        let title = label(&it["title"]).trim().to_string();
+                        let author = it["longBylineText"]["runs"]
+                            .as_array()
+                            .and_then(|r| r.first())
+                            .and_then(|r| r["text"].as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| label(&it["shortBylineText"]).trim().to_string());
+                        let duration_s = parse_duration_secs(&label(&it["lengthText"]));
+                        if !title.is_empty() && !is_spam_music_track(&title, &author, duration_s) {
+                            seen.insert(vid.to_string());
+                            out.push(Track {
+                                id: vid.to_string(),
+                                title,
+                                author,
+                            });
+                        }
+                    }
+                    return;
+                }
+                for val in map.values() {
+                    if out.len() >= 24 {
+                        break;
+                    }
+                    walk(val, out, seen, depth + 1);
+                }
+            }
+            Value::Array(arr) => {
+                for val in arr {
+                    if out.len() >= 24 {
+                        break;
+                    }
+                    walk(val, out, seen, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    if !seed_id.is_empty() {
+        seen.insert(seed_id.to_string());
+    }
+    walk(root, &mut out, &mut seen, 0);
+    out
 }
 fn label(v: &Value) -> String {
     if let Some(s) = v.as_str().or_else(|| v["simpleText"].as_str()) {
@@ -1921,62 +2178,6 @@ async fn link(item: &Value, prepared: Option<&Arc<Prepared>>) -> Result<Url, Str
     Ok(url)
 }
 
-fn ad_wait(data: &Value) -> Duration {
-    fn scan(value: &Value, total: &mut u64, depth: u8) {
-        if depth > 24 || *total >= 60_000 {
-            return;
-        }
-        match value {
-            Value::Object(fields) => {
-                for (key, child) in fields {
-                    if key == "instreamVideoAdRenderer" {
-                        let seconds = child["playerVars"].as_str().and_then(|vars| {
-                            vars.split('&').find_map(|item| {
-                                item.strip_prefix("length_seconds=")?.parse::<f64>().ok()
-                            })
-                        });
-                        let delay = child["skipOffsetMilliseconds"]
-                            .as_u64()
-                            .or_else(|| seconds.map(|v| (v * 1000.0) as u64))
-                            .unwrap_or(0);
-                        *total = total.saturating_add(delay);
-                    } else {
-                        scan(child, total, depth + 1);
-                    }
-                }
-            }
-            Value::Array(items) => {
-                for item in items {
-                    scan(item, total, depth + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut total = 0;
-    for (key, config, property, expected) in [
-        (
-            "adPlacements",
-            "adPlacementConfig",
-            "kind",
-            "AD_PLACEMENT_KIND_START",
-        ),
-        (
-            "adSlots",
-            "adSlotMetadata",
-            "triggerEvent",
-            "SLOT_TRIGGER_EVENT_BEFORE_CONTENT",
-        ),
-    ] {
-        for entry in data[key].as_array().into_iter().flatten() {
-            if find(entry, config, 0).is_some_and(|metadata| metadata[property] == expected) {
-                scan(entry, &mut total, 0);
-            }
-        }
-    }
-    Duration::from_millis(total.min(60_000))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2383,5 +2584,46 @@ mod tests {
         assert_eq!(track.title, "ЗОМБИ (feat. DK, Серёга Пират)");
         assert_eq!(track.author, "Джарахов");
         assert!((stream.duration - 317.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parses_ytm_search_and_radio_and_filters_spam() {
+        let search_resp = json!({
+            "contents": [{
+                "musicResponsiveListItemRenderer": {
+                    "playlistItemData": {"videoId": "BswuwCn1hBo"},
+                    "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "La femme d'argent"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Песня"}, {"text": "•"}, {"text": "Air"}, {"text": "•"}, {"text": "7:07"}]}}}
+                    ]
+                }
+            }, {
+                "musicResponsiveListItemRenderer": {
+                    "playlistItemData": {"videoId": "3XTV6pkQne0"},
+                    "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "AIR - Moon Safari (Full Album)"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Air"}, {"text": "•"}, {"text": "43:41"}]}}}
+                    ]
+                }
+            }]
+        });
+        let songs = parse_ytm_search_songs(&search_resp);
+        assert_eq!(songs.len(), 1);
+        assert_eq!(songs[0].id, "BswuwCn1hBo");
+        assert_eq!(songs[0].title, "La femme d'argent");
+        assert_eq!(songs[0].author, "Air");
+
+        let radio_resp = json!({
+            "contents": [
+                {"playlistPanelVideoRenderer": {"videoId": "BswuwCn1hBo", "title": {"runs": [{"text": "La femme d'argent"}]}, "longBylineText": {"runs": [{"text": "Air"}]}, "lengthText": {"runs": [{"text": "7:07"}]}}},
+                {"playlistPanelVideoRenderer": {"videoId": "soK4YABw_Xw", "title": {"runs": [{"text": "Mer du Japon"}]}, "longBylineText": {"runs": [{"text": "Air"}]}, "lengthText": {"runs": [{"text": "3:05"}]}}},
+                {"playlistPanelVideoRenderer": {"videoId": "AGbSfou8ttU", "title": {"runs": [{"text": "Подборка хиты 2026 в машину 2 часа"}]}, "longBylineText": {"runs": [{"text": "DJ"}]}, "lengthText": {"runs": [{"text": "1:34:46"}]}}}
+            ]
+        });
+        let radio = parse_ytm_radio_next(&radio_resp, "BswuwCn1hBo");
+        assert_eq!(radio.len(), 1);
+        assert_eq!(radio[0].id, "soK4YABw_Xw");
+        assert_eq!(radio[0].title, "Mer du Japon");
+        assert_eq!(radio[0].author, "Air");
     }
 }

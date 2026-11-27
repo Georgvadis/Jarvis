@@ -93,8 +93,47 @@ impl Engine {
                 if let Some(answer) = self.music.control(&self.host, command).await {
                     return Ok(answer);
                 }
-                if let Some(answer) = self.music.play_intent(&self.host, command).await {
-                    return Ok(answer);
+                if let Some(direct) = crate::music::parse_direct_music_request(command) {
+                    let has_yt = self.host.provider("youtube").is_ok();
+                    let use_ym = s.use_home("yandexmusic");
+                    let res = match direct {
+                        crate::music::PlayDirect::Liked { shuffle } if has_yt => {
+                            self.tools.stop_audio_for_standalone_music();
+                            Some(self.music.play_liked(&self.host, shuffle, false).await)
+                        }
+                        crate::music::PlayDirect::Playlist { query, shuffle } if has_yt => {
+                            self.tools.stop_audio_for_standalone_music();
+                            Some(self.music.play_playlist(&self.host, &query, shuffle, false).await)
+                        }
+                        crate::music::PlayDirect::Yandex { query } if use_ym => {
+                            self.tools.stop_audio_for_standalone_music();
+                            let _ = self.music.call(&self.host, "stop", serde_json::Value::Null).await;
+                            let cmd = crate::tools::format_yandex_music_cmd(&query);
+                            Some(match tokio::task::spawn_blocking(move || alice::text(&cmd, true)).await {
+                                Ok(Ok(())) => format!("Включил в Яндекс Музыке: {query}."),
+                                Ok(Err(e)) => format!("Не получилось: {e}"),
+                                Err(e) => format!("Не получилось: {e}"),
+                            })
+                        }
+                        crate::music::PlayDirect::Queue { query } if has_yt => {
+                            Some(self.music.play(&self.host, &query, true).await)
+                        }
+                        crate::music::PlayDirect::Track { query } if has_yt => {
+                            self.tools.stop_audio_for_standalone_music();
+                            let mut r = self.music.play(&self.host, &query, false).await;
+                            if r.starts_with("Не получилось:") && !r.contains("операция отменена") && use_ym {
+                                let cmd = crate::tools::format_yandex_music_cmd(&query);
+                                if let Ok(Ok(())) = tokio::task::spawn_blocking(move || alice::text(&cmd, true)).await {
+                                    r = format!("В YouTube Music не нашлось, поэтому включил в Яндекс Музыке: {query}.");
+                                }
+                            }
+                            Some(r)
+                        }
+                        _ => None,
+                    };
+                    if let Some(answer) = res {
+                        return Ok(answer);
+                    }
                 }
                 if let Some(answer) = self.tools.ha_vacuum(command).await {
                     return Ok(answer);

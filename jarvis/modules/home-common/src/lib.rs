@@ -120,8 +120,10 @@ pub fn http_client(network: &Value) -> Result<reqwest::Client, String> {
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .cookie_store(true)
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(30));
+        .connect_timeout(Duration::from_secs(6))
+        .timeout(Duration::from_secs(20))
+        .tcp_keepalive(Some(Duration::from_secs(20)))
+        .pool_idle_timeout(Some(Duration::from_secs(60)));
     if let Some(socks) = network["socks"].as_str() {
         let addr: SocketAddr = socks.parse().map_err(|_| "Неверный SOCKS VPN")?;
         let user = network["user"].as_str().unwrap_or("");

@@ -72,18 +72,32 @@ struct State {
     stream: Option<Stream>,
     queue: VecDeque<Track>,
     related: VecDeque<Track>,
+    prev_stack: VecDeque<Track>,
     history: BTreeMap<String, Saved>,
     liked_ids: HashSet<String>,
     liked_loaded: bool,
     saved: Option<Instant>,
     proposal: Option<(Instant, VecDeque<Track>)>,
     personal: bool,
+    music_mode: bool,
     repeat: bool,
     error: String,
     task: Option<JoinHandle<()>>,
 }
 
 impl State {
+    fn push_prev(&mut self, track: Track) {
+        if !valid_id(&track.id) {
+            return;
+        }
+        if self.prev_stack.back().is_some_and(|t| t.id == track.id) {
+            return;
+        }
+        self.prev_stack.push_back(track);
+        while self.prev_stack.len() > 20 {
+            self.prev_stack.pop_front();
+        }
+    }
     fn playing(&self) -> bool {
         matches!(self.phase, Phase::Playing | Phase::Buffering)
     }
@@ -97,12 +111,20 @@ impl State {
     }
     fn current(&self) -> Value {
         let active = self.phase != Phase::Idle;
+        let label_track = |verb: &str| {
+            let author = self.track.author.trim();
+            if author.is_empty() {
+                format!("{verb} «{}»", self.track.title)
+            } else {
+                format!("{verb} «{}» — {author}", self.track.title)
+            }
+        };
         let status = match self.phase {
             Phase::Idle if !self.error.is_empty() => self.error.clone(),
             Phase::Idle => "Сейчас ничего не играет".into(),
             Phase::Loading => "Загружаю YouTube".into(),
-            Phase::Paused => format!("На паузе «{}»", self.track.title),
-            Phase::Playing | Phase::Buffering => format!("Играет «{}»", self.track.title),
+            Phase::Paused => label_track("На паузе"),
+            Phase::Playing | Phase::Buffering => label_track("Играет"),
         };
         json!({
             "playing":self.playing(), "active":active, "paused":self.phase==Phase::Paused,
@@ -208,11 +230,14 @@ impl Youtube {
     pub fn watch(self: &Arc<Self>) {
         let warm_weak = Arc::downgrade(self);
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             if let Some(service) = warm_weak.upgrade()
                 && !service.closed.load(Ordering::Acquire)
             {
                 service.remote.warm_background().await;
+                if service.account.is_signed_in().await {
+                    let _ = service.account.headers(false).await;
+                }
             }
         });
         let weak = Arc::downgrade(self);
@@ -243,8 +268,8 @@ impl Youtube {
                 } else {
                     tokio::select! {
                         _ = service.wake.notified() => {}
-                        _ = tokio::time::sleep(Duration::from_secs(1800)) => {
-                            service.remote.evict_idle(Duration::from_secs(1800)).await;
+                        _ = tokio::time::sleep(Duration::from_secs(6 * 3600)) => {
+                            service.remote.evict_idle(Duration::from_secs(6 * 3600)).await;
                         }
                     }
                 }
@@ -489,17 +514,39 @@ impl Youtube {
     }
 
     async fn resolve(&self, track: Track, prefer_tv: bool) -> Result<(Track, Stream), String> {
-        let anonymous = self.remote.resolve(&track.id, HeaderMap::new(), prefer_tv).await;
-        let (mut info, stream) = match anonymous {
-            Ok(value) => value,
-            Err(e) => {
-                let auth = self.account.headers(false).await?;
-                if auth.is_empty() {
-                    return Err(e);
+        // When signed in, resolve directly with account OAuth on TVHTML5 to avoid wasting 1-2s
+        // on visitorData fetch + anonymous LOGIN_REQUIRED bot-check rejections on VPN/VPS IPs.
+        let resolved = if self.account.is_signed_in().await {
+            match self.account.headers(false).await {
+                Ok(auth) if !auth.is_empty() => {
+                    match self.remote.resolve(&track.id, auth, true).await {
+                        Ok(value) => Ok(value),
+                        Err(auth_err) => {
+                            log::debug!("YouTube: auth resolve не удался ({auth_err}), пробую анонимно");
+                            self.remote
+                                .resolve(&track.id, HeaderMap::new(), prefer_tv)
+                                .await
+                                .or(Err(auth_err))
+                        }
+                    }
                 }
-                self.remote.resolve(&track.id, auth, true).await?
+                _ => self.remote.resolve(&track.id, HeaderMap::new(), prefer_tv).await,
+            }
+        } else {
+            let anonymous = self.remote.resolve(&track.id, HeaderMap::new(), prefer_tv).await;
+            match anonymous {
+                Ok(value) => Ok(value),
+                Err(e) => {
+                    let auth = self.account.headers(false).await?;
+                    if auth.is_empty() {
+                        Err(e)
+                    } else {
+                        self.remote.resolve(&track.id, auth, true).await
+                    }
+                }
             }
         };
+        let (mut info, stream) = resolved?;
         if needs_title(&info) && !needs_title(&track) {
             info.title = track.title;
         }
@@ -580,10 +627,17 @@ impl Youtube {
         let mut pending: VecDeque<_> = tracks.into();
         let mut last = String::new();
         let mut retries = 0;
+        let mut preplay_attempts = 0usize;
         let mut preplay_skips = 0usize;
         let mut force_tv = false;
         let mut finished_selection = None;
         while let Some(track) = pending.pop_front() {
+            if !keep_playing && notify.is_some() {
+                if preplay_attempts >= 4 {
+                    break;
+                }
+                preplay_attempts += 1;
+            }
             let reused_stream = stream.is_some();
             let resolved = if let Some(ready) = stream.take() {
                 Ok((track.clone(), ready))
@@ -596,7 +650,7 @@ impl Youtube {
                     last = e;
                     force_tv = false;
                     if pending.is_empty()
-                        && preplay_skips < 5
+                        && preplay_skips < 3
                         && let Some(next) = self.pop_next_queued(generation)
                     {
                         preplay_skips += 1;
@@ -616,7 +670,7 @@ impl Youtube {
                 }
             };
             let radio = self.radio().await;
-            let needs_related = {
+            let (needs_related, music_mode) = {
                 let mut state = self.state.lock().unwrap();
                 if state.generation != generation {
                     return;
@@ -631,19 +685,25 @@ impl Youtube {
                     Phase::Loading
                 };
                 self.wake.notify_one();
-                state.personal |= interesting("", &track);
+                if !state.music_mode {
+                    state.personal |= interesting("", &track);
+                }
+                let mm = state.music_mode;
                 if !radio || state.personal {
                     state.related.clear();
-                } else if !pending.is_empty() {
+                } else if !pending.is_empty() && !mm {
                     state.related = pending.clone();
                 } else if !same_track {
                     state.related.clear();
                 }
-                radio
-                    && !state.personal
-                    && pending.is_empty()
-                    && state.queue.len() < 20
-                    && state.related.is_empty()
+                (
+                    radio
+                        && !state.personal
+                        && (pending.is_empty() || mm)
+                        && state.queue.len() < 20
+                        && state.related.is_empty(),
+                    mm,
+                )
             };
             log::info!(
                 "YouTube: аудио {} Opus itag={} {} кбит/с 48 кГц стерео",
@@ -693,7 +753,7 @@ impl Youtube {
                             let service = self.clone();
                             let seed = track.id.clone();
                             tokio::spawn(async move {
-                                let Ok(items) = service.related(&seed).await else {
+                                let Ok(items) = service.related_for(&seed, music_mode).await else {
                                     return;
                                 };
                                 let mut state = service.state.lock().unwrap();
@@ -778,26 +838,26 @@ impl Youtube {
                 continue;
             }
             let radio = self.radio().await;
-            let (next, related_end, candidates) = {
+            let (next, related_end, candidates, music_mode) = {
                 let mut state = self.state.lock().unwrap();
                 if state.generation != generation {
                     return;
                 }
+                state.push_prev(track.clone());
+                let mm = state.music_mode;
                 if let Some(next) = state.queue.pop_front() {
-                    (Some(next), false, VecDeque::new())
+                    (Some(next), false, VecDeque::new(), mm)
                 } else if state.personal {
-                    (None, true, VecDeque::new())
+                    (None, true, VecDeque::new(), mm)
                 } else if radio {
-                    (
-                        pending.pop_front(),
-                        false,
-                        std::mem::take(&mut state.related),
-                    )
+                    let from_pending = if mm { None } else { pending.pop_front() };
+                    (from_pending, false, std::mem::take(&mut state.related), mm)
                 } else {
-                    (None, false, VecDeque::new())
+                    (None, false, VecDeque::new(), mm)
                 }
             };
             if let Some(next) = next {
+                pending.clear();
                 pending.push_front(next);
                 continue;
             }
@@ -808,7 +868,7 @@ impl Youtube {
                     pending = candidates;
                     continue;
                 }
-                match self.related(&track.id).await {
+                match self.related_for(&track.id, music_mode).await {
                     Ok(related) if !related.is_empty() => {
                         pending = related.into();
                         continue;
@@ -842,6 +902,31 @@ impl Youtube {
         }
     }
 
+    async fn related_for(&self, id: &str, music_mode: bool) -> Result<Vec<Track>, String> {
+        if music_mode {
+            match self.remote.related_music(id).await {
+                Ok(tracks) if !tracks.is_empty() => {
+                    let state = self.state.lock().unwrap();
+                    let fresh: Vec<Track> = tracks
+                        .iter()
+                        .filter(|t| !state.history.contains_key(&t.id))
+                        .take(16)
+                        .cloned()
+                        .collect();
+                    if !fresh.is_empty() {
+                        return Ok(fresh);
+                    }
+                    return Ok(tracks.into_iter().take(16).collect());
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::debug!("YouTube Music radio недоступно ({error}), пробую обычный related");
+                }
+            }
+        }
+        self.related(id).await
+    }
+
     async fn related(&self, id: &str) -> Result<Vec<Track>, String> {
         let auth = self.account.web_headers();
         let tracks = match self.remote.related(id, auth.clone()).await {
@@ -850,11 +935,17 @@ impl Youtube {
             Err(error) => return Err(error),
         };
         let state = self.state.lock().unwrap();
-        Ok(tracks
-            .into_iter()
+        let fresh: Vec<Track> = tracks
+            .iter()
             .filter(|t| !state.history.contains_key(&t.id))
             .take(12)
-            .collect())
+            .cloned()
+            .collect();
+        if !fresh.is_empty() {
+            Ok(fresh)
+        } else {
+            Ok(tracks.into_iter().take(12).collect())
+        }
     }
 
     fn pop_next_queued(&self, generation: u64) -> Option<Track> {
@@ -869,6 +960,10 @@ impl Youtube {
     async fn launch_query(self: &Arc<Self>, op: &str, args: &Value) -> Result<Value, String> {
         let lock = self.request.lock().await;
         let query = text(&args["query"]);
+        let mut extra_queue: Vec<Track> = Vec::new();
+        let mut push_prev_before_switch: Option<Track> = None;
+        let mut push_front_queue: Option<Track> = None;
+        let mut next_music_mode: Option<bool> = None;
         let (tracks, start) = match op {
             "play" => {
                 if let Some(pid) = playlist_id_from_url(&query) {
@@ -877,8 +972,72 @@ impl Youtube {
                     return Ok(res["track"].clone());
                 }
                 let tracks = self.search(&query, false).await?;
-                self.state.lock().unwrap().personal = false;
+                {
+                    let mut st = self.state.lock().unwrap();
+                    if st.phase != Phase::Idle && valid_id(&st.track.id) {
+                        push_prev_before_switch = Some(st.track.clone());
+                    }
+                    st.personal = false;
+                }
+                next_music_mode = Some(args["music"] == true);
                 (tracks, 0.0)
+            }
+            "play_music" => {
+                if let Some(pid) = playlist_id_from_url(&query) {
+                    drop(lock);
+                    let res = self.play_playlist_op(&json!({"id": pid})).await?;
+                    return Ok(res["track"].clone());
+                }
+                let generic = args["generic"] == true;
+                let mut songs = self
+                    .remote
+                    .search_music_songs(&query)
+                    .await
+                    .unwrap_or_default();
+                if songs.is_empty() {
+                    songs = self.search(&query, false).await?;
+                }
+                if songs.is_empty() {
+                    return Err("YouTube Music ничего не нашёл".into());
+                }
+                let pick_idx = if generic && songs.len() > 1 {
+                    let st = self.state.lock().unwrap();
+                    let unplayed: Vec<usize> = songs
+                        .iter()
+                        .enumerate()
+                        .take(8)
+                        .filter(|(_, t)| !st.history.contains_key(&t.id))
+                        .map(|(i, _)| i)
+                        .collect();
+                    let pool = if unplayed.is_empty() {
+                        (0..songs.len().min(8)).collect::<Vec<_>>()
+                    } else {
+                        unplayed
+                    };
+                    let seed = random::<8>()
+                        .map(u64::from_le_bytes)
+                        .unwrap_or(0) as usize;
+                    pool[seed % pool.len()]
+                } else {
+                    0
+                };
+                if pick_idx > 0 && pick_idx < songs.len() {
+                    let chosen = songs.remove(pick_idx);
+                    songs.insert(0, chosen);
+                }
+                if generic && songs.len() > 1 {
+                    extra_queue.extend(songs.iter().skip(1).take(3).cloned());
+                }
+                {
+                    let mut st = self.state.lock().unwrap();
+                    if st.phase != Phase::Idle && valid_id(&st.track.id) {
+                        push_prev_before_switch = Some(st.track.clone());
+                    }
+                    st.personal = false;
+                    st.related.clear();
+                }
+                next_music_mode = Some(true);
+                (songs.into_iter().take(4).collect(), 0.0)
             }
             "play_id" => {
                 let id = text(&args["id"]);
@@ -903,28 +1062,86 @@ impl Youtube {
                         track.author = known.author;
                     }
                 }
-                self.state.lock().unwrap().personal = false;
-                (vec![track], 0.0)
+                let mut candidates = vec![track];
+                if let Some(arr) = args["fallbacks"].as_array() {
+                    for item in arr.iter().take(3) {
+                        let fid = text(&item["id"]);
+                        if valid_id(&fid) && !candidates.iter().any(|t| t.id == fid) {
+                            candidates.push(Track {
+                                id: fid,
+                                title: text(&item["title"]).trim().to_string(),
+                                author: text(&item["author"]).trim().to_string(),
+                            });
+                        }
+                    }
+                }
+                if let Some(arr) = args["enqueue"].as_array() {
+                    for item in arr.iter().take(10) {
+                        let eid = text(&item["id"]);
+                        if valid_id(&eid) {
+                            extra_queue.push(Track {
+                                id: eid,
+                                title: text(&item["title"]).trim().to_string(),
+                                author: text(&item["author"]).trim().to_string(),
+                            });
+                        }
+                    }
+                }
+                {
+                    let mut st = self.state.lock().unwrap();
+                    if st.phase != Phase::Idle && valid_id(&st.track.id) {
+                        push_prev_before_switch = Some(st.track.clone());
+                    }
+                    st.personal = false;
+                }
+                next_music_mode = Some(args["music"].as_bool().unwrap_or(true));
+                (candidates, 0.0)
             }
             "next" => {
                 let radio = self.radio().await;
-                let (queued, seed) = {
+                let (mut next_candidates, seed, mm, prev_track) = {
                     let mut state = self.state.lock().unwrap();
-                    let next = state.queue.pop_front().or_else(|| {
-                        if radio {
-                            state.related.pop_front()
-                        } else {
-                            None
+                    let prev_track = (state.phase != Phase::Idle && valid_id(&state.track.id))
+                        .then(|| state.track.clone());
+                    let mut cands = Vec::new();
+                    if let Some(q) = state.queue.pop_front() {
+                        cands.push(q);
+                    } else if radio {
+                        while cands.len() < 4 {
+                            if let Some(r) = state.related.pop_front() {
+                                cands.push(r);
+                            } else {
+                                break;
+                            }
                         }
-                    });
-                    (next, state.track.id.clone())
+                    }
+                    (cands, state.track.id.clone(), state.music_mode, prev_track)
                 };
-                let tracks = if let Some(next) = queued {
-                    vec![next]
-                } else if valid_id(&seed) && radio {
-                    self.related(&seed).await?
+                push_prev_before_switch = prev_track;
+                if next_candidates.is_empty() {
+                    if valid_id(&seed) && radio {
+                        next_candidates = self.related_for(&seed, mm).await?;
+                    } else {
+                        return Err("В очереди ничего нет".into());
+                    }
+                }
+                (next_candidates, 0.0)
+            }
+            "prev" => {
+                let (prev, current) = {
+                    let mut state = self.state.lock().unwrap();
+                    let cur = (state.phase != Phase::Idle && valid_id(&state.track.id))
+                        .then(|| state.track.clone());
+                    let prev = state.prev_stack.pop_back();
+                    (prev, cur)
+                };
+                let tracks = if let Some(prev) = prev {
+                    push_front_queue = current;
+                    vec![prev]
+                } else if let Some(cur) = current {
+                    vec![cur]
                 } else {
-                    return Err("В очереди ничего нет".into());
+                    return Err("Предыдущего трека нет".into());
                 };
                 (tracks, 0.0)
             }
@@ -951,9 +1168,28 @@ impl Youtube {
             return Err("YouTube ничего не нашёл".into());
         }
         let (_, generation) = self.halt(false).await;
+        {
+            let mut st = self.state.lock().unwrap();
+            if st.generation == generation {
+                if let Some(mm) = next_music_mode {
+                    st.music_mode = mm;
+                }
+                if let Some(prev) = push_prev_before_switch {
+                    st.push_prev(prev);
+                }
+                if let Some(cur) = push_front_queue {
+                    st.queue.push_front(cur);
+                }
+                for t in extra_queue {
+                    if st.queue.len() < 100 && !st.queue.iter().any(|q| q.id == t.id) {
+                        st.queue.push_back(t);
+                    }
+                }
+            }
+        }
         let finished = self.launch(
             generation,
-            tracks.into_iter().take(12).collect(),
+            tracks.into_iter().take(4).collect(),
             start,
             None,
             false,
@@ -1167,7 +1403,9 @@ impl Youtube {
                 let radio = self.radio().await;
                 Ok(self.state.lock().unwrap().snapshot(radio))
             }
-            "play" | "play_id" | "next" | "resume_saved" => self.launch_query(op, args).await,
+            "play" | "play_music" | "play_id" | "next" | "prev" | "resume_saved" => {
+                self.launch_query(op, args).await
+            }
             "library" => self.load_library(args["refresh"] == true).await,
             "playlist_items" => {
                 let id = text(&args["id"]).trim().to_string();
@@ -1180,12 +1418,36 @@ impl Youtube {
             "play_playlist" => self.play_playlist_op(args).await,
             "enqueue" => {
                 let _lock = self.request.lock().await;
-                let mut track = self
-                    .search(&text(&args["query"]), false)
-                    .await?
-                    .into_iter()
-                    .next()
-                    .ok_or("YouTube ничего не нашёл")?;
+                let explicit_id = text(&args["id"]).trim().to_string();
+                let mut track = if let Some(id) = video_id(&explicit_id)
+                    .or_else(|| valid_id(&explicit_id).then_some(explicit_id))
+                {
+                    Track {
+                        id,
+                        title: text(&args["title"]).trim().to_string(),
+                        author: text(&args["author"]).trim().to_string(),
+                    }
+                } else {
+                    let q = text(&args["query"]);
+                    let music_hit = if args["music"] == true {
+                        self.remote
+                            .search_music_songs(&q)
+                            .await
+                            .ok()
+                            .and_then(|v| v.into_iter().next())
+                    } else {
+                        None
+                    };
+                    match music_hit {
+                        Some(t) => t,
+                        None => self
+                            .search(&q, false)
+                            .await?
+                            .into_iter()
+                            .next()
+                            .ok_or("YouTube ничего не нашёл")?,
+                    }
+                };
                 let hint_title = text(&args["title"]).trim().to_string();
                 let hint_author = text(&args["author"]).trim().to_string();
                 if needs_title(&track) && !hint_title.is_empty() && hint_title != track.id {
@@ -1598,6 +1860,7 @@ impl Youtube {
             let mut state = self.state.lock().unwrap();
             if state.generation == generation {
                 state.personal = false;
+                state.music_mode = true;
                 state.related.clear();
                 state.queue = tracks.into();
             }

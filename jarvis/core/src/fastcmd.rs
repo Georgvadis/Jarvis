@@ -314,10 +314,88 @@ pub fn home_command_local(text: &str) -> Option<String> {
     }
     let n = norm_text(text);
     let bare = strip_lead(&n);
-    if bare.is_empty() || bare.split_whitespace().count() > 9 {
+    if bare.is_empty() || bare.split_whitespace().count() > 9 || alice_music_request(&bare) {
         return None;
     }
     (home_like(&n) || (HOME_VERBS.is_match(&format!("{n} ")) && HOME_WORDS.is_match(&n))).then_some(bare)
+}
+
+fn wake_token_matches(tok: &str, phrase: &str, profile_name: &str) -> bool {
+    if tok.is_empty() {
+        return false;
+    }
+    for raw in [phrase, profile_name] {
+        let norm = norm_text(raw);
+        let first = norm.split_whitespace().next().unwrap_or("");
+        if first.chars().count() < 2 {
+            continue;
+        }
+        if matches_profile_name(tok, first) {
+            return true;
+        }
+        // Хвост слова активации из preroll микрофона («Аянами» → «янами» / «нами», «Джарвис» → «жарвис» / «арвис»).
+        let chars: Vec<char> = first.chars().collect();
+        if chars.len() >= 5 {
+            for start in 1..=(chars.len() - 4) {
+                let suf: String = chars[start..].iter().collect();
+                if tok == suf {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Является ли одиночное слово (или с «эй/слушай») самим именем или его обрезанным хвостом («нами», «янами»).
+pub fn is_clipped_wake_word(word: &str, phrase: &str, profile_name: &str) -> bool {
+    let tok = norm_text(word);
+    wake_token_matches(&tok, phrase, profile_name)
+}
+
+/// Срезает в начале реплики активное слово активации, имя профиля или его обрезанный хвост из preroll
+/// (например «нами Следующий.» → «Следующий.», «янами включи трек» → «включи трек»).
+pub fn strip_active_wake_prefix(text: &str, phrase: &str, profile_name: &str) -> String {
+    let mut rest = text.trim();
+    for _ in 0..2 {
+        let token_end = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.'))
+            .unwrap_or(rest.len());
+        let norm_tok = norm_text(&rest[..token_end]);
+        if norm_tok.is_empty() {
+            let next = rest[token_end..].trim_start_matches(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+            });
+            if next.len() == rest.len() {
+                break;
+            }
+            rest = next;
+            continue;
+        }
+        if wake_token_matches(&norm_tok, phrase, profile_name) {
+            let tail = rest[token_end..]
+                .trim_start_matches(|c: char| {
+                    c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+                })
+                .trim();
+            if !tail.is_empty() {
+                return tail.to_string();
+            }
+            return text.trim().to_string();
+        }
+        if matches!(norm_tok.as_str(), "эй" | "хей" | "слушай" | "ну" | "так") {
+            let next = rest[token_end..].trim_start_matches(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+            });
+            if next.is_empty() {
+                break;
+            }
+            rest = next;
+            continue;
+        }
+        break;
+    }
+    text.trim().to_string()
 }
 
 // ---- имя в расшифровке ----
@@ -540,5 +618,20 @@ mod tests {
             Some(("p1".into(), "включи музыку".into()))
         );
         assert_eq!(addressed_profile("какая сегодня погода", &profiles), None);
+    }
+
+    #[test]
+    fn strips_clipped_wake_tail_and_blocks_music_as_home() {
+        assert_eq!(strip_active_wake_prefix("нами Следующий.", "Джарвис", "Аянами"), "Следующий.");
+        assert_eq!(strip_active_wake_prefix("янами, погода", "Джарвис", "Аянами"), "погода");
+        assert_eq!(strip_active_wake_prefix("Аянами, включи трек Daft Punk", "Джарвис", "Аянами"), "включи трек Daft Punk");
+        assert_eq!(strip_active_wake_prefix("Слушай, нами, пауза", "Джарвис", "Аянами"), "пауза");
+        assert_eq!(strip_active_wake_prefix("поговори с нами", "Джарвис", "Аянами"), "поговори с нами");
+        assert_eq!(strip_active_wake_prefix("нами.", "Джарвис", "Аянами"), "нами.");
+        assert!(is_clipped_wake_word("нами.", "Джарвис", "Аянами"));
+        assert!(is_clipped_wake_word("янами", "Джарвис", "Аянами"));
+        assert!(!is_clipped_wake_word("нами", "Джарвис", "Рюк"));
+        assert!(home_command_local("включи песню Белый свет").is_none());
+        assert!(home_command_local("включи музыку").is_none());
     }
 }

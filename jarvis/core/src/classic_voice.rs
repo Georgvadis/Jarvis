@@ -207,6 +207,7 @@ impl Classic {
         let text = full_text.as_str();
         let command = if context.phrase == crate::wake_profiles::DEFAULT_PHRASE { text.to_owned() }
             else { crate::fastcmd::command_for_phrase(text, &context.phrase) };
+        let command = crate::fastcmd::strip_active_wake_prefix(&command, &context.phrase, &context.profile.name);
         let command = command.as_str();
         if crate::fastcmd::is_stop(command){
             context.pending_user_text.lock().unwrap().clear();
@@ -402,9 +403,10 @@ impl Classic {
                 self.dialog.on_bot(&answer);
                 let music_vol_cmd = crate::tools::is_volume_command(command)
                     && context.tools.engine().is_some_and(|e| e.music.playing());
-                if music_vol_cmd {
-                    // При смене громкости во время музыки — короткий сигнал и сразу закрываем диалог,
-                    // чтобы музыка мгновенно вернулась на полную громкость и было слышно реальный уровень
+                let dj_next_cmd = answer.starts_with("Переключаю на следующий трек");
+                if music_vol_cmd || dj_next_cmd {
+                    // При смене громкости или трека во время музыки — короткий сигнал и сразу закрываем диалог,
+                    // чтобы музыка мгновенно вернулась на полную громкость
                     let _ = self.send_pcm_samples(&thinking_chime_for("minimal"), generation).await;
                     self.dialog.finish_turn("");
                     self.dialog.request_close();
@@ -418,7 +420,102 @@ impl Classic {
                 let answer=control(command.to_string()).await;
                 if let Some(answer)=answer{
                     context.pending_user_text.lock().unwrap().clear();
-                    self.dialog.on_bot(&answer);self.speak(context,&answer,generation,is_whisper).await?;self.dialog.finish_turn("");return Ok(());
+                    self.dialog.on_bot(&answer);
+                    let is_error = answer.starts_with("Не получилось:");
+                    let is_proposal = answer.contains('?');
+                    let is_silent_transport = !is_error
+                        && !is_proposal
+                        && (answer.starts_with("Включил «")
+                            || matches!(
+                                answer.as_str(),
+                                "Переключаю."
+                                    | "Переключаю трек."
+                                    | "Предыдущий трек."
+                                    | "Продолжаю."
+                                    | "Пауза."
+                                    | "Выключил."
+                                    | "Перемотал."
+                                    | "С начала."
+                            ));
+                    if is_silent_transport {
+                        let _ = self.send_pcm_samples(&thinking_chime_for("minimal"), generation).await;
+                        self.dialog.finish_turn("");
+                        self.dialog.request_close();
+                        return Ok(());
+                    }
+                    self.speak(context,&answer,generation,is_whisper).await?;
+                    self.dialog.finish_turn("");
+                    if !is_proposal && !is_error && context.tools.engine().is_some_and(|e| e.music.playing()) {
+                        self.dialog.request_close();
+                    }
+                    return Ok(());
+                }
+            }
+            if let Some(direct) = crate::music::parse_direct_music_request(command)
+                && let Some(eng) = context.tools.engine()
+            {
+                let has_yt = context.host.provider("youtube").is_ok();
+                let use_ym = context.settings.use_home("yandexmusic");
+                let handled: Option<(String, bool)> = match direct {
+                    crate::music::PlayDirect::Liked { shuffle } if has_yt => {
+                        context.tools.stop_audio_for_standalone_music();
+                        Some((eng.music.play_liked(&context.host, shuffle, false).await, false))
+                    }
+                    crate::music::PlayDirect::Playlist { query, shuffle } if has_yt => {
+                        context.tools.stop_audio_for_standalone_music();
+                        Some((eng.music.play_playlist(&context.host, &query, shuffle, false).await, false))
+                    }
+                    crate::music::PlayDirect::Yandex { query } if use_ym => {
+                        context.tools.stop_audio_for_standalone_music();
+                        let _ = eng.music.call(&context.host, "stop", serde_json::Value::Null).await;
+                        let cmd = crate::tools::format_yandex_music_cmd(&query);
+                        let res = match tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
+                            Ok(Ok(())) => format!("Включил в Яндекс Музыке: {query}."),
+                            Ok(Err(e)) => format!("Не получилось: {e}"),
+                            Err(e) => format!("Не получилось: {e}"),
+                        };
+                        Some((res, false))
+                    }
+                    crate::music::PlayDirect::Queue { query } if has_yt => {
+                        Some((eng.music.play(&context.host, &query, true).await, true))
+                    }
+                    crate::music::PlayDirect::Track { query } if has_yt => {
+                        context.tools.stop_audio_for_standalone_music();
+                        let mut res = eng.music.play(&context.host, &query, false).await;
+                        if res.starts_with("Не получилось:") && !res.contains("операция отменена") && use_ym {
+                            let cmd = crate::tools::format_yandex_music_cmd(&query);
+                            if let Ok(Ok(())) = tokio::task::spawn_blocking(move || crate::alice::text(&cmd, true)).await {
+                                res = format!("В YouTube Music не нашлось, поэтому включил в Яндекс Музыке: {query}.");
+                            }
+                        }
+                        Some((res, false))
+                    }
+                    _ => None,
+                };
+                if let Some((answer, is_queue)) = handled {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return Ok(());
+                    }
+                    context.pending_user_text.lock().unwrap().clear();
+                    self.dialog.on_bot(&answer);
+                    let is_error = answer.starts_with("Не получилось:");
+                    if is_error {
+                        self.speak(context, &answer, generation, is_whisper).await?;
+                        self.dialog.finish_turn("");
+                        return Ok(());
+                    }
+                    if is_queue {
+                        self.speak(context, &answer, generation, is_whisper).await?;
+                        self.dialog.finish_turn("");
+                        if eng.music.playing() {
+                            self.dialog.request_close();
+                        }
+                        return Ok(());
+                    }
+                    let _ = self.send_pcm_samples(&thinking_chime_for("minimal"), generation).await;
+                    self.dialog.finish_turn("");
+                    self.dialog.request_close();
+                    return Ok(());
                 }
             }
             if let Some(city_q) = fast_weather_query(command) {
@@ -1577,7 +1674,10 @@ fn is_bare_wake_phrase(text: &str, phrase: &str, profile_name: &str) -> bool {
     let joined = words.join(" ");
     let phrase_norm = crate::fastcmd::norm_text(phrase);
     let name_norm = crate::fastcmd::norm_text(profile_name);
-    if (!phrase_norm.is_empty() && joined == phrase_norm) || (!name_norm.is_empty() && joined == name_norm) {
+    if (!phrase_norm.is_empty() && joined == phrase_norm)
+        || (!name_norm.is_empty() && joined == name_norm)
+        || (words.len() == 1 && crate::fastcmd::is_clipped_wake_word(words[0], phrase, profile_name))
+    {
         return true;
     }
     matches!(
