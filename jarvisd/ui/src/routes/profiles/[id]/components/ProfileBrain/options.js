@@ -21,6 +21,11 @@ const sttModels = {
     ["gpt-4o-transcribe", "GPT-4o Transcribe"],
     ["whisper-1", "Whisper v1"],
   ],
+  "local-rvc-voice": [
+    ["gigaam-v3", "GigaAM v3 — лучший для русского"],
+    ["parakeet-v3", "Parakeet v3 — быстрый RU + EN"],
+    ["whisper", "Whisper large-v3-turbo — 99 языков"],
+  ],
 };
 
 const ttsModels = {
@@ -36,7 +41,7 @@ const realtimeModels = [
   ["eleven_realtime_v1_mini", "Realtime v1 Mini — быстрый разговор"],
   ["eleven_realtime_v1_max", "Realtime v1 Max — сложные задачи и инструменты"],
 ];
-const defaultStt = { elevenlabs: "scribe_v2", openai: "gpt-4o-mini-transcribe" };
+const defaultStt = { elevenlabs: "scribe_v2", openai: "gpt-4o-mini-transcribe", "local-rvc-voice": "gigaam-v3" };
 const defaultTts = { elevenlabs: "eleven_flash_v2_5", openai: "gpt-4o-mini-tts" };
 const textProviders = [
   ["openai", "OpenAI"], ["chatgpt", "ChatGPT по подписке"], ["gemini", "Google Gemini"], ["grok", "xAI Grok"],
@@ -44,6 +49,7 @@ const textProviders = [
 const defaultTextProvider = ["", "Автовыбор (OpenAI / Gemini / Grok / ChatGPT)"];
 
 export const modelKind = (provider) => provider === "elevenlabs" || provider === "openai" ? provider : "custom";
+export const sttModelKind = (provider) => (sttModels[provider] ? provider : "custom");
 
 export function availableEngines() {
   return engines.filter(({ id }) => id === "classic" ? classicEnabled() : voiceEnabled(id));
@@ -65,7 +71,7 @@ function providerOptions(builtins, plugins = [], current) {
 
 function modelOptions(models, defaults, provider, current) {
   const options = {};
-  const values = { custom: modelKind(provider) === "custom" ? current || "" : "" };
+  const values = { custom: !models[provider] ? current || "" : "" };
   for (const [id, list] of Object.entries(models)) {
     const saved = provider === id ? current : "";
     options[id] = optionsWithCurrent(list, saved);

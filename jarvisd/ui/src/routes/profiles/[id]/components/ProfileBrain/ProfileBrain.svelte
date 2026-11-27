@@ -3,7 +3,7 @@
   import { icon, tip } from "#helpers/core.js";
   import { S } from "#state/panelState.js";
   import { usesOpenAiModel } from "../profileDraft.js";
-  import { brainOptions, modelKind } from "./options.js";
+  import { brainOptions, modelKind, sttModelKind } from "./options.js";
 
   const effortLabels = { none: "не думать", low: "немного", medium: "средне", high: "долго" };
   const llmPlaceholders = { gemini: "gemini-3.8-flash", grok: "grok-4-1-fast-non-reasoning" };
@@ -15,7 +15,7 @@
   let effort = $state(availableEffort(defaults.backend, original.effort));
   let classic = $derived(profile.engine === "classic");
   let openAiModel = $derived(profile.engine === "openai" || profile.engine === "chatgpt" || (classic && usesOpenAiModel(profile.llm_engine)));
-  let sttKind = $derived(modelKind(profile.stt_engine));
+  let sttKind = $derived(sttModelKind(profile.stt_engine));
   let ttsKind = $derived(modelKind(profile.tts_engine));
   let efforts = $derived(effortsFor(draft.backend));
   let geminiPoolById = $derived(

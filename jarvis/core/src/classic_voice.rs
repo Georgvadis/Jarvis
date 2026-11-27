@@ -142,7 +142,7 @@ impl Classic {
                 }
             },
             "local-rvc-voice" => {
-                match stt_local_whisper(&context.host, &wav_bytes, &context.settings.language).await {
+                match stt_local_whisper(&context.host, &wav_bytes, &context.settings.language, &context.profile.stt_model).await {
                     Ok(txt) => json!({"text": txt}),
                     Err(direct_err) => {
                         log::warn!("Local Whisper direct STT failed ({direct_err}), falling back to plugin_stt");
@@ -1427,11 +1427,16 @@ async fn synth_fish_tts_direct(
     Ok(bytes[..even].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect())
 }
 
-async fn stt_local_whisper(host: &Host, wav_bytes: &[u8], lang: &str) -> Result<String, String> {
+async fn stt_local_whisper(host: &Host, wav_bytes: &[u8], lang: &str, model: &str) -> Result<String, String> {
     let lang_clean = if lang.trim().is_empty() || lang.trim() == "auto" { "ru" } else { lang.trim() };
     let boundary = format!("jarvis-stt-{}", crate::settings::rand_hex(8));
     let mp_body = crate::web::talk::build_audio_multipart(&boundary, "speech.wav", "audio/wav", lang_clean, wav_bytes);
-    let url = format!("{}/stt", crate::tools::local_voice_url(host));
+    let m = model.trim();
+    let url = if m.is_empty() {
+        format!("{}/stt", crate::tools::local_voice_url(host))
+    } else {
+        format!("{}/stt?model={}", crate::tools::local_voice_url(host), m)
+    };
     let resp = crate::net::direct()
         .post(&url)
         .header("Content-Type", format!("multipart/form-data; boundary={boundary}"))
