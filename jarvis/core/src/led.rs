@@ -591,6 +591,7 @@ impl Leds {
             .stack_size(128 * 1024)
             .spawn(move || {
                 let mut last_key: Option<(i8, i8, i64)> = None;
+                let mut ticks: u32 = 0;
                 loop {
                     let enabled = store.with(|s| s.own_clock);
                     {
@@ -616,8 +617,17 @@ impl Leds {
                         let lb = store.led_for().brightness;
                         (lb as f64 / 100.0 * 0.55).clamp(0.10, 0.65)
                     };
+                    ticks = ticks.wrapping_add(1);
                     let key = (h, m, (ratio * 100.0).round() as i64);
-                    if last_key != Some(key) {
+                    // Каждые ~2 сек проверяем, не сбросил ли maind сегменты (например двоеточие dh или первую цифру).
+                    let drifted = ticks % 8 == 0 && {
+                        let st = me.inner.st.lock().unwrap();
+                        st.mode == Mode::Off
+                            && !st.clock_override
+                            && st.own_clock_active
+                            && st.clock.iter().any(|c| c.last >= 0 && read_int(&c.path) != c.last)
+                    };
+                    if last_key != Some(key) || drifted {
                         const DIGIT: [u8; 10] = [
                             0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
                             0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
@@ -639,10 +649,8 @@ impl Leds {
                                     false
                                 };
                                 let v = if on { ((c.max as f64 * ratio).round() as i64).max(1) } else { 0 };
-                                if v != c.last {
-                                    write(&c.path, v);
-                                    c.last = v;
-                                }
+                                write(&c.path, v);
+                                c.last = v;
                             }
                             last_key = Some(key);
                         }
