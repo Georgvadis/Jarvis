@@ -1,4 +1,4 @@
-const CACHE = "jarvis-shell-v17";
+const CACHE = "jarvis-shell-v18";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());

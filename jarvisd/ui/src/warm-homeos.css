@@ -2768,3 +2768,232 @@ dialog::backdrop {
     -webkit-backdrop-filter: blur(22px) saturate(155%) !important;
   }
 }
+
+/* ==========================================================================
+   Плавность, живые микровзаимодействия и пружинная физика (Motion System)
+   ========================================================================== */
+html {
+  scroll-behavior: smooth;
+}
+
+body,
+.topbar,
+.dock,
+.card,
+.sec,
+.hub-tabs {
+  transition:
+    background-color .32s var(--ease),
+    border-color .24s var(--ease),
+    box-shadow .28s var(--ease),
+    color .2s var(--ease);
+}
+
+/* Мягкий и быстрый вход страниц и вкладок */
+.view.enter > *,
+.view.enter .stagger > * {
+  animation: page-rise .36s var(--ease) both !important;
+}
+.view.enter > :nth-child(2), .view.enter .stagger > :nth-child(2) { animation-delay: .03s !important; }
+.view.enter > :nth-child(3), .view.enter .stagger > :nth-child(3) { animation-delay: .06s !important; }
+.view.enter > :nth-child(4), .view.enter .stagger > :nth-child(4) { animation-delay: .09s !important; }
+.view.enter > :nth-child(5), .view.enter .stagger > :nth-child(5) { animation-delay: .12s !important; }
+.view.enter > :nth-child(n+6), .view.enter .stagger > :nth-child(n+6) { animation-delay: .15s !important; }
+
+@keyframes page-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.996);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Плавное переключение содержимого вкладок без резких скачков */
+.media-pane > *,
+.lounge-body > *,
+.profile-persona-center:not(.hidden),
+.profile-tech-wrap:not(.hidden),
+.profile-bento-voice:not(.hidden),
+.studio-split,
+.bento-2 {
+  animation: tab-fade .26s var(--ease) both;
+}
+
+@keyframes tab-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Пружинные поповеры, модалки, палитра команд и плавающая панель сохранения */
+.top-pop {
+  transform-origin: top right;
+  animation: pop-spring .22s var(--spring) both;
+}
+@keyframes pop-spring {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.savebar.savebar-pill {
+  animation: bar-rise .28s var(--spring) both;
+}
+@keyframes bar-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cmdk,
+.note-modal,
+dialog[open] {
+  animation: modal-spring .22s var(--spring) both;
+}
+@keyframes modal-spring {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.cmdk-bg,
+.note-modal-bg {
+  animation: backdrop-fade .18s var(--ease) both;
+}
+@keyframes backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.inline-confirm,
+.mode-drawer,
+details[open] > :not(summary) {
+  animation: reveal-soft .2s var(--ease) both;
+}
+@keyframes reveal-soft {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dock {
+  animation: dock-enter .42s var(--ease) both;
+}
+@keyframes dock-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Тактильный отклик нажатия на всех интерактивных кнопках и вкладках */
+.btn:active:not(:disabled),
+.ib:active:not(:disabled),
+.hub-tab:active,
+.top-nav a:active,
+.seg button:active:not(:disabled),
+.top-asst-btn:active,
+.top-cmd-btn:active,
+.chat-chip:active:not(:disabled),
+.asst-act-pill:active,
+.lounge-tab:active {
+  transform: scale(.965);
+}
+
+.top-nav a,
+.hub-tab,
+.seg button,
+.top-asst-btn,
+.top-cmd-btn,
+.chat-chip,
+.lounge-tab,
+.asst-act-pill {
+  transition:
+    background-color .18s var(--ease),
+    border-color .18s var(--ease),
+    color .16s var(--ease),
+    box-shadow .2s var(--ease),
+    transform .15s var(--spring);
+}
+
+/* Живые статусные индикаторы */
+.brand-mark-dot[data-s="listening"],
+.brand-mark-dot[data-s="thinking"],
+.brand-mark-dot[data-s="speaking"] {
+  animation: live-acc 1.8s ease-out infinite;
+}
+.top-dot,
+.sdot:not(.ok) {
+  animation: dot-pulse 2.4s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .55; transform: scale(.86); }
+}
+
+/* Мягкий отклик карточек контента при наведении */
+.note-card,
+.book-card,
+.health-tile,
+.sched-row,
+.pod-row,
+.timer-big-card {
+  transition:
+    transform .2s var(--spring),
+    border-color .2s var(--ease),
+    background-color .2s var(--ease),
+    box-shadow .22s var(--ease) !important;
+}
+.note-card:hover,
+.book-card:hover,
+.health-tile:hover,
+.timer-big-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--acc) 36%, var(--glass-border)) !important;
+}
+
+/* Плавный тост */
+.toast {
+  transition: opacity .22s var(--ease), transform .26s var(--spring) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
