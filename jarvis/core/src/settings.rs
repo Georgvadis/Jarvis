@@ -382,6 +382,8 @@ pub struct Settings {
     pub home_use: BTreeMap<String, bool>,
 
     pub led: LedSettings,
+    #[serde(default)]
+    pub own_clock: bool,
     pub dev_mode: bool,
     pub onboarded: bool,
     pub plugins_warned: bool,
@@ -514,6 +516,7 @@ impl Default for Settings {
             home_via: "alice".into(),
             home_use: BTreeMap::new(),
             led: default_led(),
+            own_clock: false,
             dev_mode: false,
             onboarded: false,
             plugins_warned: false,

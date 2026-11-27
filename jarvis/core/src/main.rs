@@ -294,6 +294,7 @@ async fn run(f: Flags, store: settings::Store) {
         let st = store.clone();
         led::Leds::new(Box::new(move || st.led_for()))
     };
+    leds.start_own_clock(store.clone());
     tokio::spawn(chatgpt::warm_loop(host.clone(), store.clone()));
     let journal = Arc::new(journal::Journal::default());
     let memory = {

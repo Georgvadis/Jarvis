@@ -104,6 +104,8 @@ struct St {
     frames: u64,
     lvl_at: Instant,
     phase: Mode,
+    clock_override: bool,
+    own_clock_active: bool,
 }
 
 struct Inner {
@@ -426,6 +428,8 @@ impl Leds {
                 frames: 0,
                 lvl_at: now,
                 phase: Mode::Off,
+                clock_override: false,
+                own_clock_active: false,
             }),
             wake: Condvar::new(),
             source,
@@ -575,13 +579,88 @@ impl Leds {
         });
     }
 
+    /// Запускает фоновый отрисовщик собственных часов на 7-сегментном табло, когда включена
+    /// настройка `own_clock` (позволяет отключить штатные часы Алисы и полностью убрать мерцание).
+    pub fn start_own_clock(self: &Arc<Self>, store: crate::settings::Store) {
+        if self.inner.st.lock().unwrap().clock.is_empty() {
+            return;
+        }
+        let me = Arc::clone(self);
+        std::thread::Builder::new()
+            .name("own-clock".into())
+            .stack_size(128 * 1024)
+            .spawn(move || {
+                let mut last_key: Option<(i8, i8, i64)> = None;
+                loop {
+                    let enabled = store.with(|s| s.own_clock);
+                    {
+                        let mut st = me.inner.st.lock().unwrap();
+                        if st.stopped {
+                            break;
+                        }
+                        st.own_clock_active = enabled;
+                        if !enabled || st.mode != Mode::Off || st.clock_override {
+                            last_key = None;
+                            drop(st);
+                            std::thread::sleep(Duration::from_millis(250));
+                            continue;
+                        }
+                    }
+                    let now = store.now();
+                    let h = now.hour();
+                    let m = now.minute();
+                    let ratio = if store.is_night() {
+                        let nb = store.with(|s| s.night.bright);
+                        (nb as f64 / 100.0).clamp(0.06, 0.35)
+                    } else {
+                        let lb = store.led_for().brightness;
+                        (lb as f64 / 100.0 * 0.55).clamp(0.10, 0.65)
+                    };
+                    let key = (h, m, (ratio * 100.0).round() as i64);
+                    if last_key != Some(key) {
+                        const DIGIT: [u8; 10] = [
+                            0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
+                            0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
+                        ];
+                        let h = h.clamp(0, 23) as usize;
+                        let m = m.clamp(0, 59) as usize;
+                        let masks = [DIGIT[h / 10], DIGIT[h % 10], DIGIT[m / 10], DIGIT[m % 10]];
+                        let mut st = me.inner.st.lock().unwrap();
+                        if st.mode == Mode::Off && !st.clock_override && st.own_clock_active {
+                            for c in st.clock.iter_mut() {
+                                let b = c.color.as_bytes();
+                                let on = if b.len() == 2 && (b'a'..=b'g').contains(&b[0]) && (b'0'..=b'3').contains(&b[1]) {
+                                    let pos = (b[1] - b'0') as usize;
+                                    let bit = (b[0] - b'a') as usize;
+                                    (masks[pos] >> bit) & 1 == 1
+                                } else if c.color == "dh" || c.color == "dl" {
+                                    true
+                                } else {
+                                    false
+                                };
+                                let v = if on { ((c.max as f64 * ratio).round() as i64).max(1) } else { 0 };
+                                if v != c.last {
+                                    write(&c.path, v);
+                                    c.last = v;
+                                }
+                            }
+                            last_key = Some(key);
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            })
+            .ok();
+    }
+
     fn write_clock_masks(&self, masks: Option<[u8; 4]>, colon: bool, brightness_ratio: f64) {
         let mut st = self.inner.st.lock().unwrap();
         if st.clock.is_empty() || st.mode != Mode::Off {
             return;
         }
+        st.clock_override = masks.is_some();
         let Some(m) = masks else {
-            // Сбросим last, чтобы следующий вызов maind спокойно перерисовал часы
+            // Сбросим last, чтобы следующий вызов maind или own-clock спокойно перерисовал часы
             for c in st.clock.iter_mut() {
                 c.last = -1;
             }
@@ -634,7 +713,7 @@ impl Inner {
         st.mode = mode;
         st.since = Instant::now();
         if mode == Mode::Off {
-            let St { chans, clock, saved, .. } = &mut *st;
+            let St { chans, clock, saved, own_clock_active, .. } = &mut *st;
             for c in chans.iter_mut() {
                 // Для каналов со штатным триггером ядра (ledfb-logo на Мини 3, led_ring_fb на Лайт 2)
                 // чтение brightness до захвата может вернуть 255 — гасим в 0 перед возвратом триггера,
@@ -648,7 +727,8 @@ impl Inner {
                 c.last = -1;
             }
             for c in clock.iter_mut() {
-                if let Some(&v) = saved.get(&c.path)
+                if !*own_clock_active
+                    && let Some(&v) = saved.get(&c.path)
                     && v >= 0
                 {
                     write(&c.path, v);
@@ -733,6 +813,8 @@ mod tests {
                 frames: 0,
                 lvl_at: now,
                 phase: Mode::Off,
+                clock_override: false,
+                own_clock_active: false,
             }),
             wake: Condvar::new(),
             source: Box::new(crate::settings::default_led),

@@ -64,6 +64,7 @@ fn patch_settings(s: &mut Settings, v: &Value) -> Result<(), std::io::Error> {
         "dev_mode",
         "language",
         "led",
+        "own_clock",
         "train_mode",
         "train_limit_mb",
         "night",

@@ -714,6 +714,9 @@
         {@render toggle("Живые эмоции и SFX", "expressive_mode", settings.expressive_mode !== false,
           (value) => saveToggle("expressive_mode", value, "Эмоции и эффекты включены", "Эмоции и эффекты выключены"),
           "Интонации персонажей и короткие звуковые эффекты в живой речи.")}
+        {@render toggle("Свои часы на табло", "own_clock", !!settings.own_clock,
+          (value) => saveToggle("own_clock", value, "Свои часы на табло включены", "Свои часы на табло выключены"),
+          "Рисовать время силами Jarvis. Отключите часы в «Доме с Алисой», чтобы время не проскакивало поверх лица.")}
         {@render toggle("Озвучивать ошибки Алисой", "voice_error_alice", settings.voice_error_alice !== false,
           (value) => saveToggle("voice_error_alice", value, "Алиса сообщит, если голосовой ИИ не ответит", "Голосовые уведомления об ошибках выключены"),
           "Если голосовой движок не ответил после всех автопереключений, Алиса коротко назовёт причину.")}
