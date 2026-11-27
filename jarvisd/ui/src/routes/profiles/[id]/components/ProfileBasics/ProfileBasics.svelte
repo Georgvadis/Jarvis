@@ -79,9 +79,8 @@
   }
 </script>
 
-<section class="card bento-card" id="profile-basics">
-  <h2>{@html icon("sparkles")} Личность и характер</h2>
-  <div class="studio-stack">
+<section class="card bento-card persona-editor-card" id="profile-basics">
+  <div class="persona-editor-hero">
     <div
       class="persona-avatar-picker"
       class:over={dragOver}
@@ -91,7 +90,7 @@
       ondragleave={() => { dragOver = false; }}
       ondrop={onDrop}
     >
-      <div class={"persona-avatar-preview c" + (draft.color || 1)}>
+      <div class={"persona-avatar-preview lg c" + (draft.color || 1)}>
         {#if draft.avatar}
           <img src={draft.avatar} alt={draft.name || "Аватар"} />
         {:else}
@@ -100,7 +99,7 @@
       </div>
       <div class="persona-avatar-controls">
         <div class="row">
-          <label class="btn sm" class:disabled={uploading}>
+          <label class="btn sm primary" class:disabled={uploading}>
             {@html icon("camera")}
             <span>{uploading ? "Обработка…" : draft.avatar ? "Сменить фото" : "Загрузить фото"}</span>
             <input type="file" accept="image/*" hidden disabled={uploading} onchange={onFileChange}>
@@ -111,20 +110,22 @@
             </button>
           {/if}
         </div>
-        <small class="muted">JPG, PNG или WebP · автообрезка 1:1</small>
+        <small class="muted">Перетащите картинку или выберите файл · автообрезка 1:1</small>
       </div>
     </div>
 
-    <div class="f">
-      <label for="p-name">Имя {@html tip("Отображается на карточке, в шапке и в чате. На слово активации не влияет.")}</label>
-      <input id="p-name" type="text" maxlength="40" value={draft.name} placeholder="Например, Джарвис"
-        oninput={(event) => edit("name", event.currentTarget.value)}>
-    </div>
+    <div class="grid g2">
+      <div class="f">
+        <label for="p-name">Имя {@html tip("Отображается на карточке, в шапке и в чате. На слово активации не влияет.")}</label>
+        <input id="p-name" type="text" maxlength="40" value={draft.name} placeholder="Например, Аянами"
+          oninput={(event) => edit("name", event.currentTarget.value)}>
+      </div>
 
-    <div class="f">
-      <label for="p-tagline">Короткое описание</label>
-      <input id="p-tagline" type="text" maxlength="120" value={draft.tagline || ""} placeholder="Например: Саркастичный дворецкий"
-        oninput={(event) => edit("tagline", event.currentTarget.value)}>
+      <div class="f">
+        <label for="p-tagline">Короткое описание</label>
+        <input id="p-tagline" type="text" maxlength="120" value={draft.tagline || ""} placeholder="Например: Тихий и мудрый пилот"
+          oninput={(event) => edit("tagline", event.currentTarget.value)}>
+      </div>
     </div>
 
     <div class="f">
@@ -136,38 +137,40 @@
         {/each}
       </div>
     </div>
+  </div>
 
-    <div class="f">
-      <div class="persona-char-head">
-        <label for="p-prompt-text">Характер {@html tip("Как ассистент говорит, тон, обращение, привычки и роль. Передаётся модели в каждом разговоре.")}</label>
-        <span class="meta">{text.length} симв.</span>
-      </div>
-      <div class="persona-presets" role="group" aria-label="Быстрые шаблоны характера">
-        {#each presets as [presetName, presetText] (presetName)}
-          <button type="button" class="chip persona-preset-btn" onclick={() => applyPreset(presetName, presetText)}>
-            {presetName}
-          </button>
-        {/each}
-      </div>
-      {#if pendingPreset}
-        <div class="inline-confirm" role="alert">
-          <span>Заменить характер шаблоном «{pendingPreset.name}»?</span>
-          <button class="btn danger sm" type="button" onclick={confirmApplyPreset}>
-            {@html icon("check")} Заменить
-          </button>
-          <button class="btn ghost sm" type="button" onclick={() => { pendingPreset = null; }}>
-            {@html icon("x")} Отмена
-          </button>
-        </div>
-      {/if}
-      <textarea
-        id="p-prompt-text"
-        rows="6"
-        maxlength="18000"
-        placeholder="Ты — … Опишите манеру речи, характер, тон, длину ответов и особенности персонажа"
-        value={text}
-        oninput={(event) => editPrompt(event.currentTarget.value)}
-      ></textarea>
+  <div class="nav-sep"></div>
+
+  <div class="f">
+    <div class="persona-char-head">
+      <label for="p-prompt-text">Характер и манера речи {@html tip("Как ассистент говорит, тон, обращение, привычки и роль. Передаётся модели в каждом разговоре.")}</label>
+      <span class="meta">{text.length} симв.</span>
     </div>
+    <div class="persona-presets" role="group" aria-label="Быстрые шаблоны характера">
+      {#each presets as [presetName, presetText] (presetName)}
+        <button type="button" class="chip persona-preset-btn" onclick={() => applyPreset(presetName, presetText)}>
+          {presetName}
+        </button>
+      {/each}
+    </div>
+    {#if pendingPreset}
+      <div class="inline-confirm" role="alert">
+        <span>Заменить характер шаблоном «{pendingPreset.name}»?</span>
+        <button class="btn danger sm" type="button" onclick={confirmApplyPreset}>
+          {@html icon("check")} Заменить
+        </button>
+        <button class="btn ghost sm" type="button" onclick={() => { pendingPreset = null; }}>
+          {@html icon("x")} Отмена
+        </button>
+      </div>
+    {/if}
+    <textarea
+      id="p-prompt-text"
+      rows="8"
+      maxlength="18000"
+      placeholder="Ты — … Опишите манеру речи, характер, тон, длину ответов и особенности персонажа"
+      value={text}
+      oninput={(event) => editPrompt(event.currentTarget.value)}
+    ></textarea>
   </div>
 </section>

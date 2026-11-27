@@ -25,7 +25,7 @@
   let dirty = $state(false);
   let working = $state("");
   let confirmDelete = $state(false);
-  let ptab = $state("brain");
+  let ptab = $state("persona");
   let revision = 0;
   let basics = $state();
   let brain = $state();
@@ -186,17 +186,20 @@
       {/if}
     {/if}
     <div class="seg asst-sub-seg" role="tablist" aria-label="Разделы профиля">
+      <button type="button" role="tab" aria-selected={ptab === "persona"} class:on={ptab === "persona"} onclick={() => { ptab = "persona"; }}>
+        {@html icon("sparkles")} Личность
+      </button>
       <button type="button" role="tab" aria-selected={ptab === "brain"} class:on={ptab === "brain"} onclick={() => { ptab = "brain"; }}>
-        {@html icon("cpu")} Основное и мозг
+        {@html icon("cpu")} Мозг
       </button>
       <button type="button" role="tab" aria-selected={ptab === "voice"} class:on={ptab === "voice"} onclick={() => { ptab = "voice"; }}>
-        {@html icon("voice")} Голос и подсветка
+        {@html icon("voice")} Голос и свет
       </button>
     </div>
   </div>
 </header>
 
-<div class="profile-bento" class:hidden={ptab !== "brain"}>
+<div class="profile-persona-center" class:hidden={ptab !== "persona"}>
   <ProfileBasics bind:this={basics} initial={{
     name: initial.name,
     tagline: initial.tagline,
@@ -204,6 +207,8 @@
     color: initial.color,
     prompt: initial.prompt,
   }} {promptText} onedit={edit} onprompt={editPromptText} />
+</div>
+<div class="profile-tech-wrap" class:hidden={ptab !== "brain"}>
   <ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
     onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
 </div>
