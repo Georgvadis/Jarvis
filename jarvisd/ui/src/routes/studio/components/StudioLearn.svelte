@@ -214,6 +214,7 @@
         ok,
       });
       if (Array.isArray(res?.courses)) courses = res.courses;
+      nowTs = Math.floor(Date.now() / 1000);
       revealed = { ...revealed, [idx]: false };
     } catch (err) {
       toast(err.message, true);

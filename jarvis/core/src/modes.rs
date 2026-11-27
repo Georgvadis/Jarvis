@@ -207,6 +207,11 @@ impl ModeManager {
                 || t.contains("викторин")
                 || t.contains("квиз")
                 || t.contains("игр")
+                || t.contains("урок")
+                || t.contains("курс")
+                || t.contains("блиц")
+                || t.contains("обучен")
+                || t.contains("репетитор")
                 || t.contains("режим"))
         {
             if self.reset(ambient) {

@@ -126,13 +126,26 @@ fn extract_temp_celsius(s: &str) -> Option<i32> {
     None
 }
 
+fn slice_after_prefix(text: &str, low: &str, pos: usize, prefix_len: usize) -> String {
+    let trimmed = text.trim();
+    let end = pos + prefix_len;
+    let raw = if trimmed.len() == low.len() && trimmed.is_char_boundary(end) {
+        &trimmed[end..]
+    } else if low.is_char_boundary(end) {
+        &low[end..]
+    } else {
+        ""
+    };
+    raw.trim_start_matches([' ', ',', ':', '—', '-']).trim().to_string()
+}
+
 fn extract_duo_advice_question(text: &str) -> Option<String> {
     let low = text.trim().to_lowercase();
     for prefix in ["спроси обоих", "совет обоих", "что думаете оба", "мнение обоих", "обсудите вдвоём", "обсудите вдвоем"] {
         if let Some(pos) = low.find(prefix) {
-            let tail = text[pos + prefix.len()..].trim_start_matches([' ', ',', ':', '—', '-']).trim();
+            let tail = slice_after_prefix(text, &low, pos, prefix.len());
             if !tail.is_empty() {
-                return Some(tail.to_string());
+                return Some(tail);
             }
         }
     }
@@ -142,15 +155,15 @@ fn extract_duo_advice_question(text: &str) -> Option<String> {
 fn extract_diary_entry(text: &str) -> Option<(&'static str, String)> {
     let low = text.trim().to_lowercase();
     for (prefix, tag) in [
+        ("запиши в дневник", "Дневник"),
         ("запиши мысль", "Мысль"),
         ("итог дня", "Итог дня"),
         ("в дневник", "Дневник"),
-        ("запиши в дневник", "Дневник"),
     ] {
         if let Some(pos) = low.find(prefix) {
-            let tail = text[pos + prefix.len()..].trim_start_matches([' ', ',', ':', '—', '-']).trim();
+            let tail = slice_after_prefix(text, &low, pos, prefix.len());
             if tail.chars().count() >= 4 {
-                return Some((tag, tail.to_string()));
+                return Some((tag, tail));
             }
         }
     }
@@ -202,14 +215,21 @@ async fn run_duo_advice(engine: Arc<crate::engine::Engine>, question: String) ->
             if !clean2.is_empty() {
                 let eng = engine.clone();
                 tokio::spawn(async move {
-                    // Ждём, пока первый персонаж договорит свой ответ, затем вступает второй
-                    for _ in 0..120 {
+                    // Сначала ждём, пока первый персонаж начнёт озвучивать свой ответ (до 8с)
+                    for _ in 0..80 {
+                        if eng.player.playing() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    // Затем ждём, пока он полностью договорит (до 30с)
+                    for _ in 0..150 {
                         tokio::time::sleep(Duration::from_millis(200)).await;
                         if !eng.player.playing() {
                             break;
                         }
                     }
-                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    tokio::time::sleep(Duration::from_millis(350)).await;
                     let _ = tokio::task::spawn_blocking(move || {
                         let _ = eng.say_aloud_opts(&clean2, Duration::from_secs(35), Some(&p2), false);
                     })

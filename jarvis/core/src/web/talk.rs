@@ -318,6 +318,8 @@ pub async fn scenarios_generate(
 - "alice": команда умному дому / Алисе (value:"выключи свет", number:null)
 - "telegram": отправить в Telegram (value:"текст сообщения", number:null)
 - "led": подсветка кольца (value:"#ff9900" или "off", number:минуты)
+- "sunrise": умный рассвет (value:"", number:минуты 1..30)
+- "course": запустить урок курса (value:"название курса или пусто", number:null)
 - "mode": режим ("rpg:тема"|"quiz:тема"|"chat"|"translator:английский"|"normal", number:null)
 - "pc": действие на ПК (value:"media_play_pause"|"media_next"|"media_prev"|"volume_mute"|"lock_screen"|"sleep_timer"|"screenshot_save", number:минуты для sleep_timer)"##;
     let user_msg = if prompt.is_empty() {
