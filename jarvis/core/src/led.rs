@@ -98,6 +98,7 @@ struct St {
     since: Instant,
     level: f64,
     target: f64,
+    mouth: f64,
     hear: f64,
     hear_t: f64,
     frames: u64,
@@ -221,56 +222,84 @@ impl St {
         }
     }
 
-    fn clock_shape_at(mode: Mode, level: f64, hear: f64, seg: &str, t: f64) -> f64 {
+    fn clock_shape_at(mode: Mode, mouth: f64, hear: f64, seg: &str, t: f64) -> f64 {
         let b = seg.as_bytes();
-        // 4-разрядный 7-сегментный дисплей (a..g + цифра 0..3): живой эквалайзер и анимации!
+        // 4-разрядный 7-сегментный дисплей (Лайт 2 / Мини 3): живое лицо (глазки на 0 и 3, рот на 1 и 2).
         if b.len() != 2 || !(b'a'..=b'g').contains(&b[0]) || !(b'0'..=b'3').contains(&b[1]) {
             return 0.0;
         }
         let s = b[0];
-        let pos = (b[1] - b'0') as f64;
-        let inner = pos == 1.0 || pos == 2.0;
+        let pos = b[1] - b'0';
+        let is_eye = pos == 0 || pos == 3;
+        let is_mouth = pos == 1 || pos == 2;
+
+        // Естественное редкое моргание (раз в ~3.8 сек на 150 мс)
+        let blink_period = if mode == Mode::Speaking { 4.2 } else { 3.8 };
+        let phase = t % blink_period;
+        let blinking = phase > blink_period - 0.15;
+
         match mode {
-            Mode::Thinking => {
-                // Бегущий огонёк по периметру каждой цифры (a -> b -> c -> d -> e -> f) с фазовым сдвигом
-                let ring_idx = match s {
-                    b'a' => 0.0,
-                    b'b' => 1.0,
-                    b'c' => 2.0,
-                    b'd' => 3.0,
-                    b'e' => 4.0,
-                    b'f' => 5.0,
-                    _ => return 0.0,
-                };
-                let c = (2.0 * PI * (t * 1.6 - ring_idx / 6.0 - pos / 8.0)).cos();
-                0.08 + 0.92 * c.max(0.0).powi(3)
-            }
             Mode::Listening => {
-                // Мягкое «дыхание» + реакция центральной линии на громкость голоса (hear)
-                let breath = 0.25 + 0.75 * (0.5 - 0.5 * (2.0 * PI * t * 0.7).cos());
-                if s == b'g' {
+                // Открытые спокойные глазки (верхний квадрат a,b,f,g) с лёгким дыханием и морганием
+                if is_eye {
+                    let breath = 0.80 + 0.15 * (2.0 * PI * t * 0.45).sin();
+                    if blinking {
+                        if s == b'g' { 0.85 } else { 0.0 }
+                    } else if matches!(s, b'a' | b'b' | b'f' | b'g') {
+                        breath
+                    } else {
+                        0.0
+                    }
+                } else if is_mouth && s == b'd' {
+                    // Мягкая улыбка внизу, слегка подсвечивается в такт речи пользователя
                     let boost = (hear / 0.35).min(1.0);
-                    (if inner { 0.35 + 0.65 * boost } else { 0.15 + 0.85 * boost }) * (0.5 + 0.5 * breath)
-                } else if (pos == 0.0 && (s == b'f' || s == b'e')) || (pos == 3.0 && (s == b'b' || s == b'c')) {
-                    // Мягкие боковые «скобки» [  ]
-                    0.35 * breath
+                    0.35 + 0.60 * boost
+                } else {
+                    0.0
+                }
+            }
+            Mode::Thinking => {
+                // Спокойные глаза + плавно переливающиеся «точки размышления» (- -) в центре
+                if is_eye {
+                    if blinking {
+                        if s == b'g' { 0.75 } else { 0.0 }
+                    } else if matches!(s, b'a' | b'b' | b'f' | b'g') {
+                        0.78
+                    } else {
+                        0.0
+                    }
+                } else if is_mouth && s == b'g' {
+                    let shift = if pos == 1 { 0.0 } else { PI * 0.65 };
+                    0.22 + 0.72 * (0.5 + 0.5 * (2.0 * PI * t * 0.9 - shift).sin())
                 } else {
                     0.0
                 }
             }
             Mode::Speaking => {
-                // 4-полосный живой эквалайзер в такт голосу: от нижней планки (d) вверх до (a)
-                let wave = 0.85 + 0.15 * (2.0 * PI * (t * 3.5 + pos * 0.35)).sin();
-                let amp = ((level * 1.45 * wave) * if inner { 1.15 } else { 0.85 }).clamp(0.0, 1.0);
-                let tier = match s {
-                    b'd' => 0.05,            // уровень 1 (низ)
-                    b'e' | b'c' => 0.22,     // уровень 2 (нижние бока)
-                    b'g' => 0.42,            // уровень 3 (середина)
-                    b'f' | b'b' => 0.62,     // уровень 4 (верхние бока)
-                    b'a' => 0.80,            // уровень 5 (пик)
-                    _ => 1.0,
-                };
-                ((amp - tier) / 0.22).clamp(0.0, 1.0)
+                // Стабильные глаза без мерцания + плавный симметричный рот в центре (pos 1 и 2)
+                if is_eye {
+                    if blinking {
+                        if s == b'g' { 0.85 } else { 0.0 }
+                    } else if matches!(s, b'a' | b'b' | b'f' | b'g') {
+                        0.88
+                    } else {
+                        0.0
+                    }
+                } else if is_mouth {
+                    let open = (mouth * 1.65).clamp(0.0, 1.0);
+                    match s {
+                        // Верхняя линия рта всегда видна
+                        b'g' => 0.55 + 0.40 * open,
+                        // Нижняя губа плавно появляется при открытии рта
+                        b'd' => ((open - 0.14) / 0.32).clamp(0.0, 1.0) * 0.92,
+                        // Внешние «щёчки» (e у левой цифры 1, c у правой цифры 2) образуют единый овал рта
+                        b'e' if pos == 1 => ((open - 0.30) / 0.38).clamp(0.0, 1.0) * 0.90,
+                        b'c' if pos == 2 => ((open - 0.30) / 0.38).clamp(0.0, 1.0) * 0.90,
+                        _ => 0.0,
+                    }
+                } else {
+                    0.0
+                }
             }
             Mode::Off => 0.0,
         }
@@ -282,23 +311,27 @@ impl St {
         }
         self.level = self.level * 0.6 + self.target * 0.4;
         self.target *= 0.5;
-        self.hear = self.hear * 0.6 + self.hear_t * 0.4;
-        self.hear_t *= 0.5;
+        // Дополнительное сглаживание для рта на табло — убирает резкое мерцание
+        self.mouth = self.mouth * 0.78 + self.level * 0.22;
+        self.hear = self.hear * 0.75 + self.hear_t * 0.25;
+        self.hear_t *= 0.6;
         let t = self.since.elapsed().as_secs_f64();
         let pal = self.palette.get(self.mode);
-        let (mode, level, hear, groups, lvl_elapsed) =
-            (self.mode, self.level, self.hear, self.groups, self.lvl_at.elapsed());
+        let (mode, level, mouth, hear, groups, lvl_elapsed) =
+            (self.mode, self.level, self.mouth, self.hear, self.groups, self.lvl_at.elapsed());
         if !self.clock.is_empty() {
             self.frames += 1;
-            let k = (pal.iter().fold(0f64, |a, &v| a.max(v)) * 1.6).min(1.0);
-            let rewrite = self.frames % 12 == 0; // maind мог дорисовать время
+            let k = (pal.iter().fold(0f64, |a, &v| a.max(v)) * 1.4).clamp(0.35, 1.0);
+            let rewrite = self.frames % 25 == 0; // раз в ~1 сек перестраховка от maind
             for c in self.clock.iter_mut() {
                 if rewrite {
                     c.last = -1;
                 }
-                let s = Self::clock_shape_at(mode, level, hear, &c.color, t);
-                let v = (k * s * c.max as f64) as i64;
-                if v != c.last {
+                let s = Self::clock_shape_at(mode, mouth, hear, &c.color, t);
+                let v = (k * s * c.max as f64).round() as i64;
+                // Не спамим I2C на мелких 1–2-единичных колебаниях яркости
+                let changed = c.last < 0 || (v == 0) != (c.last == 0) || (v - c.last).abs() >= 3;
+                if changed {
                     write(&c.path, v);
                     c.last = v;
                 }
@@ -372,6 +405,7 @@ impl Leds {
                 since: now,
                 level: 0.0,
                 target: 0.0,
+                mouth: 0.0,
                 hear: 0.0,
                 hear_t: 0.0,
                 frames: 0,
@@ -579,6 +613,7 @@ impl Inner {
             }
             st.hear = 0.0;
             st.hear_t = 0.0;
+            st.mouth = 0.0;
             st.take_triggers();
         }
         st.mode = mode;
@@ -677,6 +712,7 @@ mod tests {
                 since: now,
                 level: 0.0,
                 target: 0.0,
+                mouth: 0.0,
                 hear: 0.0,
                 hear_t: 0.0,
                 frames: 0,
