@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="j-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2c1e15"/>
+      <stop offset="100%" stop-color="#120d0a"/>
+    </linearGradient>
+    <linearGradient id="j-ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffd599"/>
+      <stop offset="52%" stop-color="#f2994a"/>
+      <stop offset="100%" stop-color="#e05a2b"/>
+    </linearGradient>
+    <radialGradient id="j-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffc378" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#f2994a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#j-bg)"/>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="14.5" fill="none" stroke="url(#j-ring)" stroke-opacity="0.3" stroke-width="1.5"/>
+  <circle cx="32" cy="32" r="24" fill="url(#j-glow)"/>
+  <circle cx="32" cy="32" r="19" fill="none" stroke="url(#j-ring)" stroke-width="3.6" stroke-linecap="round" stroke-dasharray="23 8 11 8"/>
+  <circle cx="32" cy="32" r="11.5" fill="none" stroke="#ffe0b3" stroke-opacity="0.65" stroke-width="2" stroke-dasharray="14 6"/>
+  <circle cx="32" cy="32" r="5.2" fill="url(#j-ring)"/>
+  <circle cx="32" cy="32" r="2.2" fill="#fff6e5"/>
+</svg>

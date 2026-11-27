@@ -136,14 +136,17 @@
   <!-- Парящая верхняя стеклянная навигация (вместо старого админского сайдбара) -->
   <div class="topbar-wrap">
     <header class="topbar" aria-label="Главная навигация">
-      <a class="top-brand" href="/">
+      <a class="top-brand" href="/" title={orb.text || "Готов"}>
         <span class="brand-mark" aria-hidden="true">
-          {@html icon("flame")}
+          <svg viewBox="0 0 32 32" width="22" height="22" fill="none" aria-hidden="true">
+            <circle cx="16" cy="16" r="11.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="14 5 7 5"/>
+            <circle cx="16" cy="16" r="6.8" stroke="currentColor" stroke-opacity=".55" stroke-width="1.4" stroke-dasharray="8 4"/>
+            <circle cx="16" cy="16" r="3" fill="currentColor"/>
+          </svg>
           <span class="brand-mark-dot" id="orb" data-s={orb.state} title={orb.text}></span>
         </span>
         <span class="top-brand-copy">
           <b>Jarvis</b>
-          <small>{orb.text || "Готов"}</small>
         </span>
       </a>
 
@@ -277,9 +280,13 @@
 
   <!-- Мобильная верхняя шапка -->
   <header class="mbar">
-    <a class="mbar-brand" href="/">
+    <a class="mbar-brand" href="/" title={orb.text || "Готов"}>
       <span class="brand-mark sm" aria-hidden="true">
-        {@html icon("flame")}
+        <svg viewBox="0 0 32 32" width="18" height="18" fill="none" aria-hidden="true">
+          <circle cx="16" cy="16" r="11.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="14 5 7 5"/>
+          <circle cx="16" cy="16" r="6.8" stroke="currentColor" stroke-opacity=".55" stroke-width="1.5" stroke-dasharray="8 4"/>
+          <circle cx="16" cy="16" r="3.2" fill="currentColor"/>
+        </svg>
         <span class="brand-mark-dot" data-s={orb.state}></span>
       </span>
       <b>Jarvis</b>

@@ -38,7 +38,13 @@
 <div id="gate" class="gate" class:hidden={!visible}>
   <form id="gate-form" class="gate-card" autocomplete="on" onsubmit={submit}>
     <div class="gate-brand">
-      <span class="brand-mark" aria-hidden="true">{@html icon("flame")}</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="22" height="22" fill="none" aria-hidden="true">
+          <circle cx="16" cy="16" r="11.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="14 5 7 5"/>
+          <circle cx="16" cy="16" r="6.8" stroke="currentColor" stroke-opacity=".55" stroke-width="1.4" stroke-dasharray="8 4"/>
+          <circle cx="16" cy="16" r="3" fill="currentColor"/>
+        </svg>
+      </span>
       <span>Jarvis</span>
     </div>
     <p id="gate-text" class="gate-text">{setup ? "Задайте пароль для панели" : "Вход в панель"}</p>
