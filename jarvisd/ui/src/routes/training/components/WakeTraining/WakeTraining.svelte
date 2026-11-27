@@ -41,6 +41,20 @@
   let recordingLive = $state(false);
   let previewUrl = $state("");
   let audio = $state();
+  const MIC_BARS = 36;
+  let micOnline = $state(true);
+  let micThreshold = $state(280);
+  let micPeak = $state(0);
+  let micHistory = $state(Array(MIC_BARS).fill(0));
+  let micHeard = $derived(micOnline && micPeak >= micThreshold);
+
+  function peakToPct(val) {
+    if (!val || val <= 0) return 6;
+    const norm = Math.sqrt(Math.min(val, 6000) / 6000);
+    return Math.max(6, Math.min(100, Math.round(norm * 100)));
+  }
+
+  let thresholdPct = $derived(peakToPct(micThreshold));
 
   let assistants = $derived($speaker?.profiles || []);
   let complete = $derived(samples.length === totalSamples);
@@ -58,7 +72,31 @@
     refresh().catch((error) => {
       if (!signal.aborted) loadError = error.message;
     });
+    let timer = null;
+    let alive = true;
+    async function pollMic() {
+      if (!alive || signal.aborted) return;
+      if (typeof document !== "undefined" && document.hidden) {
+        timer = setTimeout(pollMic, 400);
+        return;
+      }
+      try {
+        const res = await api("GET", "/api/mic-level", undefined, { signal });
+        if (!alive || signal.aborted) return;
+        const pk = Number(res?.peak || 0);
+        micOnline = res?.online !== false;
+        if (res?.threshold) micThreshold = Number(res.threshold);
+        micPeak = pk;
+        micHistory = [...micHistory.slice(1), pk];
+      } catch {
+        // ignore transient poll errors
+      }
+      if (alive && !signal.aborted) timer = setTimeout(pollMic, 110);
+    }
+    pollMic();
     return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
       controller.abort();
       clearPreview();
     };
@@ -336,6 +374,26 @@
                 <span class={styles.stageIcon}>{@html icon(complete ? "check" : "mic")}</span>
                 <p class={styles.stageText} role="status">{instructions}</p>
                 <span class={styles.stageCount}>{samples.length}/{totalSamples}</span>
+              </div>
+
+              <div class={styles.micBox} aria-label="Уровень микрофона колонки">
+                <div class={styles.micHead}>
+                  <span class={styles.micDot} class:on={micHeard} class:off={!micOnline}></span>
+                  <span class={styles.micLabel}>
+                    {!micOnline ? "Микрофон недоступен" : micHeard ? "Слышу голос" : "Микрофон колонки"}
+                  </span>
+                  <span class={styles.micVal}>{micPeak}</span>
+                </div>
+                <div class={styles.micWave}>
+                  <span class={styles.micThresh} style:bottom={`${thresholdPct}%`} title={`Порог речи: ${micThreshold}`}></span>
+                  {#each micHistory as val, i (i)}
+                    <span
+                      class={styles.micBar}
+                      class:hot={val >= micThreshold}
+                      style:height={`${peakToPct(val)}%`}
+                    ></span>
+                  {/each}
+                </div>
               </div>
 
               <div class={styles.slots} role="group" aria-label="Записанные дубли">

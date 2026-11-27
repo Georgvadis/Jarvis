@@ -154,6 +154,82 @@
   flex: none;
 }
 
+.micBox {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 1px solid var(--glass-border);
+}
+
+.micHead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--fg2);
+}
+
+.micDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg3);
+  flex: none;
+  transition: background-color .12s, box-shadow .12s;
+}
+
+.micDot:global(.on) {
+  background: var(--ok);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 75%, transparent);
+}
+
+.micDot:global(.off) {
+  background: var(--bad);
+}
+
+.micLabel {
+  flex: 1;
+  font-weight: 600;
+}
+
+.micVal {
+  font: 600 11.5px/1 var(--mono);
+  color: var(--fg3);
+}
+
+.micWave {
+  position: relative;
+  height: 36px;
+  display: grid;
+  grid-template-columns: repeat(36, minmax(0, 1fr));
+  align-items: end;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.micThresh {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed color-mix(in srgb, var(--acc) 45%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.micBar {
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--fg3) 55%, transparent);
+  transition: height .09s ease-out, background-color .1s;
+}
+
+.micBar:global(.hot) {
+  background: var(--acc);
+}
+
 .slots {
   display: grid;
   grid-template-columns: repeat(13, minmax(0, 1fr));
