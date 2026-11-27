@@ -43,16 +43,16 @@
         <div class="ek-wrap">
           <div class="ek" class:on={active || (key.active && key.status === "partial")} class:rest={rest} class:bad={bad}>
             <b>{index + 1}</b><code>{key.tail}</code>
-            <span class="ek-st">{key.label || (key.spent ? `лимит у ${key.spent} из ${key.models} моделей` : "готов")}</span>
+            <span class="ek-st">{key.label || (key.spent ? `лимит ${key.spent}/${key.models}` : "готов")}</span>
             <span class="spacer"></span>
             {#if gemini.length > 1 && !key.active && !bad}
-              <button type="button" class="btn sm ghost" data-gk-activate={index} data-tip="Использовать этот ключ первым" onclick={action}>Активный</button>
+              <button type="button" class="btn sm ghost" data-gk-activate={index} data-tip="Использовать первым" onclick={action}>Активный</button>
             {/if}
             {#if key.spent > 0 || bad || rest}
-              <button type="button" class="btn sm ghost" data-gk-reset={index} data-tip="Сбросить паузу по лимиту и проверить ключ снова" onclick={action}>Сбросить</button>
+              <button type="button" class="btn sm ghost" data-gk-reset={index} data-tip="Сбросить паузу" onclick={action}>{@html icon("refresh")}Сбросить</button>
             {/if}
             {#if gemini.length > 1}
-              <button type="button" class="ib" data-gk-remove={index} aria-label={`Убрать ключ ${index + 1}`} onclick={action}>{@html icon("x")}</button>
+              <button type="button" class="ib" data-gk-remove={index} aria-label={`Удалить ключ ${index + 1}`} onclick={action}>{@html icon("x")}</button>
             {/if}
           </div>
           {#if limitedModels.length > 0 || key.detail}
@@ -72,21 +72,19 @@
         </div>
       {/each}
     </div>
-    <p class="note">Бесплатный лимит Gemini общий на весь аккаунт Google, а не на каждый ключ отдельно: в запас добавляйте ключи с разных аккаунтов. Переключение между ключами работает автоматически; переключение на другую модель работает между моделями, отмеченными галочками в профиле ассистента.</p>
   {/if}
 {:else if id === "elevenlabs" && eleven.length}
   <div class="ek-list">
     {#each eleven as key, index}
       <div class="ek" class:on={key.active} class:rest={key.until}>
         <b>{index + 1}</b><code>{key.tail}</code>
-        <span class="ek-st">{key.until ? `квота кончилась · ждёт до ${date(key.until)}` : key.active ? "сейчас работает" : "в запасе"}</span>
+        <span class="ek-st">{key.until ? `до ${date(key.until)}` : key.active ? "активен" : "в запасе"}</span>
         <span class="spacer"></span>
-        {#if key.until}<button type="button" class="btn sm ghost" data-ek-reset={index} data-tip="Например, если докупили символы" onclick={action}>Вернуть</button>{/if}
-        <button type="button" class="ib" data-ek-remove={index} aria-label={`Убрать ключ ${index + 1}`} onclick={action}>{@html icon("x")}</button>
+        {#if key.until}<button type="button" class="btn sm ghost" data-ek-reset={index} onclick={action}>{@html icon("refresh")}Вернуть</button>{/if}
+        <button type="button" class="ib" data-ek-remove={index} aria-label={`Удалить ключ ${index + 1}`} onclick={action}>{@html icon("x")}</button>
       </div>
     {/each}
   </div>
-  <p class="note">Бесплатная квота привязана к аккаунту — в запас добавляйте ключи с разных аккаунтов. Когда лимит кончится, ключ откладывается до сброса (обычно через месяц), и Джарвис сам берёт следующий.</p>
 {:else if id === "yandex"}
   <div><b>Выдайте OAuth-приложению два разрешения</b><ul class="how">
     <li><code>iot:view</code> · видеть устройства и их состояние.</li>
@@ -98,7 +96,7 @@
   <label for={"k-" + id}>{id === "yandex" ? "OAuth-токен Яндекс ID" : append ? "Ещё ключ — в запас" : service.on ? "Новый ключ" : "Ключ"}</label>
   <div class="row">
     <input type="password" id={"k-" + id} placeholder={service.place} autocomplete="off" onkeydown={keydown}>
-    <button type="button" class="btn primary" data-key={id} onclick={action}>{append ? "Добавить" : service.on ? "Заменить" : "Сохранить"}</button>
+    <button type="button" class="btn primary" data-key={id} onclick={action}>{@html icon(append ? "plus" : "save")}{append ? "Добавить" : service.on ? "Заменить" : "Сохранить"}</button>
   </div>
 </div>
 {#if id !== "elevenlabs"}

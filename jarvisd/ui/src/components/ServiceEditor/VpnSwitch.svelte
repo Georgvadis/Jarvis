@@ -13,7 +13,7 @@
 {#if describe}
   <div class="cn-vpn">
     {@render toggle()}
-    <small class="muted">{!state.vless?.set ? "VPN не задан — галочка заработает, когда добавите его в «Сеть → VPN»" : checked ? "идёт через ваш VPN" : "напрямую, без VPN"}</small>
+    <small class="muted">{!state.vless?.set ? "VPN не задан" : checked ? "через VPN" : "напрямую"}</small>
   </div>
 {:else}
   {@render toggle()}

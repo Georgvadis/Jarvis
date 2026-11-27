@@ -114,11 +114,11 @@
         {/if}
       {/each}
     </div>
-    <div class="row"><span class="spacer"></span><button class="btn primary" type="button" data-pl-save={installed.id} onclick={save}>Сохранить</button></div>
+    <div class="row"><span class="spacer"></span><button class="btn primary" type="button" data-pl-save={installed.id} onclick={save}>{@html icon("save")}Сохранить</button></div>
   {/if}
   {#if services.length}
     <div class="cx-links">
-      <b>{services.length > 1 ? "Входы и ключи этого плагина" : "Вход и настройки"}</b>
+      <b>{services.length > 1 ? "Связанные сервисы" : "Аккаунт и настройки"}</b>
       {#each services as service (service.id)}
         <button class="cx-link" type="button" data-goto={"svc:" + service.id} onclick={() => openRelatedService(service.id)}>
           <span class="char-av cn-av">{#if service.icon}{@html icon(service.icon)}{:else}{service.mono}{/if}</span>
@@ -127,13 +127,11 @@
       {/each}
     </div>
   {:else if training !== undefined}
-    {#if training}<div><a class="btn primary" href="/training">Открыть обучение</a></div>{/if}
-  {:else if !fields.length}
-    <p class="note">У этого плагина нет настроек: он просто работает. Выключить или удалить его можно ниже.</p>
+    {#if training}<div><a class="btn primary" href="/training">{@html icon("mic")}Открыть обучение</a></div>{/if}
   {/if}
   <div class="cx-plug">
     <div class="cx-plug-h">
-      <span class="cx-plug-n">{@html icon("puzzle")}<b>О плагине</b></span>
+      <span class="cx-plug-n">{@html icon("puzzle")}<b>Состояние плагина</b></span>
       <label class="sw" data-tip={installed.enabled ? "Выключить" : "Включить"}>
         <input type="checkbox" data-pl-on={installed.id} checked={installed.enabled} disabled={toggling}
           aria-label={installed.enabled ? "Выключить" : "Включить"} onchange={toggle}><span class="tr"></span>
@@ -144,10 +142,10 @@
     {:else if installed.status && installed.enabled}<p class="note">{installed.status}</p>{/if}
     <div class="row">
       {#if plHasUpdate(installed, update)}
-        <button class="btn sm" type="button" data-pl-update={installed.id} onclick={(event) => updateConnectionPlugin(installed.id, event.currentTarget)}>Обновить до {update.version}</button>
+        <button class="btn sm primary" type="button" data-pl-update={installed.id} onclick={(event) => updateConnectionPlugin(installed.id, event.currentTarget)}>{@html icon("refresh")}Обновить до {update.version}</button>
       {/if}
       <span class="spacer"></span>
-      <button class="btn sm ghost danger" type="button" data-pl-del={installed.id} onclick={(event) => removeConnectionPlugin(installed.id, event.currentTarget)}>Удалить плагин</button>
+      <button class="btn sm ghost danger" type="button" data-pl-del={installed.id} onclick={(event) => removeConnectionPlugin(installed.id, event.currentTarget)}>{@html icon("trash")}Удалить</button>
     </div>
   </div>
 {/if}

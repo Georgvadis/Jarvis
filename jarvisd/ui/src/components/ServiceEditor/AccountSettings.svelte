@@ -21,19 +21,17 @@
   {#if account.signed_in}
     <div class="cn-ok">{@html icon("done")}<span>Колонка вошла в ChatGPT{#if account.plan} · <b>{account.plan}</b>{/if}{#if account.email}<small>{account.email}</small>{/if}</span></div>
     {#if account.limited_until * 1000 > Date.now()}
-      <p class="err">Кончился лимит голоса в подписке. До {new Date(account.limited_until * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })} Джарвис говорит через Gemini{state.keys?.gemini ? "" : " — но ключа Gemini нет, добавьте его ниже"}.</p>
+      <p class="err">Лимит голоса до {new Date(account.limited_until * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })} — переключено на Gemini.</p>
     {/if}
-    <p class="note">Все звонки — один разговор с общей памятью. Что Джарвис помнит, видно и правится на странице <a class="lnk" href="/memory">«Память»</a>.</p>
   {:else if login.code}
     <ol class="how cn-steps">
-      <li>Откройте <a href={login.url} target="_blank" rel="noopener">{login.url?.replace("https://", "")}</a> (из России и Беларуси — через VPN) и войдите в свой ChatGPT.</li>
+      <li>Откройте <a href={login.url} target="_blank" rel="noopener">{login.url?.replace("https://", "")}</a> и войдите в ChatGPT.</li>
       <li>Введите код: <b class="code-big">{login.code}</b></li>
-      <li>Это окно само увидит вход — ничего нажимать не нужно.</li>
+      <li>Вход подтвердится автоматически.</li>
     </ol>
   {:else}
     {#if login.error}<p class="err">{login.error}</p>{/if}
-    <div class="row"><button type="button" class="btn primary" id="cg-in" onclick={action}>Войти в ChatGPT</button></div>
-    <p class="note">Колонка получит свой вход, пароль она не видит. Способ неофициальный, как у Codex: OpenAI может его изменить.</p>
+    <div class="row"><button type="button" class="btn primary" id="cg-in" onclick={action}>{@html icon("user")}Войти в ChatGPT</button></div>
     <VpnSwitch {id} {state} {action} />
   {/if}
 {:else if id === "youtube"}
@@ -67,12 +65,12 @@
       </div>
     {/if}
     {#if youtube.error}<p class="err">{youtube.error}</p>{/if}
-    <div class="row"><button type="button" class="btn primary" id="ya-in" onclick={action}>Войти в YouTube</button><small class="muted">кодом, как на телевизоре — пароль колонка не видит</small></div>
+    <div class="row"><button type="button" class="btn primary" id="ya-in" onclick={action}>{@html icon("music")}Войти в YouTube</button></div>
     <details class="mini">
-      <summary>Не получается кодом? Куки браузера</summary>
-      <ol class="how"><li>Расширение «Get cookies.txt LOCALLY» → окно инкогнито → войдите на youtube.com.</li><li>Export (Netscape) → скопируйте весь текст сюда → закройте окно, не выходя из аккаунта.</li></ol>
+      <summary>Войти через куки браузера</summary>
+      <ol class="how"><li>Расширение «Get cookies.txt LOCALLY» → инкогнито → youtube.com.</li><li>Export (Netscape) → вставьте сюда.</li></ol>
       <textarea id="yt-cookies" class="code" placeholder="# Netscape HTTP Cookie File…" spellcheck="false" aria-label="Куки YouTube"></textarea>
-      <div class="row"><button type="button" class="btn sm" id="yt-save" onclick={action}>{account.set ? "Заменить" : "Сохранить и проверить"}</button></div>
+      <div class="row"><button type="button" class="btn sm primary" id="yt-save" onclick={action}>{@html icon("save")}{account.set ? "Обновить" : "Сохранить"}</button></div>
     </details>
     <VpnSwitch {id} {state} {action} />
   {/if}

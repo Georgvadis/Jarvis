@@ -1,5 +1,6 @@
 <script>
   import { connNetTest, NET_NAMES, serviceAction, VPN_NAMES } from "#state/connections.js";
+  import { icon } from "#helpers/core.js";
   import AccountSettings from "./AccountSettings.svelte";
   import HomeAssistant from "./HomeAssistant.svelte";
   import KeySettings from "./KeySettings.svelte";
@@ -38,14 +39,14 @@
     {:else if vpn.set}
       <p class="err">{vpn.error || "VPN запускается…"}</p>
     {:else}
-      <p class="note">Пока не задан — колонка ходит в интернет напрямую. Вставьте ссылку vless://… из вашего VPN (3x-ui, Marzban, Hiddify и т. п.).</p>
+      <p class="note">Вставьте ссылку <code>vless://…</code> (3x-ui, Marzban, Hiddify).</p>
     {/if}
     {#if vpn.error}<p class="err">{vpn.error}</p>{/if}
     <textarea id="vless" class="code" placeholder="vless://…" spellcheck="false" aria-label="Ссылка VLESS"></textarea>
     <div class="row">
-      <button type="button" class="btn primary" id="vless-save" onclick={action}>{vpn.set ? "Заменить ссылку" : "Сохранить ссылку"}</button>
+      <button type="button" class="btn primary" id="vless-save" onclick={action}>{@html icon("save")}{vpn.set ? "Обновить" : "Сохранить"}</button>
       <span class="spacer"></span><button type="button" class="btn" data-net
-        onclick={(event) => connNetTest(event.currentTarget, (result) => { network = result; })}>Проверить связь</button>
+        onclick={(event) => connNetTest(event.currentTarget, (result) => { network = result; })}>{@html icon("radio")}Проверить связь</button>
     </div>
     <div class="netres" id="net-res">
       {#if network?.pending}
@@ -70,13 +71,13 @@
 {#snippet drop(buttonId, label, onclick = action)}
   <div class="row cn-foot">
     <span class="spacer"></span>
-    <button type="button" class="btn ghost danger" id={buttonId} {onclick}>{label}</button>
+    <button type="button" class="btn ghost danger" id={buttonId} {onclick}>{@html icon("trash")}{label}</button>
   </div>
 {/snippet}
 
 {#if service.keyField && service.on}
   <div class="row cn-foot"><span class="spacer"></span>
-    <button type="button" class="btn ghost danger" data-clear={id} onclick={action}>{multipleKeys ? "Убрать все ключи" : "Убрать ключ"}</button>
+    <button type="button" class="btn ghost danger" data-clear={id} onclick={action}>{@html icon("trash")}{multipleKeys ? "Удалить все ключи" : "Удалить ключ"}</button>
   </div>
 {:else if id === "homeassistant" && service.on}
   {@render drop("ha-disconnect", "Отключить", (event) => homeAssistant.disconnect(event))}

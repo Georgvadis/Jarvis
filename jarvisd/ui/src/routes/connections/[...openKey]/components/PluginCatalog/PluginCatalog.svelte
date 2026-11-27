@@ -2,6 +2,7 @@
   import { refreshConnectionCatalog, updateConnectionPlugins, uploadConnectionPlugin } from "#state/connections.js";
   import { icon } from "#helpers/core.js";
   import PluginRow from "./PluginRow/PluginRow.svelte";
+  import styles from "../Connections.module.css";
 
   let { catalog } = $props();
   let installed = $derived(catalog.plugins.filter((plugin) => plugin.x.inst));
@@ -39,18 +40,19 @@
   }
 </script>
 
-{#snippet rows(plugins)}
-  <div class="card cx-rows">
+{#snippet grid(plugins)}
+  <div class={styles.grid}>
     {#each plugins as plugin (plugin.key)}
       <PluginRow {plugin} />
     {/each}
   </div>
 {/snippet}
 
-<section class="cn-group">
-  <div class="cn-gh">
+<section class={styles.group}>
+  <div class={styles.groupHead}>
+    <span class={styles.groupIcon}>{@html icon("puzzle")}</span>
     <h2>Установлены</h2>
-    <span class="meta">{installed.length}</span>
+    <span class={styles.groupBadge} class:active={installed.length > 0}>{installed.length}</span>
     <span class="spacer"></span>
     {#if catalog.canUpdate}
       <button class="btn sm primary" id="pl-update-all" type="button" disabled={updating} onclick={update}>
@@ -59,20 +61,24 @@
     {/if}
   </div>
   {#if installed.length}
-    {@render rows(installed)}
+    {@render grid(installed)}
   {:else}
     <div class="card plg-empty">
       {@html icon("puzzle")}
-      <p class="muted">Плагинов пока нет — выберите ниже или загрузите .zip</p>
+      <p class="muted">Плагинов пока нет — установите из каталога ниже или из .zip</p>
     </div>
   {/if}
 </section>
 
 {#if official.length || catalog.officialError || !catalog.officialReady}
-  <section class="cn-group">
-    <div class="cn-gh"><h2>Доступные</h2><span class="meta">официальные</span></div>
+  <section class={styles.group}>
+    <div class={styles.groupHead}>
+      <span class={styles.groupIcon}>{@html icon("sparkles")}</span>
+      <h2>Доступные</h2>
+      {#if official.length}<span class={styles.groupBadge}>{official.length}</span>{/if}
+    </div>
     {#if official.length}
-      {@render rows(official)}
+      {@render grid(official)}
     {:else if catalog.officialError}
       <p class="note bad" role="status">{catalog.officialError}</p>
     {:else}
@@ -82,14 +88,16 @@
 {/if}
 
 {#if community.length || catalog.communityError}
-  <section class="cn-group">
-    <div class="cn-gh">
+  <section class={styles.group}>
+    <div class={styles.groupHead}>
+      <span class={styles.groupIcon}>{@html icon("shield")}</span>
       <h2>От сообщества</h2>
+      {#if community.length}<span class={styles.groupBadge}>{community.length}</span>{/if}
       <span class="spacer"></span>
       <a class="lnk" href={"https://github.com/" + catalog.repo + "/blob/main/docs/PLUGINS.md"} target="_blank" rel="noopener">Как создать</a>
     </div>
     {#if community.length}
-      {@render rows(community)}
+      {@render grid(community)}
     {/if}
     {#if catalog.communityError}
       <p class="note bad" role="status">{catalog.communityError}</p>
