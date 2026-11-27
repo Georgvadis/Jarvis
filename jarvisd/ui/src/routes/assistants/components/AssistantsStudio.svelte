@@ -68,7 +68,6 @@
     <span class="chip">{profiles.length} {plural(profiles.length, "личность", "личности", "личностей")}</span>
   </div>
   <div class="section-head-right">
-    <a class="btn ghost" href="/characters">{@html icon("smile")} Характеры</a>
     <a class="btn primary" href={profilePath("new")}>{@html icon("plus")} Новый ассистент</a>
   </div>
 </header>
@@ -119,9 +118,6 @@
         {/if}
 
         <div class="persona-tags">
-          {#if ch?.name}
-            <span class="chip persona-chip">{@html icon("smile")} {ch.name}</span>
-          {/if}
           <span class="chip persona-chip">{@html icon("cpu")} {engineName(p)}</span>
           {#if vLabel}
             <span class="chip persona-chip">{@html icon("voice")} {vLabel}</span>

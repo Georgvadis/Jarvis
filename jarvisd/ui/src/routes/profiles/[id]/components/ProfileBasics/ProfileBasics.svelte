@@ -1,26 +1,36 @@
 <script>
   import { untrack } from "svelte";
   import { resizeAvatarFile } from "#helpers/avatar.js";
-  import { api, icon, tip, toast } from "#helpers/core.js";
-  import { reload, S } from "#state/panelState.js";
+  import { icon, tip, toast } from "#helpers/core.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
-  let { initial, prompts, onedit } = $props();
+  const presets = [
+    ["Дворецкий", "Ты — Джарвис, голосовой помощник в умной колонке. Говоришь по-русски, коротко и по делу, с лёгкой иронией, как дворецкий из фильма. Обращаешься к хозяину на «ты»."],
+    ["Кореш", "Ты — близкий друг: общаешься на «ты», с юмором и подколами, живо и по-простому. Говоришь коротко и честно: не знаешь — так и скажи."],
+    ["Учёный", "Ты — спокойный и точный учёный. Объясняешь просто, но без ошибок, приводишь одну яркую деталь или цифру. Отвечаешь в 2–3 предложения, если не просят подробнее."],
+    ["Лаконичный", "Отвечай максимально коротко: одно предложение, без вступлений и вежливых оборотов. Только суть."],
+    ["Детский", "Ты — добрый помощник для ребёнка. Говоришь просто, тепло и весело, без сложных слов и без страшного. Хвалишь за интересные вопросы."],
+  ];
+
+  let { initial, promptText = "", onedit, onprompt } = $props();
   let draft = $state({ ...untrack(() => initial) });
-  let promptList = $state.raw(untrack(() => prompts || []));
+  let text = $state(untrack(() => promptText));
   let dragOver = $state(false);
   let uploading = $state(false);
-  let editingPrompt = $state(false);
-  let promptDraftText = $state("");
-  let savingPrompt = $state(false);
+  let pendingPreset = $state(null);
 
-  let selectedPrompt = $derived(promptList.find((p) => p.id === draft.prompt) || null);
   let initialLetter = $derived((draft.name || "?").trim()[0] || "?");
 
   function edit(field, value) {
     if (draft[field] === value) return;
     draft[field] = value;
     onedit({ [field]: value });
+  }
+
+  function editPrompt(value) {
+    text = value;
+    pendingPreset = null;
+    onprompt?.(value);
   }
 
   export function updateSavedName(name, updateDraft) {
@@ -55,33 +65,22 @@
     if (file) void pickFile(file);
   }
 
-  function startEditPrompt() {
-    if (!selectedPrompt) return;
-    promptDraftText = selectedPrompt.text || "";
-    editingPrompt = true;
+  function applyPreset(presetName, presetText) {
+    if (text.trim() && text.trim() !== presetText) {
+      pendingPreset = { name: presetName, text: presetText };
+      return;
+    }
+    editPrompt(presetText);
   }
 
-  async function savePromptText() {
-    if (!selectedPrompt || savingPrompt) return;
-    const text = promptDraftText.trim();
-    if (!text) return toast("Введите описание характера", true);
-    savingPrompt = true;
-    try {
-      await api("PUT", "/api/prompt", { id: selectedPrompt.id, name: selectedPrompt.name, text });
-      await reload();
-      promptList = S.prompts || promptList;
-      editingPrompt = false;
-      toast("Характер обновлён");
-    } catch (error) {
-      toast(error.message, true);
-    } finally {
-      savingPrompt = false;
-    }
+  function confirmApplyPreset() {
+    if (!pendingPreset) return;
+    editPrompt(pendingPreset.text);
   }
 </script>
 
 <section class="card bento-card" id="profile-basics">
-  <h2>{@html icon("sparkles")} Личность и образ</h2>
+  <h2>{@html icon("sparkles")} Личность и характер</h2>
   <div class="studio-stack">
     <div
       class="persona-avatar-picker"
@@ -123,7 +122,7 @@
     </div>
 
     <div class="f">
-      <label for="p-tagline">Роль или короткое описание</label>
+      <label for="p-tagline">Короткое описание</label>
       <input id="p-tagline" type="text" maxlength="120" value={draft.tagline || ""} placeholder="Например: Саркастичный дворецкий"
         oninput={(event) => edit("tagline", event.currentTarget.value)}>
     </div>
@@ -139,41 +138,36 @@
     </div>
 
     <div class="f">
-      <label for="p-prompt">Характер {@html tip("Системный промпт: кто такой ассистент и как он общается.")}</label>
-      <div class="row">
-        <select id="p-prompt" value={draft.prompt} onchange={(event) => { editingPrompt = false; edit("prompt", event.currentTarget.value); }}>
-          {#each promptList as prompt (prompt.id)}
-            <option value={prompt.id}>{prompt.name}</option>
-          {/each}
-        </select>
-        {#if selectedPrompt && !editingPrompt}
-          <button type="button" class="ib" title="Изменить текст характера" aria-label="Изменить текст характера" onclick={startEditPrompt}>
-            {@html icon("edit")}
-          </button>
-        {/if}
+      <div class="persona-char-head">
+        <label for="p-prompt-text">Характер {@html tip("Как ассистент говорит, тон, обращение, привычки и роль. Передаётся модели в каждом разговоре.")}</label>
+        <span class="meta">{text.length} симв.</span>
       </div>
-    </div>
-
-    {#if editingPrompt && selectedPrompt}
-      <div class="persona-prompt-edit">
-        <textarea rows="5" aria-label="Текст характера" bind:value={promptDraftText} disabled={savingPrompt}></textarea>
-        <div class="row">
-          <button type="button" class="btn sm primary" disabled={savingPrompt} onclick={() => void savePromptText()}>
-            {@html icon("save")} Сохранить характер
+      <div class="persona-presets" role="group" aria-label="Быстрые шаблоны характера">
+        {#each presets as [presetName, presetText] (presetName)}
+          <button type="button" class="chip persona-preset-btn" onclick={() => applyPreset(presetName, presetText)}>
+            {presetName}
           </button>
-          <button type="button" class="btn sm ghost" disabled={savingPrompt} onclick={() => { editingPrompt = false; }}>
+        {/each}
+      </div>
+      {#if pendingPreset}
+        <div class="inline-confirm" role="alert">
+          <span>Заменить характер шаблоном «{pendingPreset.name}»?</span>
+          <button class="btn danger sm" type="button" onclick={confirmApplyPreset}>
+            {@html icon("check")} Заменить
+          </button>
+          <button class="btn ghost sm" type="button" onclick={() => { pendingPreset = null; }}>
             {@html icon("x")} Отмена
           </button>
         </div>
-      </div>
-    {:else if selectedPrompt?.text}
-      <div class="persona-prompt-preview">
-        <p>{selectedPrompt.text}</p>
-      </div>
-    {/if}
-
-    <div>
-      <a class="btn sm ghost" href="/characters">{@html icon("smile")} Все характеры</a>
+      {/if}
+      <textarea
+        id="p-prompt-text"
+        rows="6"
+        maxlength="18000"
+        placeholder="Ты — … Опишите манеру речи, характер, тон, длину ответов и особенности персонажа"
+        value={text}
+        oninput={(event) => editPrompt(event.currentTarget.value)}
+      ></textarea>
     </div>
   </div>
 </section>

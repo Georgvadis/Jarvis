@@ -20,6 +20,8 @@
   const { signal } = controller;
   let profile = $state({ ...initial, led: { ...initial.led } });
   let savedName = $state(initial.name);
+  let promptText = $state(untrack(() => (S.prompts || []).find((p) => p.id === initial.prompt)?.text || ""));
+  let promptEdited = $state(false);
   let dirty = $state(false);
   let working = $state("");
   let confirmDelete = $state(false);
@@ -62,6 +64,12 @@
     mark();
   }
 
+  function editPromptText(nextText) {
+    promptText = nextText;
+    promptEdited = true;
+    mark();
+  }
+
   function previewModels(engine) {
     const models = brain.getValues();
     if (engine === "classic") return { mode: "classic", tts_engine: profile.tts_engine, tts_model: models.tts };
@@ -82,11 +90,28 @@
 
   function save() {
     return run("save", async () => {
+      const trimmedName = profile.name.trim();
+      const trimmedPrompt = promptText.trim();
+      if (!trimmedName) throw new Error("Укажите имя ассистента");
+      if (trimmedPrompt && (promptEdited || isNew)) {
+        const sharedByOther = Boolean(
+          profile.prompt && (S.profiles || []).some((item) => item.id !== profile.id && item.prompt === profile.prompt),
+        );
+        const promptExists = Boolean(profile.prompt && (S.prompts || []).some((item) => item.id === profile.prompt));
+        const targetPromptId = !isNew && promptExists && !sharedByOther ? profile.prompt : "";
+        const res = await api("PUT", "/api/prompt", {
+          id: targetPromptId,
+          name: trimmedName,
+          text: trimmedPrompt,
+        }, { signal });
+        if (res?.id) profile.prompt = res.id;
+      }
       const payload = profilePayload($state.snapshot(profile), brain.getValues());
       const savedRevision = revision;
       const { id } = await api("PUT", "/api/profile", payload, { signal });
       await reload();
       if (signal.aborted) return;
+      promptEdited = false;
       toast("Сохранено");
       if (isNew) {
         clearDirty();
@@ -178,7 +203,7 @@
     avatar: initial.avatar,
     color: initial.color,
     prompt: initial.prompt,
-  }} prompts={S.prompts} onedit={edit} />
+  }} {promptText} onedit={edit} onprompt={editPromptText} />
   <ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
     onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
 </div>

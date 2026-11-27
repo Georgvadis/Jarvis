@@ -211,9 +211,8 @@
                   </div>
                 {/each}
                 <div class="asst-pop-foot">
-                  <a href="/assistants">{@html icon("users")}Все</a>
-                  <a href={profilePath("new")} id="add-profile">{@html icon("plus")}Новый</a>
-                  <a href="/characters">{@html icon("smile")}Характеры</a>
+                  <a href="/assistants">{@html icon("users")}<span>Все ассистенты</span></a>
+                  <a href={profilePath("new")} id="add-profile">{@html icon("plus")}<span>Новый</span></a>
                 </div>
               </div>
             {/if}

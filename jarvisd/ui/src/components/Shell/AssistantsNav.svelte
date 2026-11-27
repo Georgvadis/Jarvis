@@ -28,9 +28,4 @@
     {@html icon("plus")}
     <span>Новый</span>
   </a>
-  <span class="hub-tab-sep" aria-hidden="true"></span>
-  <a href="/characters" class="hub-tab" class:on={current === "characters"}>
-    {@html icon("smile")}
-    <span>Характеры</span>
-  </a>
 </nav>

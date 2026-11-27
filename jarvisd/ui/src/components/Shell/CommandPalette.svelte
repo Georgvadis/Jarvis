@@ -25,7 +25,6 @@
       { id: "nav-schedule", group: "Навигация", label: "Таймеры и сценарии", hint: "Студия · Автоматизации", icon: "clock", action: () => goto("/studio?tab=schedule") },
       { id: "nav-memory", group: "Навигация", label: "Знания и память", hint: "Умный поиск и факты", icon: "brain", action: () => goto("/memory") },
       { id: "nav-notes", group: "Навигация", label: "Заметки CyberNotes", hint: "Знания · Заметки", icon: "note", action: () => goto("/memory?tab=notes") },
-      { id: "nav-chars", group: "Навигация", label: "Характеры", hint: "Ассистенты · Системные роли", icon: "smile", action: () => goto("/characters") },
       { id: "nav-speaker", group: "Навигация", label: "Настройки · Колонка", hint: "Звук, микрофон, свет и ночь", icon: "speaker", action: () => goto("/speaker") },
       { id: "nav-speaker-int", group: "Навигация", label: "Настройки · Интеграции", hint: "ПК-компаньон, присутствие, Ollama, брифинг", icon: "link", action: () => goto("/speaker?tab=integrations") },
       { id: "nav-conn", group: "Навигация", label: "Настройки · Сервисы и ИИ", hint: "Ключи, YouTube, VPN и плагины", icon: "puzzle", action: () => goto("/connections") },
