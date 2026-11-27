@@ -224,7 +224,7 @@ impl GameManager {
             let e0 = eng.clone();
             let _ = tokio::task::spawn_blocking(move || {
                 let _ = e0.say_aloud(
-                    "[sfx:chime] [excited] Стартуем «Угадай мелодию»! Слушай отрывок 8 секунд и называй трек.",
+                    "[sfx:chime] Стартуем «Угадай мелодию»! Слушай отрывок 8 секунд и называй трек.",
                     Duration::from_secs(20),
                 );
             })
@@ -259,7 +259,7 @@ impl GameManager {
             RoundStep::Stop => return,
             RoundStep::Finish(score, total) => {
                 self.modes.reset(Some(&self.ambient));
-                let msg = format!("[sfx:fanfare] [happy] Игра окончена! Твой счёт: {score} из {total}.");
+                let msg = format!("[sfx:fanfare] Игра окончена! Твой счёт: {score} из {total}.");
                 engine.journal.note("игра", "Угадай мелодию: финал", &crate::sfx::strip_tags(&msg));
                 let _ = tokio::task::spawn_blocking(move || {
                     let _ = engine.say_aloud(&msg, Duration::from_secs(20));
@@ -274,17 +274,32 @@ impl GameManager {
             .music
             .call(&engine.host, "search", json!({"query": track.query, "type": "video"}))
             .await;
-        let vid = search_res
-            .ok()
-            .and_then(|v| {
-                v["items"]
-                    .as_array()
-                    .and_then(|arr| arr.first())
-                    .and_then(|it| it["id"].as_str())
-                    .map(str::to_string)
-            });
+        let vid = search_res.ok().and_then(|v| {
+            let arr = v["items"].as_array().or_else(|| v["Items"].as_array())?;
+            let first = arr.first()?;
+            first["id"]
+                .as_str()
+                .or_else(|| first["ID"].as_str())
+                .or_else(|| first["videoId"].as_str())
+                .or_else(|| first["video_id"].as_str())
+                .map(str::to_string)
+        });
 
-        let Some(video_id) = vid else {
+        let started = if let Some(video_id) = vid {
+            engine
+                .music
+                .call(&engine.host, "play_id", json!({"id": video_id, "title": track.display}))
+                .await
+        } else {
+            // Если search не вернул ID — запускаем напрямую через стандартный play по запросу
+            engine
+                .music
+                .call(&engine.host, "play", json!({"query": track.query}))
+                .await
+        };
+
+        if let Err(err) = started {
+            log::warn!("Угадай мелодию: не удалось включить «{}»: {err}", track.query);
             {
                 let mut m = self.melody.lock().unwrap();
                 if m.round_gen == round_gen {
@@ -292,15 +307,6 @@ impl GameManager {
                 }
             }
             Box::pin(self.play_melody_round(engine, round_gen)).await;
-            return;
-        };
-
-        if engine
-            .music
-            .call(&engine.host, "play_id", json!({"id": video_id, "title": track.display}))
-            .await
-            .is_err()
-        {
             return;
         }
 
