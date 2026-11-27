@@ -2269,9 +2269,16 @@ textarea { height: auto; }
   width: fit-content;
   max-width: calc(100vw - 28px);
   margin: 16px auto 0;
-  padding: 7px 8px 7px 16px;
+  padding: 6px 6px 6px 16px;
   border-radius: 999px !important;
   gap: 12px;
+}
+.savebar.savebar-pill:not(:has(.dirty)) {
+  padding: 6px;
+}
+.savebar.savebar-pill .btn {
+  border-radius: 999px !important;
+  padding-inline: 18px;
 }
 .savebar.savebar-pill .dirty {
   margin-left: 0;
