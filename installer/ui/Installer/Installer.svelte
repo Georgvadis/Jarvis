@@ -114,7 +114,7 @@
 
   <footer class={styles.bottomBar}>
     <span>Установка на вашу колонку · Без отдельного сервера</span>
-    <a href="https://github.com/Georgvadis/Jarvis#contributors-и-авторы-проектов" target="_blank" rel="noopener noreferrer">
+    <a href="https://github.com/Georgvadis/Jarvis#основа-и-лицензия" target="_blank" rel="noopener noreferrer">
       Авторы и благодарности
     </a>
   </footer>
