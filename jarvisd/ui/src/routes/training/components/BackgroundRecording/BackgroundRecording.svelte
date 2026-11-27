@@ -168,7 +168,7 @@
               </button>
             </div>
           {:else}
-            <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>Выйти</button>
+            <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>{@html icon("logOut")}Выйти</button>
           {/if}
         </div>
       {/if}
@@ -184,9 +184,9 @@
         </div>
         <div class="row">
           {#if result.running}
-            <button type="button" class="btn" disabled={pending} onclick={() => change("DELETE", backgroundUrl)}>Остановить</button>
+            <button type="button" class="btn" disabled={pending} onclick={() => change("DELETE", backgroundUrl)}>{@html icon("stop", "solid")}Остановить</button>
           {:else}
-            <button type="submit" class="btn primary" disabled={pending}>Записать фон</button>
+            <button type="submit" class="btn primary" disabled={pending}>{@html icon("mic")}Записать фон</button>
           {/if}
         </div>
       </form>
@@ -204,14 +204,14 @@
         <small class="muted">окно само увидит подключение</small>
       </div>
       <div class="row">
-        <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>Отмена</button>
+        <button type="button" class="btn ghost" disabled={pending} onclick={disconnect}>{@html icon("x")}Отмена</button>
       </div>
     {:else if result}
       {#if login?.error}<p class="note err" role="status">{login.error}</p>{/if}
       <div class="row">
-        <button type="button" class="btn primary" disabled={pending} onclick={connect}>Подключить Яндекс Диск</button>
+        <button type="button" class="btn primary" disabled={pending} onclick={connect}>{@html icon("cloud")}Подключить Яндекс Диск</button>
       </div>
-      <p class="note">Вход по коду в Яндекс ID. Колонка видит только свою папку «Приложения / YaJarvis» и не получает доступа к остальным файлам на Диске.</p>
+      <p class="note">Папка «Приложения / Jarvis» на Яндекс Диске для фоновых записей.</p>
     {:else if !error}
       <p class="note" role="status">Проверяю подключение…</p>
     {/if}
@@ -219,7 +219,7 @@
       <p class="note" class:err={Boolean(error || result?.error)} role="status">{error || status}</p>
     {/if}
     {#if error && !result}
-      <div><button type="button" class="btn" disabled={reading} onclick={refresh}>Повторить</button></div>
+      <div><button type="button" class="btn" disabled={reading} onclick={refresh}>{@html icon("refresh")}Повторить</button></div>
     {/if}
   </div>
 </section>
