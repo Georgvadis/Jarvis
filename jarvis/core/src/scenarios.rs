@@ -11,10 +11,12 @@ use std::{
 };
 
 const VALID_KINDS: &[&str] = &[
-    "stop_all", "volume", "ambient", "dj", "focus", "timer", "say", "briefing", "pc",
+    "stop_all", "volume", "ambient", "dj", "music", "focus", "timer", "wait",
+    "say", "ai", "briefing", "alice", "telegram", "led", "mode", "pc",
 ];
 const VALID_ICONS: &[&str] = &[
-    "sparkles", "sun", "moon", "briefcase", "coffee", "bolt", "music", "monitor", "lock", "radio", "disc", "clock",
+    "flame", "sparkles", "sun", "moon", "briefcase", "coffee", "bolt", "music",
+    "monitor", "lock", "radio", "disc", "clock", "home", "heart", "gamepad", "bell", "wand",
 ];
 const VALID_PC_ACTIONS: &[&str] = &[
     "media_play_pause",
@@ -276,6 +278,111 @@ impl ScenarioStore {
                             let _ = dj.start(engine.clone(), mood);
                         }
                     }
+                    "music" => {
+                        let query = step.value.trim();
+                        if !query.is_empty() {
+                            let _ = engine.music.play(&engine.host, query, false).await;
+                        }
+                    }
+                    "wait" => {
+                        let secs = step.number.unwrap_or(10).clamp(1, 7200) as u64;
+                        tokio::time::sleep(Duration::from_secs(secs)).await;
+                    }
+                    "ai" => {
+                        let prompt = step.value.trim();
+                        if !prompt.is_empty() {
+                            let s = engine.store.get();
+                            let p = s.active_profile();
+                            let sys = format!(
+                                "{}\nОтвечай коротко и естественно для озвучки вслух на умной колонке (2–4 предложения, без markdown и списков).",
+                                p.prompt
+                            );
+                            if let Ok(answer) = crate::llm::ask_with_pool(
+                                &engine.host,
+                                &s,
+                                &p,
+                                &sys,
+                                prompt,
+                                &engine.tools,
+                                Vec::new(),
+                                Some(&engine.gemini_pool),
+                            )
+                            .await
+                            {
+                                let clean = answer.trim().to_string();
+                                if !clean.is_empty() {
+                                    let e = engine.clone();
+                                    let _ = tokio::task::spawn_blocking(move || {
+                                        let _ = e.say_aloud(&clean, Duration::from_secs(45));
+                                    })
+                                    .await;
+                                }
+                            }
+                        }
+                    }
+                    "alice" => {
+                        let cmd = step.value.trim().to_string();
+                        if !cmd.is_empty() {
+                            let _ = tokio::task::spawn_blocking(move || {
+                                let _ = crate::alice::text(&cmd, true);
+                            })
+                            .await;
+                        }
+                    }
+                    "telegram" => {
+                        let msg = if step.value.trim().is_empty() {
+                            format!("Сценарий «{}» выполнен", sc.name)
+                        } else {
+                            step.value.trim().to_string()
+                        };
+                        crate::telegram_bot::notify_telegram(&engine.host, &engine.proxy, &msg).await;
+                    }
+                    "led" => {
+                        let raw = step.value.trim();
+                        let mins = step.number.unwrap_or(30).clamp(0, 480) as u64;
+                        if raw.eq_ignore_ascii_case("off") || mins == 0 {
+                            engine.leds.set(crate::led::Mode::Off);
+                        } else {
+                            let hex = if raw.starts_with('#') && raw.len() == 7 {
+                                raw
+                            } else {
+                                "#ff9900"
+                            };
+                            engine.leds.show(
+                                crate::led::Mode::Listening,
+                                hex,
+                                70,
+                                Duration::from_secs(mins * 60),
+                            );
+                        }
+                    }
+                    "mode" => {
+                        if let Some(modes) = &engine.tools.modes {
+                            let raw = step.value.trim();
+                            let (kind, arg) = raw
+                                .split_once(':')
+                                .map(|(a, b)| (a.trim().to_lowercase(), b.trim().to_string()))
+                                .unwrap_or_else(|| (raw.to_lowercase(), String::new()));
+                            let target = match kind.as_str() {
+                                "rpg" => Some(crate::modes::SpecialMode::Rpg(arg)),
+                                "quiz" => Some(crate::modes::SpecialMode::Quiz(arg)),
+                                "chat" => Some(crate::modes::SpecialMode::Chat),
+                                "translator" => Some(crate::modes::SpecialMode::Translator(
+                                    if arg.is_empty() { "английский".into() } else { arg },
+                                )),
+                                "normal" | "off" => Some(crate::modes::SpecialMode::Normal),
+                                _ => None,
+                            };
+                            if let Some(m) = target {
+                                let greeting = modes.activate(m, engine.tools.ambient.as_deref());
+                                let e = engine.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    e.say_text(&greeting);
+                                })
+                                .await;
+                            }
+                        }
+                    }
                     "focus" => {
                         if let Some(focus) = &engine.tools.focus {
                             let mins = step.number.unwrap_or(25).clamp(1, 99) as u64;
@@ -357,6 +464,8 @@ fn normalize_scenario(
             "volume" => Some(s.number.unwrap_or(5).clamp(0, 10)),
             "focus" => Some(s.number.unwrap_or(25).clamp(1, 99)),
             "timer" => Some(s.number.unwrap_or(5).clamp(1, 1440)),
+            "wait" => Some(s.number.unwrap_or(10).clamp(1, 7200)),
+            "led" => Some(s.number.unwrap_or(30).clamp(0, 480)),
             "ambient" => s.number.filter(|&n| n > 0).map(|n| n.clamp(1, 720)),
             "pc" if val == "sleep_timer" => Some(s.number.unwrap_or(30).clamp(1, 720)),
             _ => s.number,

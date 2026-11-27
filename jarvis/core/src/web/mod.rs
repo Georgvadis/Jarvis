@@ -213,6 +213,7 @@ pub fn router(app: App) -> Router {
         .route("/api/activity", get(talk::activity))
         .route("/api/scenario", post(talk::scenario_run))
         .route("/api/scenarios", get(talk::scenarios_list).post(talk::scenarios_create))
+        .route("/api/scenarios/generate", post(talk::scenarios_generate))
         .route("/api/scenarios/{id}", put(talk::scenarios_update).delete(talk::scenarios_delete))
         .route("/api/journal", get(talk::journal))
         .route("/api/journal/clear", post(talk::journal_clear))

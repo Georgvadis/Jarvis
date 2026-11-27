@@ -295,6 +295,65 @@ pub async fn scenarios_delete(
     }
 }
 
+pub async fn scenarios_generate(
+    State(app): State<App>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    let prompt = value["prompt"].as_str().unwrap_or("").trim().to_string();
+    let sys = r##"Ты конструктор сценариев для умной колонки Jarvis. Собери сценарий из 2–6 шагов по запросу пользователя.
+Верни ТОЛЬКО валидный JSON без пояснений:
+{"name":"Короткое название (2–4 слова)","phrase":"короткая голосовая фраза запуска","icon":"sparkles|sun|moon|flame|briefcase|coffee|bolt|music|monitor|lock|radio|home|heart|gamepad","steps":[{"kind":"...","value":"...","number":null}]}
+Допустимые kind:
+- "stop_all": остановить всё (value:"", number:null)
+- "volume": громкость колонки 0..10 (value:"", number:5)
+- "ambient": фон ("rain"|"fireplace"|"ocean"|"white"|"lofi"|"jazz"|"chill", number: минуты сна или null)
+- "dj": AI-DJ волна (value:"настроение", number:null)
+- "music": музыка YouTube (value:"запрос трека/жанра", number:null)
+- "focus": фокус-таймер (value:"", number:25)
+- "timer": таймер (value:"метка", number:10)
+- "wait": пауза в секундах (value:"", number:60)
+- "say": произнести фразу (value:"текст", number:null)
+- "ai": спросить ИИ и озвучить (value:"промпт для ИИ", number:null)
+- "briefing": сводка дня (value:"акцент или пусто", number:null)
+- "alice": команда умному дому / Алисе (value:"выключи свет", number:null)
+- "telegram": отправить в Telegram (value:"текст сообщения", number:null)
+- "led": подсветка кольца (value:"#ff9900" или "off", number:минуты)
+- "mode": режим ("rpg:тема"|"quiz:тема"|"chat"|"translator:английский"|"normal", number:null)
+- "pc": действие на ПК (value:"media_play_pause"|"media_next"|"media_prev"|"volume_mute"|"lock_screen"|"sleep_timer"|"screenshot_save", number:минуты для sleep_timer)"##;
+    let user_msg = if prompt.is_empty() {
+        format!("Придумай оригинальный полезный сценарий для дома (вариант #{})", crate::settings::rand_hex(2))
+    } else {
+        prompt
+    };
+    let s = app.store.get();
+    let p = s.active_profile();
+    let raw = match crate::llm::ask_with_pool(
+        &app.plugins,
+        &s,
+        &p,
+        sys,
+        &user_msg,
+        &app.engine.tools,
+        Vec::new(),
+        Some(&app.engine.gemini_pool),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Не удалось сгенерировать сценарий: {e}")),
+    };
+    let trimmed = raw.trim();
+    let json_slice = trimmed
+        .find('{')
+        .and_then(|a| trimmed.rfind('}').filter(|&b| b > a).map(|b| &trimmed[a..=b]))
+        .unwrap_or(trimmed);
+    let parsed: serde_json::Value = match serde_json::from_str(json_slice) {
+        Ok(v) => v,
+        Err(_) => return super::bad("Модель вернула некорректный формат сценария — попробуйте ещё раз"),
+    };
+    reply(StatusCode::OK, parsed)
+}
+
 pub async fn modes_get(State(app): State<App>) -> Response {
     reply(StatusCode::OK, app.modes.status())
 }
