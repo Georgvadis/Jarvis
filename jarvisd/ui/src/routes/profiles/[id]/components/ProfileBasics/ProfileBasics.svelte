@@ -6,6 +6,12 @@
   import { S } from "#state/panelState.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
+  const replyStyles = [
+    ["concise", "Коротко"],
+    ["", "Обычно"],
+    ["detailed", "Подробно"],
+    ["story", "Истории"],
+  ];
 
   let { initial, promptText = "", onedit, onprompt } = $props();
   let draft = $state({ ...untrack(() => initial) });
@@ -129,6 +135,18 @@
         {#each colors as color (color)}
           <button class={"av c" + color} class:on={draft.color === color} data-c={color} type="button"
             aria-label={"Цвет " + color} aria-pressed={draft.color === color} onclick={() => edit("color", color)}></button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="f">
+      <span class="lbl">Стиль ответов {@html tip("Определяет, насколько коротко или развёрнуто персонаж отвечает и рассказывает истории.")}</span>
+      <div class="seg" role="group" aria-label="Стиль ответов">
+        {#each replyStyles as [id, label] (id)}
+          {@const currentStyle = draft.reply_style === "balanced" ? "" : (draft.reply_style || "")}
+          <button type="button" class:on={currentStyle === id} aria-pressed={currentStyle === id} onclick={() => edit("reply_style", id)}>
+            {label}
+          </button>
         {/each}
       </div>
     </div>

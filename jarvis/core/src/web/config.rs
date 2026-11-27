@@ -223,6 +223,10 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
     {
         return bad("Неверный ID слова активации персонажа");
     }
+    p.reply_style = p.reply_style.trim().into();
+    if !matches!(p.reply_style.as_str(), "" | "concise" | "balanced" | "detailed" | "story") {
+        return bad("Неизвестный стиль ответов");
+    }
     p.avatar = p.avatar.trim().into();
     if !p.avatar.is_empty() {
         let ok_prefix = p.avatar.starts_with("data:image/jpeg;base64,")

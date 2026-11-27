@@ -102,6 +102,8 @@ pub struct Profile {
     pub tagline: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub wake_profile: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reply_style: String,
     pub mode: String,
     pub engine: String,
     pub live_model: String,

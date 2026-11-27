@@ -207,6 +207,7 @@
     color: initial.color,
     prompt: initial.prompt,
     wake_profile: initial.wake_profile || "",
+    reply_style: initial.reply_style || "",
   }} {promptText} onedit={edit} onprompt={editPromptText} />
 </div>
 <div class="profile-tech-wrap" class:hidden={ptab !== "brain"}>
