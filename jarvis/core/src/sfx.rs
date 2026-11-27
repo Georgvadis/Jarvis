@@ -41,24 +41,24 @@ pub fn emotion_led_color(emotion: &str) -> Option<&'static str> {
 }
 
 pub fn emotion_speed_gain(emotion: &str) -> (f64, f32) {
+    // Темп всегда 1.0: наивный OLA time-stretch даёт металлический «робовойс» на нейросетевых голосах.
     match emotion {
-        "whisper" => (0.94, 0.42),
-        "excited" => (1.07, 1.08),
-        "happy" => (1.03, 1.03),
-        "sarcastic" => (0.96, 1.0),
-        "sad" => (0.90, 0.85),
-        "angry" => (1.05, 1.10),
-        "calm" => (0.94, 0.90),
+        "whisper" => (1.0, 0.45),
+        "excited" => (1.0, 1.06),
+        "happy" => (1.0, 1.03),
+        "sarcastic" => (1.0, 1.0),
+        "sad" => (1.0, 0.88),
+        "angry" => (1.0, 1.08),
+        "calm" => (1.0, 0.92),
         _ => (1.0, 1.0),
     }
 }
 
-/// Детерминированный цвет LED-кольца и сдвиг темпа для произвольного персонажа (RPG / Детектив / Книга).
+/// Детерминированный цвет LED-кольца для произвольного персонажа (RPG / Детектив / Книга).
 pub fn speaker_style(name: &str) -> (f64, &'static str) {
-    const SPEEDS: &[f64] = &[0.91, 1.08, 0.96, 1.13, 0.87, 1.03];
     const COLORS: &[&str] = &["#f59e0b", "#38bdf8", "#ec4899", "#22c55e", "#a855f7", "#ef4444"];
     let hash = name.bytes().fold(5381u32, |h, b| h.wrapping_mul(33).wrapping_add(b as u32)) as usize;
-    (SPEEDS[hash % SPEEDS.len()], COLORS[hash % COLORS.len()])
+    (1.0, COLORS[hash % COLORS.len()])
 }
 
 /// Разобрать текст ответа на последовательность SFX, смены сцен и реплик с эмоциями/спикерами.

@@ -320,11 +320,20 @@ pub async fn modes_set(State(app): State<App>, axum::Json(value): axum::Json<ser
             });
             reply(StatusCode::OK, json!({"mode": "bedtime", "ok": true}))
         }
-        "rpg" | "quiz" | "translator" => {
+        "rpg" | "quiz" | "translator" | "custom" => {
             app.engine.tools.stop_for(&app.engine, "modes");
+            let topic = value["topic"].as_str().unwrap_or("").trim().to_string();
             let target = match mode.as_str() {
-                "rpg" => crate::modes::SpecialMode::Rpg,
-                "quiz" => crate::modes::SpecialMode::Quiz,
+                "rpg" => crate::modes::SpecialMode::Rpg(topic),
+                "quiz" => crate::modes::SpecialMode::Quiz(topic),
+                "custom" => {
+                    let title = value["title"].as_str().unwrap_or("Своя игра").trim().to_string();
+                    let prompt = value["prompt"].as_str().unwrap_or("").trim().to_string();
+                    if prompt.is_empty() {
+                        return super::bad("Опишите правила или сценарий игры");
+                    }
+                    crate::modes::SpecialMode::Custom { title, prompt }
+                }
                 _ => {
                     let lang = value["lang"]
                         .as_str()
@@ -1040,6 +1049,50 @@ pub async fn games_melody_skip(State(app): State<App>) -> Response {
         Ok(st) => reply(StatusCode::OK, st),
         Err(e) => super::bad(e),
     }
+}
+
+/// Генератор свежих идей для любого игрового режима и конструктора своей игры.
+pub async fn games_idea(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
+    let kind = value["kind"].as_str().unwrap_or("custom").trim().to_lowercase();
+    let hint = value["hint"].as_str().unwrap_or("").trim().to_string();
+    let sys = match kind.as_str() {
+        "melody" => "Придумай одну оригинальную и весёлую тему для музыкальной игры «Угадай мелодию» (2–5 слов, без кавычек). Верни ТОЛЬКО JSON: {\"theme\":\"...\"}",
+        "rpg" => "Придумай необычный и атмосферный сеттинг для голосового RPG-квеста (3–8 слов). Верни ТОЛЬКО JSON: {\"theme\":\"...\"}",
+        "quiz" => "Придумай увлекательную и небанальную тему для голосовой викторины (2–6 слов). Верни ТОЛЬКО JSON: {\"theme\":\"...\"}",
+        "detective" => "Придумай яркую завязку и сеттинг для нуарного детектива (4–10 слов). Верни ТОЛЬКО JSON: {\"theme\":\"...\"}",
+        _ => "Придумай крутую оригинальную голосовую игру для умной колонки. Верни ТОЛЬКО JSON: {\"title\":\"Короткое название\",\"rules\":\"Понятные правила и сеттинг в 2–3 предложениях\"}",
+    };
+    let user_msg = if hint.is_empty() {
+        format!("Удиви меня свежей идеей (вариант #{})", crate::settings::rand_hex(2))
+    } else {
+        format!("Идея с уклоном в: {hint}")
+    };
+    let s = app.store.get();
+    let p = s.active_profile();
+    let raw = match crate::llm::ask_with_pool(
+        &app.plugins,
+        &s,
+        &p,
+        sys,
+        &user_msg,
+        &app.engine.tools,
+        Vec::new(),
+        Some(&app.engine.gemini_pool),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Не удалось придумать идею: {e}")),
+    };
+    let trimmed = raw.trim();
+    let json_slice = trimmed
+        .find('{')
+        .and_then(|a| trimmed.rfind('}').filter(|&b| b > a).map(|b| &trimmed[a..=b]))
+        .unwrap_or(trimmed);
+    let parsed: serde_json::Value = serde_json::from_str(json_slice).unwrap_or_else(|_| {
+        json!({ "theme": trimmed.trim_matches('"'), "title": "Своя игра", "rules": trimmed })
+    });
+    reply(StatusCode::OK, parsed)
 }
 
 pub async fn games_detective(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {

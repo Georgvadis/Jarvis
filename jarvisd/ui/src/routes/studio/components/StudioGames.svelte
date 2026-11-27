@@ -3,14 +3,40 @@
   import { activity, refreshActivity } from "#state/activity.js";
 
   const PARTY_STORAGE = "jarvis.partyPlayers";
-  const melodyThemes = ["Аниме-опенинги", "Хиты 2000-х", "Рок", "Игры"];
+  const melodyThemes = ["Аниме-опенинги", "Хиты 2000-х", "Рок", "Игры", "Саундтреки кино", "Ретро 80–90-х"];
   const melodyRoundsList = [3, 5, 8];
   const melodySnippetList = [5, 8, 12, 15];
+
+  const rpgPresets = ["Тёмное фэнтези", "Киберпанк 2099", "Космоопера", "Выживание в бункере", "Мистика Японии"];
+  const quizPresets = ["Обо всём", "Аниме и манга", "Кино и сериалы", "Игры", "Наука и космос", "История"];
+  const detectivePresets = ["Особняк 1940-х", "Поезд в метель", "Неоновый Токио", "Космическая станция"];
+
+  const customTemplates = [
+    {
+      title: "Данетки",
+      rules: "Загадай короткую загадочную ситуацию (данетку). Игрок задаёт вопросы, на которые ты отвечаешь только «да», «нет» или «не важно», пока он не разгадает всю историю.",
+    },
+    {
+      title: "Акинатор наоборот",
+      rules: "Игрок загадывает персонажа из аниме, кино или игр, а ты задаёшь по одному наводящему вопросу (да/нет) и пытаешься угадать за 10 вопросов.",
+    },
+    {
+      title: "Суд присяжных",
+      rules: "Придумай абсурдное и смешное дело (например, кот украл сосиску и нанял адвоката). Игрок — судья или адвокат, ты ведёшь процесс, опрашиваешь свидетелей и реагируешь на его аргументы.",
+    },
+    {
+      title: "Интервью с пришельцем",
+      rules: "Ты пришелец с далёкой планеты, который впервые прилетел на Землю и ничего не понимает в обычных человеческих вещах. Игрок пытается объяснить тебе, как устроен мир.",
+    },
+  ];
+
   const GAME_CARDS = [
-    { id: "melody", title: "Угадай мелодию", hint: "8 сек · счёт", ic: "music" },
-    { id: "detective", title: "Нуарный детектив", hint: "Улики и допрос", ic: "eye" },
+    { id: "melody", title: "Угадай мелодию", hint: "Отрывки · счёт", ic: "music" },
+    { id: "rpg", title: "RPG-квест", hint: "Любой сеттинг", ic: "shield" },
+    { id: "quiz", title: "Викторина", hint: "Вопросы по теме", ic: "sparkles" },
+    { id: "detective", title: "Нуар-детектив", hint: "Улики и допрос", ic: "eye" },
+    { id: "custom", title: "Своя игра", hint: "Конструктор + ИИ", ic: "wand" },
     { id: "party", title: "Мафия / Бункер", hint: "Компания 3+", ic: "users" },
-    { id: "modes", title: "RPG и Викторина", hint: "Голосовые режимы", ic: "gamepad" },
   ];
 
   function loadPlayers() {
@@ -28,12 +54,20 @@
 
   let selectedGame = $state("melody");
   let melodyTheme = $state("Аниме-опенинги");
+  let melodyRounds = $state(5);
+  let melodySnippet = $state(8);
+  let melodyFromStart = $state(false);
+  let rpgTopic = $state("Тёмное фэнтези");
+  let quizTopic = $state("Обо всём");
   let detectiveTheme = $state("");
+  let customTitle = $state("");
+  let customRules = $state("");
   let partyGame = $state("mafia");
   let partyDiscussion = $state(60);
   let partyPlayers = $state(loadPlayers());
   let revealedRoles = $state({});
   let busy = $state(false);
+  let ideaBusy = $state(false);
 
   $effect(() => {
     try {
@@ -43,15 +77,35 @@
 
   let games = $derived($activity.games || { active_game: "", melody: {}, detective: {}, party: {} });
   let mode = $derived($activity.modes?.mode || "normal");
+  let modeTopic = $derived($activity.modes?.topic || "");
 
   function isLive(id) {
-    if (id === "modes") return mode === "rpg" || mode === "quiz";
+    if (id === "rpg") return mode === "rpg";
+    if (id === "quiz") return mode === "quiz";
+    if (id === "custom") return mode === "custom";
     return games.active_game === id;
   }
 
-  let melodyRounds = $state(5);
-  let melodySnippet = $state(8);
-  let melodyFromStart = $state(false);
+  async function generateIdea(kind) {
+    if (ideaBusy || busy) return;
+    ideaBusy = true;
+    try {
+      const res = await api("POST", "/api/games/idea", { kind });
+      if (kind === "melody" && res.theme) melodyTheme = res.theme;
+      else if (kind === "rpg" && res.theme) rpgTopic = res.theme;
+      else if (kind === "quiz" && res.theme) quizTopic = res.theme;
+      else if (kind === "detective" && res.theme) detectiveTheme = res.theme;
+      else if (kind === "custom") {
+        if (res.title) customTitle = res.title;
+        if (res.rules) customRules = res.rules;
+      }
+      toast("Идея придумана");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      ideaBusy = false;
+    }
+  }
 
   async function startMelody(theme = melodyTheme) {
     if (busy) return;
@@ -86,13 +140,26 @@
     }
   }
 
+  async function startMode(target, payload = {}) {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/modes", { mode: target, ...payload });
+      await refreshActivity();
+      toast(target === "off" ? "Режим выключен" : "Игра запущена на колонке");
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function startDetective(event) {
     event?.preventDefault();
     if (busy) return;
     busy = true;
     try {
       await api("POST", "/api/games/detective", { theme: detectiveTheme.trim() });
-      detectiveTheme = "";
       await refreshActivity();
       toast("Нуарный детектив начат");
     } catch (error) {
@@ -100,6 +167,14 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function startCustomGame(event) {
+    event?.preventDefault();
+    if (busy) return;
+    const prompt = customRules.trim();
+    if (!prompt) return toast("Опишите правила или сгенерируйте идею", true);
+    await startMode("custom", { title: customTitle.trim() || "Своя игра", prompt });
   }
 
   async function startParty(event) {
@@ -134,23 +209,9 @@
     }
   }
 
-  async function toggleMode(target) {
-    if (busy) return;
-    busy = true;
-    const next = mode === target ? "off" : target;
-    try {
-      await api("POST", "/api/modes", { mode: next });
-      await refreshActivity();
-      toast(next === "off" ? "Режим выключен" : "Режим включён");
-    } catch (error) {
-      toast(error.message, true);
-    } finally {
-      busy = false;
-    }
-  }
-
   async function stopGames() {
     await api("POST", "/api/games/stop", {});
+    await api("POST", "/api/modes", { mode: "off" }).catch(() => {});
     await refreshActivity();
     toast("Игра остановлена");
   }
@@ -170,9 +231,8 @@
         <span class="scene-badge">{@html icon(card.ic)}</span>
         <span class="scene-copy">
           <b>{card.title}</b>
-          <small>{isLive(card.id) ? "Идёт игра" : card.hint}</small>
+          <small>{isLive(card.id) ? "Идёт сейчас" : card.hint}</small>
         </span>
-        {#if isLive(card.id)}<span class="sdot"></span>{/if}
       </button>
     {/each}
   </div>
@@ -231,10 +291,70 @@
         </div>
         <div class="mode-row">
           <input type="text" maxlength="100" placeholder="Любая тема…" bind:value={melodyTheme} disabled={busy}>
+          <button type="button" class="btn" disabled={busy || ideaBusy} onclick={() => generateIdea("melody")} data-tip="Придумать случайную тему">
+            {@html icon("sparkles")} {ideaBusy ? "…" : "Идея"}
+          </button>
           <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Старт</button>
         </div>
       </form>
     </section>
+
+  {:else if selectedGame === "rpg"}
+    <section class="card">
+      <div class="card-head">
+        <h2>{@html icon("shield")} RPG-квест</h2>
+        {#if mode === "rpg"}
+          <div class="actions">
+            <span class="badge acc">{modeTopic || "Идёт квест"}</span>
+            <button type="button" class="btn sm ghost danger" onclick={stopGames}>{@html icon("stop", "solid")} Завершить</button>
+          </div>
+        {/if}
+      </div>
+      <form class="studio-stack" onsubmit={(e) => { e.preventDefault(); startMode("rpg", { topic: rpgTopic.trim() }); }}>
+        <div class="chip-row">
+          {#each rpgPresets as preset (preset)}
+            <button type="button" class="btn sm" class:primary={rpgTopic === preset} disabled={busy}
+              onclick={() => { rpgTopic = preset; }}>{preset}</button>
+          {/each}
+        </div>
+        <div class="mode-row">
+          <input type="text" maxlength="120" placeholder="Свой сеттинг (например: нуарный Токио 2080)…" bind:value={rpgTopic} disabled={busy}>
+          <button type="button" class="btn" disabled={busy || ideaBusy} onclick={() => generateIdea("rpg")} data-tip="Придумать сеттинг">
+            {@html icon("sparkles")} {ideaBusy ? "…" : "Идея"}
+          </button>
+          <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Старт</button>
+        </div>
+      </form>
+    </section>
+
+  {:else if selectedGame === "quiz"}
+    <section class="card">
+      <div class="card-head">
+        <h2>{@html icon("sparkles")} Викторина</h2>
+        {#if mode === "quiz"}
+          <div class="actions">
+            <span class="badge acc">{modeTopic || "Идёт викторина"}</span>
+            <button type="button" class="btn sm ghost danger" onclick={stopGames}>{@html icon("stop", "solid")} Завершить</button>
+          </div>
+        {/if}
+      </div>
+      <form class="studio-stack" onsubmit={(e) => { e.preventDefault(); startMode("quiz", { topic: quizTopic.trim() === "Обо всём" ? "" : quizTopic.trim() }); }}>
+        <div class="chip-row">
+          {#each quizPresets as preset (preset)}
+            <button type="button" class="btn sm" class:primary={quizTopic === preset} disabled={busy}
+              onclick={() => { quizTopic = preset; }}>{preset}</button>
+          {/each}
+        </div>
+        <div class="mode-row">
+          <input type="text" maxlength="120" placeholder="Любая тема викторины…" bind:value={quizTopic} disabled={busy}>
+          <button type="button" class="btn" disabled={busy || ideaBusy} onclick={() => generateIdea("quiz")} data-tip="Придумать тему">
+            {@html icon("sparkles")} {ideaBusy ? "…" : "Идея"}
+          </button>
+          <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Старт</button>
+        </div>
+      </form>
+    </section>
+
   {:else if selectedGame === "detective"}
     <section class="card">
       <div class="card-head">
@@ -260,12 +380,58 @@
         {/if}
       {/if}
       <form class="studio-stack" onsubmit={startDetective}>
+        <div class="chip-row">
+          {#each detectivePresets as preset (preset)}
+            <button type="button" class="btn sm" class:primary={detectiveTheme === preset} disabled={busy}
+              onclick={() => { detectiveTheme = preset; }}>{preset}</button>
+          {/each}
+        </div>
         <div class="mode-row">
-          <input type="text" maxlength="100" placeholder="Сеттинг (например: особняк 1940-х)" bind:value={detectiveTheme} disabled={busy}>
+          <input type="text" maxlength="120" placeholder="Сеттинг (например: особняк 1940-х)" bind:value={detectiveTheme} disabled={busy}>
+          <button type="button" class="btn" disabled={busy || ideaBusy} onclick={() => generateIdea("detective")} data-tip="Придумать дело">
+            {@html icon("sparkles")} {ideaBusy ? "…" : "Идея"}
+          </button>
           <button type="submit" class="btn primary" disabled={busy}>{@html icon("play", "solid")} Новое дело</button>
         </div>
       </form>
     </section>
+
+  {:else if selectedGame === "custom"}
+    <section class="card">
+      <div class="card-head">
+        <h2>{@html icon("wand")} Конструктор своей игры</h2>
+        {#if mode === "custom"}
+          <div class="actions">
+            <span class="badge acc">{modeTopic || "Идёт игра"}</span>
+            <button type="button" class="btn sm ghost danger" onclick={stopGames}>{@html icon("stop", "solid")} Завершить</button>
+          </div>
+        {/if}
+      </div>
+      <form class="studio-stack" onsubmit={startCustomGame}>
+        <div class="chip-row">
+          {#each customTemplates as tpl (tpl.title)}
+            <button type="button" class="btn sm" class:primary={customTitle === tpl.title} disabled={busy}
+              onclick={() => { customTitle = tpl.title; customRules = tpl.rules; }}>{tpl.title}</button>
+          {/each}
+        </div>
+        <div class="mode-row">
+          <input type="text" maxlength="80" placeholder="Название игры…" bind:value={customTitle} disabled={busy}>
+          <button type="button" class="btn" disabled={busy || ideaBusy} onclick={() => generateIdea("custom")}>
+            {@html icon("sparkles")} {ideaBusy ? "Придумываю…" : "Придумать идею"}
+          </button>
+        </div>
+        <div class="f">
+          <textarea rows="4" maxlength="1000" placeholder="Правила, роль ассистента и сеттинг…" bind:value={customRules} disabled={busy}></textarea>
+        </div>
+        <div class="row">
+          <span class="spacer"></span>
+          <button type="submit" class="btn primary" disabled={busy || !customRules.trim()}>
+            {@html icon("play", "solid")} Запустить на колонке
+          </button>
+        </div>
+      </form>
+    </section>
+
   {:else if selectedGame === "party"}
     <section class="card">
       <div class="card-head">
@@ -340,20 +506,6 @@
           </button>
         </div>
       </form>
-    </section>
-  {:else}
-    <section class="card">
-      <h2>{@html icon("gamepad")} Интерактивные голосовые режимы</h2>
-      <div class="quick-grid">
-        <button type="button" class="scen-btn" class:on={mode === "rpg"} disabled={busy} onclick={() => toggleMode("rpg")}>
-          {@html icon("shield")}
-          <span>{mode === "rpg" ? "RPG-спектакль · идёт" : "RPG-спектакль"}</span>
-        </button>
-        <button type="button" class="scen-btn" class:on={mode === "quiz"} disabled={busy} onclick={() => toggleMode("quiz")}>
-          {@html icon("cpu")}
-          <span>{mode === "quiz" ? "Викторина · идёт" : "Викторина"}</span>
-        </button>
-      </div>
     </section>
   {/if}
 </div>

@@ -240,6 +240,7 @@ pub fn router(app: App) -> Router {
         .route("/api/games", get(talk::games_status))
         .route("/api/games/melody", post(talk::games_melody))
         .route("/api/games/melody/skip", post(talk::games_melody_skip))
+        .route("/api/games/idea", post(talk::games_idea))
         .route("/api/games/detective", post(talk::games_detective))
         .route("/api/games/party/start", post(talk::games_party_start))
         .route("/api/games/party/next", post(talk::games_party_next))

@@ -1613,12 +1613,12 @@ impl Tools {
                 "rpg" => self
                     .modes
                     .as_ref()
-                    .map(|m| m.activate(crate::modes::SpecialMode::Rpg, self.ambient.as_deref()))
+                    .map(|m| m.activate(crate::modes::SpecialMode::Rpg(field("theme")), self.ambient.as_deref()))
                     .unwrap_or_else(|| "Режим RPG недоступен.".into()),
                 "quiz" => self
                     .modes
                     .as_ref()
-                    .map(|m| m.activate(crate::modes::SpecialMode::Quiz, self.ambient.as_deref()))
+                    .map(|m| m.activate(crate::modes::SpecialMode::Quiz(field("theme")), self.ambient.as_deref()))
                     .unwrap_or_else(|| "Викторина недоступна.".into()),
                 "translator" => {
                     let lang = {
