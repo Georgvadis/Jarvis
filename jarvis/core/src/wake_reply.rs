@@ -25,7 +25,7 @@ pub(super) const PHRASES: &[&str] = &[
     "Хм?",
 ];
 pub(super) const FOLLOW_ON_GAP: Duration = Duration::from_millis(70);
-const MAX_REPLY: Duration = Duration::from_millis(1150);
+const MAX_REPLY: Duration = Duration::from_millis(1800);
 const CACHE_BUDGET: u64 = 2 << 20;
 const WARM_PRIORITY_PHRASES: &[&str] = &["Да?", "Слушаю.", "Я тут.", "Говори.", "На связи.", "М?"];
 
