@@ -136,7 +136,6 @@
   <div class={sectionStyles.heading}>
     <div>
       <h2 id="memory-archive-title">{@html icon("voice")}Архив разговоров</h2>
-      <p class="muted">Дословно, последние 5000 реплик. На «как я рассказывал» Джарвис ищет здесь сам</p>
     </div>
   </div>
   <div class={styles.tools}>
@@ -195,6 +194,6 @@
     <p class={sectionStyles.empty} role="status">{loading ? "Загружаю архив…" : query ? "Ничего не нашлось." : "Архив пока пуст."}</p>
   {/if}
   {#if hasMore}
-    <div class="row"><button class="btn ghost" type="button" disabled={busy || loading} onclick={() => load(true)}>Показать ещё</button></div>
+    <div class="row"><button class="btn ghost" type="button" disabled={busy || loading} onclick={() => load(true)}>{@html icon("chevronDown")}Показать ещё</button></div>
   {/if}
 </section>

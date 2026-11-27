@@ -230,6 +230,30 @@
     ragDone = false;
   }
 
+  let speakingRag = $state(false);
+  async function speakRagAnswer() {
+    if (!ragAnswer || speakingRag) return;
+    speakingRag = true;
+    try {
+      await api("POST", "/api/say", { text: ragAnswer.slice(0, 6000), direct: true }, { signal });
+      toast("Озвучиваю ответ на колонке");
+    } catch (error) {
+      if (!signal.aborted) toast(error.message, true);
+    } finally {
+      speakingRag = false;
+    }
+  }
+
+  async function copySummary() {
+    if (!memory.summary) return;
+    try {
+      await navigator.clipboard.writeText(memory.summary);
+      toast("Конспект скопирован");
+    } catch {
+      toast("Не удалось скопировать", true);
+    }
+  }
+
   function exportToNotes() {
     void run(async () => {
       const res = await api("POST", "/api/memory/export-notes", {}, { signal });
@@ -255,27 +279,14 @@
 <header class="section-head">
   <div class="mem-head-left">
     <h1>Знания</h1>
-    {#if data}
-      <div class="mem-inline-stats">
-        <span class="chip">{facts.length} {plural(facts.length, "факт", "факта", "фактов")}</span>
-        <span class="chip">{archiveCount} в архиве</span>
-        {#if chronicle.length}<span class="chip">{chronicle.length} мес.</span>{/if}
-      </div>
+    {#if data && !settings.off}
+      <span class="chip">{facts.length} {plural(facts.length, "факт", "факта", "фактов")} · {archiveCount} в архиве</span>
+    {:else if data && settings.off}
+      <span class="badge warn">Память выключена</span>
     {/if}
   </div>
   {#if data}
     <div class="section-head-right">
-      <div class="seg" role="tablist" aria-label="Разделы знаний">
-        <button type="button" role="tab" aria-selected={tab === "facts"} class:on={tab === "facts"} onclick={() => switchTab("facts")}>
-          {@html icon("brain")}<span>Память</span>
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "notes"} class:on={tab === "notes"} onclick={() => switchTab("notes")}>
-          {@html icon("note")}<span>Заметки</span>
-        </button>
-        <button type="button" role="tab" aria-selected={tab === "archive"} class:on={tab === "archive"} onclick={() => switchTab("archive")}>
-          {@html icon("archive")}<span>Архив</span>
-        </button>
-      </div>
       <label class={["sw", styles.toggle]}>
         <input type="checkbox" checked={!settings.off} disabled={busy} onchange={changeEnabled}>
         <span class="tr"></span>
@@ -284,6 +295,23 @@
     </div>
   {/if}
 </header>
+
+<div class="hub-tabs" role="tablist" aria-label="Разделы знаний">
+  <button type="button" role="tab" aria-selected={tab === "facts"} class="hub-tab" class:on={tab === "facts"} onclick={() => switchTab("facts")}>
+    {@html icon("brain")}
+    <span>Память</span>
+    {#if facts.length}<span class="badge">{facts.length}</span>{/if}
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "notes"} class="hub-tab" class:on={tab === "notes"} onclick={() => switchTab("notes")}>
+    {@html icon("note")}
+    <span>Заметки</span>
+  </button>
+  <button type="button" role="tab" aria-selected={tab === "archive"} class="hub-tab" class:on={tab === "archive"} onclick={() => switchTab("archive")}>
+    {@html icon("archive")}
+    <span>Архив</span>
+    {#if archiveCount}<span class="badge">{archiveCount}</span>{/if}
+  </button>
+</div>
 
 {#snippet editorActions(small = false)}
   <div class="row">
@@ -308,16 +336,14 @@
       </p>
     {/if}
 
-    <section class={["card", styles.section]}>
-      <div class={styles.heading}>
-        <div>
-          <h2>{@html icon("sparkles")}Умный поиск по памяти и заметкам</h2>
-        </div>
-      </div>
+    <section class={["card", styles.section, styles.ragCard]}>
       <form class={styles.ragForm} onsubmit={(e) => { e.preventDefault(); void runRag(false); }}>
-        <input type="search" maxlength="160" placeholder="Задайте вопрос или введите тему…" bind:value={ragQuery} disabled={ragBusy}>
-        <button class="btn sm" type="submit" disabled={ragBusy || !ragQuery.trim()}>{@html icon("search")} Найти</button>
-        <button class="btn sm primary" type="button" disabled={ragBusy || !ragQuery.trim()} onclick={() => void runRag(true)}>
+        <label class={["cx-search", styles.ragInput]}>
+          {@html icon("search")}
+          <input type="search" maxlength="160" placeholder="Спросите по памяти и заметкам…" aria-label="Поиск по памяти и заметкам" bind:value={ragQuery} disabled={ragBusy}>
+        </label>
+        <button class="btn" type="submit" disabled={ragBusy || !ragQuery.trim()}>{@html icon("search")} Найти</button>
+        <button class="btn primary" type="button" disabled={ragBusy || !ragQuery.trim()} onclick={() => void runRag(true)}>
           {@html icon("sparkles")} {ragBusy ? "Ищу…" : "ИИ-ответ"}
         </button>
         {#if ragDone}
@@ -325,14 +351,22 @@
         {/if}
       </form>
       {#if ragAnswer}
-        <div class={["md-prose", styles.ragAnswer]} use:renderMd={ragAnswer}></div>
+        <div class={styles.ragAnswerWrap}>
+          <div class={styles.ragAnswerHead}>
+            <b>{@html icon("sparkles")} Ответ</b>
+            <button class="ib" type="button" disabled={speakingRag} title="Озвучить на колонке" aria-label="Озвучить на колонке" onclick={speakRagAnswer}>
+              {@html icon("voice")}
+            </button>
+          </div>
+          <div class={["md-prose", styles.ragAnswerBody]} use:renderMd={ragAnswer}></div>
+        </div>
       {/if}
       {#if ragHits.length}
         <div class={styles.ragHits}>
           {#each ragHits as hit, i (`${hit.source}:${hit.id || hit.path}:${i}`)}
             <article class={styles.ragHit}>
               <div class={styles.ragHitHead}>
-                <span class="chip">{hit.source === "note" ? "Заметка" : "Память"}</span>
+                <span class="chip">{@html icon(hit.source === "note" ? "note" : "brain")} {hit.source === "note" ? "Заметка" : "Память"}</span>
                 <b>{hit.title}</b>
                 {#if hit.folder}<small>{hit.folder}</small>{/if}
                 <small class={styles.push}>{Math.round((hit.score || 0) * 100)}%</small>
@@ -413,6 +447,7 @@
               data-tip="Сжать разговор в досье и конспект сейчас">{@html icon("refresh")}Обновить</button>
           {/if}
           {#if memory.summary && editor?.kind !== "summary"}
+            <button class="ib" type="button" title="Копировать конспект" aria-label="Копировать конспект" onclick={copySummary}>{@html icon("copy")}</button>
             <button class="btn sm ghost" type="button" disabled={busy}
               onclick={() => edit("summary", memory.summary)}>{@html icon("edit")}Изменить</button>
           {/if}

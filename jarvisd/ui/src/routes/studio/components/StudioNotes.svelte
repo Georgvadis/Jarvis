@@ -263,9 +263,9 @@
 <svelte:window onkeydown={onKeydown} />
 
 <div class="studio-stack">
-  <section class="card">
+  <section class="card bento-card">
     <div class="card-head">
-      <h2>{@html icon("note")} База знаний CyberNotes {#if total}<span class="badge">{total}</span>{/if}</h2>
+      <h2>{@html icon("note")} Заметки CyberNotes {#if total}<span class="badge">{total}</span>{/if}</h2>
       <div class="actions">
         <button type="button" class="btn sm" class:primary={!showComposer} onclick={() => { showComposer = !showComposer; }}>
           {@html icon(showComposer ? "x" : "plus")} {showComposer ? "Скрыть" : "Новая заметка"}
@@ -370,8 +370,8 @@
               </div>
             </div>
             <small>
-              {item.path}
-              {#if item.mtime} · {dateFmt.format(new Date(item.mtime * 1000))}{/if}
+              {#if item.folder}{item.folder}{/if}
+              {#if item.mtime}{#if item.folder} · {/if}{dateFmt.format(new Date(item.mtime * 1000))}{/if}
             </small>
             {#if item.tags?.length}
               <div class="note-card-tags">
@@ -439,7 +439,7 @@
           <div class="mode-foot">
             <span class="meta">Markdown (.md)</span>
             <div class="row">
-              <button type="button" class="btn sm ghost" disabled={modalBusy} onclick={() => { editMode = false; editDraft = openNote.content || ""; }}>Отмена</button>
+              <button type="button" class="btn sm ghost" disabled={modalBusy} onclick={() => { editMode = false; editDraft = openNote.content || ""; }}>{@html icon("x")} Отмена</button>
               <button type="button" class="btn sm primary" disabled={modalBusy || !editDraft.trim()} onclick={saveEditedNote}>
                 {@html icon("save")} Сохранить
               </button>

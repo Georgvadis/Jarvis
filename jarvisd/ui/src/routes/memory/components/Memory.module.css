@@ -121,11 +121,15 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px 10px 14px;
-  border: 1px solid transparent;
-  border-radius: 11px;
-  background: var(--raise);
-  transition: border-color .2s, background .2s;
+  padding: 11px 12px 11px 14px;
+  border: 1px solid var(--glass-border, var(--line));
+  border-radius: 13px;
+  background: var(--glass-inset, var(--raise));
+  transition: border-color .16s, background-color .16s;
+}
+.fact:hover {
+  border-color: var(--line2);
+  background: var(--glass-inset-hover, var(--raise2));
 }
 
 .fact span {
@@ -255,6 +259,10 @@
   border-color: color-mix(in srgb, var(--bad) 22%, var(--line));
 }
 
+.ragCard {
+  padding: 16px 18px;
+}
+
 .ragForm {
   display: flex;
   flex-wrap: wrap;
@@ -262,18 +270,39 @@
   align-items: center;
 }
 
-.ragForm input {
-  flex: 1 1 240px;
+.ragInput {
+  flex: 1 1 260px;
   min-width: 0;
 }
 
-.ragAnswer {
-  padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--acc) 35%, var(--line));
-  border-radius: 12px;
-  background: var(--raise);
+.ragAnswerWrap {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--acc) 38%, var(--glass-border));
+  border-radius: 14px;
+  background: var(--acc-soft);
+}
+
+.ragAnswerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ragAnswerHead b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--acc-ink);
+}
+
+.ragAnswerBody {
   font-size: 13.5px;
-  line-height: 1.5;
+  line-height: 1.55;
+  color: var(--fg);
 }
 
 .ragHits {
