@@ -424,6 +424,9 @@ details.mini { display: grid; gap: 8px; }
 
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 999px; background: var(--raise); color: var(--fg2); white-space: nowrap; }
+button.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+button.chip:hover { background: var(--card); border-color: var(--line-strong, var(--fg3)); color: var(--fg); }
+button.chip:disabled { opacity: .5; cursor: default; }
 .chip b { color: var(--fg); margin-left: 4px; }
 .chip.k-pos { color: var(--acc); } .chip.k-false { color: var(--bad); } .chip.k-near { color: var(--warn); }
 

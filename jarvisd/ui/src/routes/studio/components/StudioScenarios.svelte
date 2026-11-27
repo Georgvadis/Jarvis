@@ -364,7 +364,7 @@
       </button>
     </form>
 
-    <div class="presets">
+    <div class="chip-row">
       {#each TEMPLATES as tpl (tpl.label)}
         <button type="button" class="chip" disabled={busy || genBusy} onclick={() => applyTemplate(tpl)}>
           {@html icon(tpl.icon)} {tpl.label}
@@ -592,7 +592,7 @@
     gap: 10px;
     margin-bottom: 14px;
     padding-bottom: 14px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--line);
   }
   .scen-assist .row {
     gap: 8px;
