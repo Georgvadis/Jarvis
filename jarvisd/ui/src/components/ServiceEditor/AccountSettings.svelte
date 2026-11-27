@@ -32,8 +32,8 @@
   {:else}
     {#if login.error}<p class="err">{login.error}</p>{/if}
     <div class="row"><button type="button" class="btn primary" id="cg-in" onclick={action}>{@html icon("user")}Войти в ChatGPT</button></div>
-    <VpnSwitch {id} {state} {action} />
   {/if}
+  <VpnSwitch {id} {state} {action} />
 {:else if id === "youtube"}
   {#if youtube.code}
     <div class="ycode">
@@ -72,8 +72,8 @@
       <textarea id="yt-cookies" class="code" placeholder="# Netscape HTTP Cookie File…" spellcheck="false" aria-label="Куки YouTube"></textarea>
       <div class="row"><button type="button" class="btn sm primary" id="yt-save" onclick={action}>{@html icon("save")}{account.set ? "Обновить" : "Сохранить"}</button></div>
     </details>
-    <VpnSwitch {id} {state} {action} />
   {/if}
+  <VpnSwitch {id} {state} {action} />
 {:else if account.signed_in}
   <div class="cn-ok">{@html icon("done")}<span>Колонка вошла в {smartLife ? "Smart Life" : "Xiaomi Home"}{#if !smartLife && account.region}
     <small>{account.region.includes(",") ? "серверы" : "сервер"} {account.region}</small>

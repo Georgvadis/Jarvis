@@ -77,7 +77,6 @@
     async function pollMic() {
       if (!alive || signal.aborted) return;
       if (typeof document !== "undefined" && document.hidden) {
-        timer = setTimeout(pollMic, 400);
         return;
       }
       try {
@@ -91,12 +90,20 @@
       } catch {
         // ignore transient poll errors
       }
-      if (alive && !signal.aborted) timer = setTimeout(pollMic, 110);
+      if (alive && !signal.aborted) timer = setTimeout(pollMic, 140);
     }
-    pollMic();
+    const onVis = () => {
+      if (!document.hidden && alive && !signal.aborted) {
+        if (timer) clearTimeout(timer);
+        void pollMic();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    void pollMic();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
       controller.abort();
       clearPreview();
     };

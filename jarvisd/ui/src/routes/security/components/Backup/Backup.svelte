@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from "svelte";
   import { icon, toast, upload, waitRestart } from "#helpers/core.js";
   import { showGate } from "#state/panelState.js";
   import styles from "./Backup.module.css";
@@ -7,6 +8,8 @@
   const { signal } = controller;
   let busy = $state("");
   let pendingFile = $state(null);
+
+  onMount(() => () => controller.abort());
 
   function filenameFrom(response) {
     const header = response.headers.get("Content-Disposition") || "";

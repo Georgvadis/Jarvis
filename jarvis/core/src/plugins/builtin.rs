@@ -25,12 +25,14 @@ struct Live {
     id: u64,
     send: mpsc::Sender<Value>,
     received: tokio::sync::Mutex<mpsc::Receiver<Result<Value, String>>>,
-    task: AbortHandle,
+    tasks: [AbortHandle; 2],
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
-        self.task.abort();
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 }
 
@@ -48,40 +50,44 @@ impl Cloud {
         let key = params["key"].as_str().ok_or("Нет API-ключа")?;
         let network = (self.services)("network".into(), Value::Null).await?;
         let session = params.get("session").filter(|value| !value.is_null());
-        let mut socket = self.provider.socket_for(key, &network, session).await?;
-        let (send, mut outgoing) = mpsc::channel::<Value>(8);
-        let (incoming, received) = mpsc::channel(12);
+        let socket = self.provider.socket_for(key, &network, session).await?;
+        let (mut ws_tx, mut ws_rx) = socket.split();
+        let (send, mut outgoing) = mpsc::channel::<Value>(16);
+        let (incoming, received) = mpsc::channel(24);
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let task = tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    value = outgoing.recv() => {
-                        let Some(value) = value else { break };
-                        if socket.send(value.to_string().into()).await.is_err() {
-                            let _ = incoming.send(Err("Обрыв голосового соединения".into())).await;
+        // Разделяем чтение и запись WebSocket на две независимые задачи, чтобы обратное давление
+        // входящего аудиопотока не блокировало отправку кадров микрофона (круговой deadlock).
+        let incoming_err = incoming.clone();
+        let write_task = tokio::spawn(async move {
+            while let Some(value) = outgoing.recv().await {
+                if ws_tx.send(value.to_string().into()).await.is_err() {
+                    let _ = incoming_err.send(Err("Обрыв голосового соединения".into())).await;
+                    break;
+                }
+            }
+        }).abort_handle();
+        let read_task = tokio::spawn(async move {
+            while let Some(message) = ws_rx.next().await {
+                match message {
+                    Ok(Message::Close(frame)) => {
+                        let (code, reason) = frame
+                            .map(|f| (u16::from(f.code), f.reason.to_string()))
+                            .unwrap_or((1000, String::new()));
+                        let _ = incoming.send(Ok(json!({"close":reason,"code":code}))).await;
+                        break;
+                    }
+                    Ok(message) if message.is_text() || message.is_binary() => {
+                        let event = serde_json::from_slice::<Value>(&message.into_data())
+                            .map(|event| json!({"event":event}))
+                            .map_err(|_| "Неверное голосовое событие".into());
+                        if incoming.send(event).await.is_err() {
                             break;
                         }
                     }
-                    message = socket.next() => match message {
-                        Some(Ok(Message::Close(frame))) => {
-                            let (code, reason) = frame
-                                .map(|f| (u16::from(f.code), f.reason.to_string()))
-                                .unwrap_or((1000, String::new()));
-                            let _ = incoming.send(Ok(json!({"close":reason,"code":code}))).await;
-                            break;
-                        }
-                        Some(Ok(message)) if message.is_text() || message.is_binary() => {
-                            let event = serde_json::from_slice::<Value>(&message.into_data())
-                                .map(|event| json!({"event":event}))
-                                .map_err(|_| "Неверное голосовое событие".into());
-                            if incoming.send(event).await.is_err() { break }
-                        }
-                        Some(Ok(_)) => {}
-                        Some(Err(_)) => {
-                            let _ = incoming.send(Err("Обрыв голосового соединения".into())).await;
-                            break;
-                        }
-                        None => break,
+                    Ok(_) => {}
+                    Err(_) => {
+                        let _ = incoming.send(Err("Обрыв голосового соединения".into())).await;
+                        break;
                     }
                 }
             }
@@ -90,10 +96,12 @@ impl Cloud {
             id,
             send,
             received: tokio::sync::Mutex::new(received),
-            task,
+            tasks: [write_task, read_task],
         });
         if let Some(previous) = self.current.lock().unwrap().replace(live) {
-            previous.task.abort();
+            for t in &previous.tasks {
+                t.abort();
+            }
         }
         Ok(json!({"id":id}))
     }
@@ -111,7 +119,9 @@ impl Cloud {
             let mut current = self.current.lock().unwrap();
             if current.as_ref().is_some_and(|live| live.id == id) {
                 if let Some(live) = current.take() {
-                    live.task.abort();
+                    for t in &live.tasks {
+                        t.abort();
+                    }
                 }
             }
             return Ok(Value::Null);
@@ -144,7 +154,9 @@ impl Cloud {
 
     fn stop(&self) {
         if let Some(live) = self.current.lock().unwrap().take() {
-            live.task.abort();
+            for t in &live.tasks {
+                t.abort();
+            }
         }
         self.provider.close();
     }

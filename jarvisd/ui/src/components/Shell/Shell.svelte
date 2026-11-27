@@ -10,7 +10,7 @@
   import Gate from "#components/Shell/Gate/Gate.svelte";
   import SpeakerDock from "#components/Shell/SpeakerDock.svelte";
 
-  let { access, login, logout, sidebar, orb, navigation, children } = $props();
+  let { access, login, logout, retry = null, sidebar, orb, navigation, children } = $props();
   let active = $derived(access.status === "active");
   let profiles = $derived(sidebar?.profiles || []);
   let activeProfile = $derived(profiles.find((p) => p.active) || profiles[0] || null);
@@ -130,9 +130,9 @@
 
 <svelte:window onkeydown={handleWindowKey} onclick={handleWindowClick} />
 
-<Gate {access} {login} />
+<Gate {access} {login} {retry} />
 
-<div id="app" class="app topbar-shell" class:hidden={!active}>
+<div id="app" class="app topbar-shell" class:hidden={!active} class:has-live={liveItems.length > 0}>
   <!-- Парящая верхняя стеклянная навигация (вместо старого админского сайдбара) -->
   <div class="topbar-wrap">
     <header class="topbar" aria-label="Главная навигация">
@@ -171,6 +171,7 @@
         </a>
         <a href="/speaker" data-page="system" class:on={isSettingsPage}>
           {@html icon("sliders")}<span>Настройки</span>
+          <span class="top-dot" class:hidden={!sidebar?.updateAvailable}></span>
         </a>
       </nav>
 
@@ -299,9 +300,44 @@
           </span>
         </a>
       {/if}
-      <button type="button" class="ib" aria-label="Переключить тему" onclick={toggleThemeMode}>
-        {@html icon($themeState.mode === "dark" ? "sun" : "moon")}
-      </button>
+      <div class="top-theme">
+        <button type="button" class="ib" class:on={themeOpen} aria-label="Оформление и выход" aria-expanded={themeOpen} onclick={() => { asstOpen = false; themeOpen = !themeOpen; }}>
+          {@html icon("palette")}
+        </button>
+        {#if themeOpen}
+          <div class="top-pop theme-pop" role="dialog" aria-label="Оформление">
+            <div class="theme-pop-row">
+              <span class="theme-pop-lbl">Тема</span>
+              <button type="button" class="btn sm" onclick={toggleThemeMode}>
+                {@html icon($themeState.mode === "dark" ? "sun" : "moon")}
+                <span>{$themeState.mode === "dark" ? "Светлая" : "Тёмная"}</span>
+              </button>
+            </div>
+            <div class="theme-pop-row">
+              <span class="theme-pop-lbl">Свечение</span>
+              <div class="side-accents" role="group" aria-label="Оттенок">
+                {#each ACCENTS as acc (acc.id)}
+                  <button
+                    type="button"
+                    class={"side-acc-dot ac-" + acc.id}
+                    class:on={$themeState.accent === acc.id}
+                    title={acc.label}
+                    aria-label={acc.label}
+                    aria-pressed={$themeState.accent === acc.id}
+                    onclick={() => setAccent(acc.id)}
+                  ></button>
+                {/each}
+              </div>
+            </div>
+            <div class="theme-pop-foot">
+              <small class="mono">v{sidebar?.version ?? "…"}</small>
+              <button class="btn sm ghost" type="button" onclick={logout}>
+                {@html icon("logOut")}<span>Выйти</span>
+              </button>
+            </div>
+          </div>
+        {/if}
+      </div>
       <button type="button" class="ib" aria-label="Поиск команд" onclick={() => { cmdOpen = true; }}>{@html icon("search")}</button>
       <button type="button" class="mbar-btn" class:live={isTalking} disabled={mobileBusy} onclick={mobileControl}>
         {@html icon(isTalking ? "stop" : "mic", isTalking ? "solid" : "")}
@@ -346,6 +382,7 @@
     <a href="/memory" class="btab-item" class:on={page === "memory"}>{@html icon("brain")}<span>Знания</span></a>
     <a href="/speaker" class="btab-item" class:on={isSettingsPage}>
       {@html icon("sliders")}<span>Настройки</span>
+      {#if sidebar?.updateAvailable}<span class="btab-dot"></span>{/if}
     </a>
   </nav>
 </div>

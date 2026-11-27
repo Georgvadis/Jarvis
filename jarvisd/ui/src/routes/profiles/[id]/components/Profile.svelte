@@ -93,6 +93,8 @@
       const trimmedName = profile.name.trim();
       const trimmedPrompt = promptText.trim();
       if (!trimmedName) throw new Error("Укажите имя ассистента");
+      // Сначала валидируем профиль (profilePayload может бросить ошибку), чтобы не создавать висячий промпт.
+      const draftPayload = profilePayload($state.snapshot(profile), brain.getValues());
       if (trimmedPrompt && (promptEdited || isNew)) {
         const sharedByOther = Boolean(
           profile.prompt && (S.profiles || []).some((item) => item.id !== profile.id && item.prompt === profile.prompt),
@@ -104,9 +106,12 @@
           name: trimmedName,
           text: trimmedPrompt,
         }, { signal });
-        if (res?.id) profile.prompt = res.id;
+        if (res?.id) {
+          profile.prompt = res.id;
+          draftPayload.prompt = res.id;
+        }
       }
-      const payload = profilePayload($state.snapshot(profile), brain.getValues());
+      const payload = draftPayload;
       const savedRevision = revision;
       const { id } = await api("PUT", "/api/profile", payload, { signal });
       await reload();

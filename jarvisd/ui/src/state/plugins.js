@@ -178,7 +178,7 @@ async function waitModuleChange() {
     await new Promise((resolve) => setTimeout(resolve, 1000));
     try {
       const state = await api("GET", "/api/plugins");
-      if (!state.composition_pending) { location.reload(); return true; }
+      if (!state.composition_pending) { location.reload(); return false; }
     } catch { /* The speaker is restarting. */ }
   }
   throw new Error("Колонка не подтвердила применение изменений");

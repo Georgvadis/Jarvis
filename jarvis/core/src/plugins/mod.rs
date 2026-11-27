@@ -442,6 +442,7 @@ pub struct Host {
     wake_training_cached: AtomicBool,
     self_weak: std::sync::OnceLock<std::sync::Weak<Host>>,
     builtins: Mutex<BTreeMap<String, Arc<builtin::Builtin>>>,
+    crash_history: Mutex<BTreeMap<String, (std::time::Instant, u32)>>,
 }
 
 pub fn arch() -> &'static str {
@@ -485,6 +486,7 @@ impl Host {
             wake_training_cached: AtomicBool::new(false),
             self_weak: std::sync::OnceLock::new(),
             builtins: Mutex::default(),
+            crash_history: Mutex::default(),
         });
         let _ = host.self_weak.set(Arc::downgrade(&host));
         host
@@ -512,6 +514,60 @@ impl Host {
     pub(crate) fn refresh_wake_training(&self) {
         let g = self.inner.lock().unwrap();
         self.sync_wake_training(&g);
+    }
+
+    /// Обработка завершения процесса плагина: всегда шлём событие `"exit"` (сбрасывает состояние музыки/VPN),
+    /// а при неожиданном падении включённого плагина планируем ограниченный автоперезапуск с backoff.
+    pub(crate) fn on_plugin_exited(self: &Arc<Self>, manifest: Manifest) {
+        (self.hooks.event)(&manifest, "exit", Value::Null);
+        let id = manifest.id.clone();
+        let should_restart = {
+            let mut g = self.inner.lock().unwrap();
+            let enabled = g.state.get(&id).is_some_and(|s| s.enabled);
+            let unexpected = g.plugins.get_mut(&id).is_some_and(|p| {
+                // Если плагин остановили штатно через Host::stop/stop_all, p.rt уже None.
+                if p.rt.is_some() && !p.rt.as_ref().is_some_and(Runtime::running) {
+                    p.rt = None;
+                    true
+                } else {
+                    false
+                }
+            });
+            self.sync_wake_training(&g);
+            enabled && unexpected
+        };
+        if !should_restart {
+            return;
+        }
+        let delay = {
+            let now = std::time::Instant::now();
+            let mut hist = self.crash_history.lock().unwrap();
+            let entry = hist.entry(id.clone()).or_insert((now, 0));
+            if now.saturating_duration_since(entry.0) > Duration::from_secs(300) {
+                *entry = (now, 1);
+            } else {
+                entry.1 = entry.1.saturating_add(1);
+            }
+            if entry.1 > 5 {
+                log::warn!("плагины: {id} упал {} раз за 5 мин — автоперезапуск приостановлен", entry.1);
+                return;
+            }
+            let secs = (3u64 << (entry.1 - 1).min(3)).min(30);
+            Duration::from_secs(secs)
+        };
+        log::warn!("плагины: {id} неожиданно завершился — перезапуск через {} с", delay.as_secs());
+        let host = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let still_needs_start = {
+                let g = host.inner.lock().unwrap();
+                g.state.get(&id).is_some_and(|s| s.enabled)
+                    && g.plugins.get(&id).is_some_and(|p| !p.rt.as_ref().is_some_and(Runtime::running))
+            };
+            if still_needs_start {
+                host.start(&id).await;
+            }
+        });
     }
 
     pub fn dir(&self) -> PathBuf {
@@ -649,7 +705,7 @@ impl Host {
                     Err("Это имя зарезервировано для официального плагина".into())
                 }
             }
-            "rust" => process::Process::start(&m, &dir, (self.hooks.info)(), settings).await.map(Runtime::Process),
+            "rust" => process::Process::start(&m, &dir, (self.hooks.info)(), settings, Arc::downgrade(self)).await.map(Runtime::Process),
             "module" => {
                 #[cfg(feature = "native-plugins")]
                 let custom = native_addon::entries().find(|(manifest, _)| manifest.id == id).map(|(_, entry)| entry);
@@ -657,10 +713,10 @@ impl Host {
                 if let Some(entry) = custom {
                     native_addon::Native::start(entry, &m, self, id, dir, settings).map(|n| Runtime::Native(Arc::new(n)))
                 } else {
-                    Err("?????????? ????? ?? ???????????? ????????".into())
+                    Err("Встроенный модуль не поддерживается в этой сборке".into())
                 }
                 #[cfg(not(feature = "native-plugins"))]
-                Err("?????????? ????? ?? ???????????? ????????".into())
+                Err("Встроенный модуль не поддерживается в этой сборке".into())
             },
             #[cfg(feature = "lua")]
             "lua" if modules::official_lua_service(&m.id) && !self.official(id) => {
@@ -691,26 +747,34 @@ impl Host {
     }
 
     pub async fn stop(&self, id: &str) {
-        let rt = {
+        let stopped = {
             let mut g = self.inner.lock().unwrap();
-            let rt = g.plugins.get_mut(id).and_then(|p| p.rt.take());
+            let entry = g.plugins.get_mut(id).and_then(|p| {
+                p.rt.take().map(|rt| (p.manifest.clone(), rt))
+            });
             self.sync_wake_training(&g);
-            rt
+            entry
         };
-        if let Some(rt) = rt {
+        if let Some((manifest, rt)) = stopped {
             rt.stop().await;
+            (self.hooks.event)(&manifest, "exit", Value::Null);
         }
     }
 
     pub async fn stop_all(&self) {
-        let rts: Vec<Runtime> = {
+        let rts: Vec<(Manifest, Runtime)> = {
             let mut g = self.inner.lock().unwrap();
-            let rts = g.plugins.values_mut().filter_map(|p| p.rt.take()).collect();
+            let rts = g
+                .plugins
+                .values_mut()
+                .filter_map(|p| p.rt.take().map(|rt| (p.manifest.clone(), rt)))
+                .collect();
             self.sync_wake_training(&g);
             rts
         };
-        for rt in rts {
+        for (manifest, rt) in rts {
             rt.stop().await;
+            (self.hooks.event)(&manifest, "exit", Value::Null);
         }
         let builtins: Vec<_> = std::mem::take(&mut *self.builtins.lock().unwrap()).into_values().collect();
         for rt in builtins {
@@ -923,22 +987,24 @@ impl Host {
 
     pub async fn set_enabled(self: &Arc<Self>, id: &str, on: bool) -> Result<(), String> {
         let _operation = self.install_lock.lock().await;
-        let was = {
+        let (was, running) = {
             let mut g = self.inner.lock().unwrap();
-            if !g.plugins.contains_key(id) {
+            let Some(p) = g.plugins.get(id) else {
                 return Err("нет такого плагина".into());
-            }
+            };
+            let running = p.rt.as_ref().is_some_and(Runtime::running);
             let st = g.state_mut(id);
             let was = st.enabled;
             st.enabled = on;
             self.save(&g);
             self.sync_wake_training(&g);
-            was
+            (was, running)
         };
-        if on && !was {
+        if on && (!was || !running) {
+            self.crash_history.lock().unwrap().remove(id);
             self.start(id).await;
         }
-        if !on && was {
+        if !on && (was || running) {
             self.stop(id).await;
         }
         Ok(())
@@ -1100,7 +1166,12 @@ impl Host {
                 let p = &g.plugins[&id];
                 for s in p.manifest.settings.iter().filter(|s| s.kind == "password") {
                     if let Some(v) = vals.get(&s.key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
-                        let tail = if v.len() <= 8 { String::new() } else { v[v.len() - 4..].to_string() };
+                        let chars: Vec<char> = v.chars().collect();
+                        let tail: String = if chars.len() <= 8 {
+                            String::new()
+                        } else {
+                            chars[chars.len() - 4..].iter().collect()
+                        };
                         vals.insert(s.key.clone(), format!("•••{tail}").into());
                     }
                 }

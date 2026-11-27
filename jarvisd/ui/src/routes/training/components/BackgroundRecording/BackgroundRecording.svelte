@@ -11,7 +11,7 @@
 
 <script>
   import { onMount } from "svelte";
-  import { api, icon, toast } from "#helpers/core.js";
+  import { api, copyText, icon, toast } from "#helpers/core.js";
   import styles from "./BackgroundRecording.module.css";
 
   let { onconnection } = $props();
@@ -136,7 +136,7 @@
   async function copyCode(code) {
     if (!code) return;
     try {
-      await navigator.clipboard.writeText(code);
+      await copyText(code);
       toast("Код скопирован");
     } catch {
       toast("Выделите код вручную", true);
@@ -194,7 +194,6 @@
       <div class="ycode">
         <span>Откройте <a href={login.url || "https://ya.ru/device"} target="_blank" rel="noopener noreferrer">{(login.url || "https://ya.ru/device").replace("https://", "")}</a> и введите код</span>
         <b class="code-big" role="button" tabindex="0" title="Нажмите, чтобы скопировать"
-          onclick={() => copyCode(login.code)}
           onkeydown={(event) => {
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();

@@ -652,8 +652,13 @@ impl GameManager {
             if !m.awaiting_answer {
                 return "Дослушай отрывок и потом назови трек.".into();
             }
+            let Some(track) = m.tracks.get(m.round).cloned() else {
+                m.active = false;
+                m.awaiting_answer = false;
+                return "Игра завершена.".into();
+            };
             m.awaiting_answer = false;
-            (m.tracks[m.round].clone(), m.round_gen, m.tracks.len())
+            (track, m.round_gen, m.tracks.len())
         };
         let low = user_text.trim().to_lowercase();
         let skipped = is_melody_skip(&low);
@@ -684,6 +689,9 @@ impl GameManager {
 
         let score = {
             let mut m = self.melody.lock().unwrap();
+            if !m.active || m.round_gen != round_gen {
+                return "Раунд уже переключён.".into();
+            }
             if matched {
                 m.score += 1;
             }
@@ -933,6 +941,7 @@ async fn build_melody_pool(engine: &Engine, theme: &str) -> Vec<MelodyItem> {
     )
     .await
         && let (Some(a), Some(b)) = (raw.find('['), raw.rfind(']'))
+        && b > a
         && let Ok(arr) = serde_json::from_str::<Vec<Value>>(&raw[a..=b])
     {
         let parsed: Vec<MelodyItem> = arr
@@ -983,6 +992,7 @@ async fn generate_detective_case(engine: &Engine, theme: &str) -> DetectiveState
     )
     .await
         && let (Some(a), Some(b)) = (raw.find('{'), raw.rfind('}'))
+        && b > a
         && let Ok(v) = serde_json::from_str::<Value>(&raw[a..=b])
         && let Ok(suspects) = serde_json::from_value::<Vec<Suspect>>(v["suspects"].clone())
         && suspects.len() >= 2

@@ -92,8 +92,17 @@ async fn verify(password: String, hash: String) -> bool {
         .unwrap_or(false)
 }
 
-async fn hash(password: String) -> String {
-    tokio::task::spawn_blocking(move || bcrypt::hash(password, 10).unwrap_or_default()).await.unwrap_or_default()
+async fn hash(password: String) -> Result<String, String> {
+    if password.len() > 72 {
+        return Err("пароль — не длиннее 72 байт".into());
+    }
+    let h = tokio::task::spawn_blocking(move || bcrypt::hash(password, 10).map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())??;
+    if h.is_empty() {
+        return Err("не удалось захешировать пароль".into());
+    }
+    Ok(h)
 }
 
 pub fn check_rate_limit(app: &App, ip: std::net::IpAddr) -> Result<(), Response> {
@@ -161,14 +170,22 @@ pub async fn setup(State(app): State<App>, body: axum::body::Bytes) -> Response 
         Ok(r) if check_password(&r.password).is_ok() => r,
         _ => return bad("пароль — минимум 6 символов"),
     };
-    let h = hash(req.password).await;
-    let _ = app.store.update(|s| {
+    let h = match hash(req.password).await {
+        Ok(h) => h,
+        Err(e) => return bad(e),
+    };
+    if let Err(e) = app.store.update(|s| {
         if !s.password_hash.is_empty() {
-            return Err(std::io::Error::other("уже задан"));
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "Пароль уже задан"));
         }
         s.password_hash = h;
         Ok(())
-    });
+    }) {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            return reply(StatusCode::CONFLICT, json!({"error": "Пароль уже задан"}));
+        }
+        return reply(StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("Не удалось сохранить пароль: {e}")}));
+    }
     with_cookie(ok(), session_cookie(&app))
 }
 
@@ -189,7 +206,10 @@ pub async fn change_password(State(app): State<App>, body: axum::body::Bytes) ->
     if let Err(e) = check_password(&req.new) {
         return bad(e);
     }
-    let h = hash(req.new).await;
+    let h = match hash(req.new).await {
+        Ok(h) => h,
+        Err(e) => return bad(e),
+    };
     if let Err(e) = app.store.update(|s| {
         s.password_hash = h;
         s.session_key = rand_hex(32); // все старые входы — недействительны

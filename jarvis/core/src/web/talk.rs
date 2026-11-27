@@ -50,7 +50,7 @@ pub async fn wake_replies_clear(State(app): State<App>) -> Response {
     reply(StatusCode::OK, status)
 }
 pub async fn say(State(app):State<App>,axum::Json(value):axum::Json<serde_json::Value>)->Response {
-    let Some(text)=value["text"].as_str().map(str::trim).filter(|t|!t.is_empty() && t.len()<=16000)else{return super::bad("Текст: от 1 до 16000 байт");};
+    let Some(text)=value["text"].as_str().map(str::trim).filter(|t|!t.is_empty() && t.chars().count()<=16000 && t.len()<=48000)else{return super::bad("Текст: от 1 до 16000 символов");};
     let text=text.to_string();
     let direct=value["direct"].as_bool().unwrap_or(false);
     let speak=value["speak"].as_bool().unwrap_or(true);
@@ -103,11 +103,7 @@ async fn forward_voice_response(
 
 pub async fn local_voice_upload(State(app): State<App>, axum::Json(body): axum::Json<serde_json::Value>) -> Response {
     let url = format!("{}/voices/upload-b64", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    match client.post(&url).json(&body).send().await {
+    match crate::net::direct().post(&url).timeout(std::time::Duration::from_secs(60)).json(&body).send().await {
         Ok(resp) => {
             let status = resp.status();
             let data: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
@@ -138,12 +134,9 @@ pub async fn local_voice_upload_raw(
     let ref_text = query.get("ref_text").map(String::as_str).unwrap_or("");
     let language = query.get("language").map(String::as_str).unwrap_or("Russian");
     let url = format!("{}/voices/upload-raw", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    match client
+    match crate::net::direct()
         .post(&url)
+        .timeout(std::time::Duration::from_secs(60))
         .query(&[
             ("name", name),
             ("filename", filename),
@@ -151,7 +144,7 @@ pub async fn local_voice_upload_raw(
             ("language", language),
         ])
         .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await
     {
@@ -180,11 +173,7 @@ pub async fn local_voice_delete(
         return super::bad("Неверный ID голоса");
     }
     let url = format!("{}/voices/{}", local_voice_server(&app), id);
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    match client.delete(&url).send().await {
+    match crate::net::direct().delete(&url).timeout(std::time::Duration::from_secs(15)).send().await {
         Ok(resp) if resp.status().is_success() => ok(),
         Ok(resp) => {
             let data: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
@@ -704,8 +693,10 @@ pub async fn courses_export(
     };
     let idx = value.get("lesson_idx").and_then(|v| v.as_u64()).map(|n| n as usize);
     let md = crate::courses::CourseStore::build_summary_markdown(&course, idx);
-    crate::telegram_bot::notify_telegram(&app.plugins, &app.proxy, &md).await;
-    reply(StatusCode::OK, json!({"ok": true}))
+    match crate::telegram_bot::notify_telegram_checked(&app.plugins, &app.proxy, &md).await {
+        Ok(()) => reply(StatusCode::OK, json!({"ok": true})),
+        Err(e) => super::bad(e),
+    }
 }
 
 pub async fn modes_set(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
@@ -915,7 +906,7 @@ pub async fn journal_clear(State(app): State<App>) -> Response {
 }
 
 pub async fn debate_start(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
-    let Some(topic) = value["topic"].as_str().map(str::trim).filter(|t| !t.is_empty() && t.len() <= 300) else {
+    let Some(topic) = value["topic"].as_str().map(str::trim).filter(|t| !t.is_empty() && t.chars().count() <= 300 && t.len() <= 1200) else {
         return super::bad("Укажите тему спора (1..300 символов)");
     };
     if crate::debate::is_active() {
@@ -938,11 +929,7 @@ pub async fn debate_start(State(app): State<App>, axum::Json(value): axum::Json<
 
 pub async fn gpu_status(State(app): State<App>) -> Response {
     let url = format!("{}/health", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build() {
-        Ok(c) => c,
-        Err(_) => return reply(StatusCode::OK, json!({"online": false})),
-    };
-    match client.get(&url).send().await {
+    match crate::net::direct().get(&url).timeout(std::time::Duration::from_secs(2)).send().await {
         Ok(resp) if resp.status().is_success() => {
             let mut v: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
             if let Some(obj) = v.as_object_mut() {
@@ -956,11 +943,7 @@ pub async fn gpu_status(State(app): State<App>) -> Response {
 
 pub async fn gpu_unload(State(app): State<App>) -> Response {
     let url = format!("{}/unload", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(10)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    match client.post(&url).send().await {
+    match crate::net::direct().post(&url).timeout(std::time::Duration::from_secs(10)).send().await {
         Ok(resp) if resp.status().is_success() => {
             let mut v: serde_json::Value = resp.json().await.unwrap_or_else(|_| json!({}));
             if let Some(obj) = v.as_object_mut() {
@@ -1029,15 +1012,12 @@ pub async fn local_voice_emotion_upload(
     let filename = query.get("filename").map(String::as_str).unwrap_or("emotion.wav");
     let ref_text = query.get("ref_text").map(String::as_str).unwrap_or("");
     let url = format!("{}/voices/{}/emotions/{}", local_voice_server(&app), id, emotion);
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let resp = client
+    let resp = crate::net::direct()
         .post(&url)
+        .timeout(std::time::Duration::from_secs(60))
         .query(&[("filename", filename), ("ref_text", ref_text)])
         .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await;
     forward_voice_response(resp, "Ошибка загрузки эмоционального образца").await
@@ -1051,11 +1031,7 @@ pub async fn local_voice_emotion_delete(
         return super::bad("Неверный ID голоса или эмоции");
     }
     let url = format!("{}/voices/{}/emotions/{}", local_voice_server(&app), id, emotion);
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let resp = client.delete(&url).send().await;
+    let resp = crate::net::direct().delete(&url).timeout(std::time::Duration::from_secs(15)).send().await;
     forward_voice_response(resp, "Не удалось удалить эмоцию").await
 }
 
@@ -1092,15 +1068,12 @@ pub async fn notebook_upload(
     }
     let filename = query.get("filename").map(String::as_str).unwrap_or("document.txt");
     let url = format!("{}/extract-file", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let resp = match client
+    let resp = match crate::net::direct()
         .post(&url)
+        .timeout(std::time::Duration::from_secs(60))
         .query(&[("filename", filename), ("max_chars", "12000")])
         .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await
     {
@@ -1116,6 +1089,7 @@ pub async fn notebook_upload(
     let title = data["title"].as_str().unwrap_or(filename).trim().to_string();
     let p1_id = query.get("p1_id").map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
     let p2_id = query.get("p2_id").map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+    let turns = query.get("turns").and_then(|s| s.parse::<usize>().ok()).unwrap_or(6).clamp(2, 16);
     crate::debate::spawn_notebook(
         app.engine.clone(),
         crate::debate::NotebookParams {
@@ -1124,7 +1098,7 @@ pub async fn notebook_upload(
             title: title.clone(),
             p1_id,
             p2_id,
-            turns: 6,
+            turns,
         },
     );
     reply(StatusCode::OK, json!({"ok": true, "title": title}))
@@ -1132,11 +1106,7 @@ pub async fn notebook_upload(
 
 pub async fn books_list(State(app): State<App>) -> Response {
     let url = format!("{}/books", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(6)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let mut base = match client.get(&url).send().await {
+    let mut base = match crate::net::direct().get(&url).timeout(std::time::Duration::from_secs(6)).send().await {
         Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.unwrap_or_else(|_| json!({"books": []})),
         _ => json!({"ok": false, "books": []}),
     };
@@ -1157,15 +1127,12 @@ pub async fn books_upload(
     let filename = query.get("filename").map(String::as_str).unwrap_or("book.txt");
     let title = query.get("title").map(String::as_str).unwrap_or("");
     let url = format!("{}/books/upload-raw", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(60)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let resp = client
+    let resp = crate::net::direct()
         .post(&url)
+        .timeout(std::time::Duration::from_secs(60))
         .query(&[("filename", filename), ("title", title)])
         .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
-        .body(body.to_vec())
+        .body(body)
         .send()
         .await;
     forward_voice_response(resp, "Не удалось загрузить книгу").await
@@ -1173,11 +1140,12 @@ pub async fn books_upload(
 
 pub async fn books_url(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let url = format!("{}/books/from-url", local_voice_server(&app));
-    let client = match reqwest::Client::builder().timeout(std::time::Duration::from_secs(45)).build() {
-        Ok(c) => c,
-        Err(e) => return super::bad(e.to_string()),
-    };
-    let resp = client.post(&url).json(&value).send().await;
+    let resp = crate::net::direct()
+        .post(&url)
+        .timeout(std::time::Duration::from_secs(45))
+        .json(&value)
+        .send()
+        .await;
     forward_voice_response(resp, "Не удалось загрузить книгу по ссылке").await
 }
 
@@ -1921,8 +1889,8 @@ pub async fn notes_update(State(app): State<App>, axum::Json(value): axum::Json<
     if !valid_note_path(path) {
         return super::bad("Недопустимый путь заметки");
     }
-    let Some(content) = value["content"].as_str().filter(|c| !c.is_empty() && c.len() <= 100_000) else {
-        return super::bad("Текст заметки должен быть от 1 до 100000 байт");
+    let Some(content) = value["content"].as_str().filter(|c| !c.is_empty() && c.chars().count() <= 100_000 && c.len() <= 256_000) else {
+        return super::bad("Текст заметки должен быть от 1 до 100000 символов");
     };
     let url = format!("{}/notes/update", local_voice_server(&app));
     let resp = crate::net::direct()
@@ -1954,8 +1922,8 @@ pub async fn notes_delete(
 
 pub async fn notes_save(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let content = value["content"].as_str().unwrap_or("").trim();
-    if content.is_empty() || content.len() > 20000 {
-        return super::bad("Текст заметки должен быть от 1 до 20000 байт");
+    if content.is_empty() || content.chars().count() > 20000 || content.len() > 64000 {
+        return super::bad("Текст заметки должен быть от 1 до 20000 символов");
     }
     let title = value["title"].as_str().unwrap_or("").trim();
     let folder = value["folder"].as_str().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("Голосовые заметки");

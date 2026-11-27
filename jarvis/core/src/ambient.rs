@@ -674,7 +674,13 @@ async fn run_pcm48_stream_async(
             let target_gain = if duck.load(Ordering::Relaxed) { (vol * 0.18).min(0.14) } else { vol };
             let chunk_res = tokio::select! {
                 _ = notify.notified() => return true,
-                c = resp.chunk() => c,
+                c = tokio::time::timeout(Duration::from_secs(15), resp.chunk()) => match c {
+                    Ok(res) => res,
+                    Err(_) => {
+                        log::warn!("фон/радио: таймаут чтения потока — переподключаюсь");
+                        break;
+                    }
+                },
             };
             match chunk_res {
                 Ok(Some(chunk)) => {

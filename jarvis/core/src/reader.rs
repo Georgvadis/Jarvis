@@ -541,7 +541,7 @@ impl BookReader {
                     let eng = engine.clone();
                     tokio::spawn(async move {
                         if let Err(e) = me.start(eng.clone(), None, None).await {
-                            eng.say_text(&e);
+                            let _ = tokio::task::spawn_blocking(move || eng.say_text(&e)).await;
                         }
                     });
                 }
@@ -551,7 +551,7 @@ impl BookReader {
             let eng = engine.clone();
             tokio::spawn(async move {
                 if let Err(e) = me.start(eng.clone(), None, None).await {
-                    eng.say_text(&e);
+                    let _ = tokio::task::spawn_blocking(move || eng.say_text(&e)).await;
                 }
             });
             return Some("Открываю книгу с твоей закладки.".into());

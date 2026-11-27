@@ -67,6 +67,7 @@ impl Process {
         dir: &Path,
         info: Value,
         settings: Map<String, Value>,
+        host: std::sync::Weak<super::Host>,
     ) -> Result<Arc<Self>, String> {
         let exe = dir.join(&manifest.main);
         if !exe.symlink_metadata().is_ok_and(|meta| meta.is_file()) {
@@ -117,6 +118,7 @@ impl Process {
         let (tx, mut calls) = mpsc::channel::<Call>(8);
         let (stop, mut stopped) = watch::channel(false);
         let (alive, running) = watch::channel(true);
+        let exit_manifest = manifest.clone();
         tokio::spawn(async move {
             loop {
                 let call = tokio::select! {
@@ -149,6 +151,9 @@ impl Process {
             }
             let _ = child.kill().await;
             let _ = alive.send(false);
+            if let Some(host) = host.upgrade() {
+                host.on_plugin_exited(exit_manifest);
+            }
         });
         Ok(Arc::new(Self {
             tx,

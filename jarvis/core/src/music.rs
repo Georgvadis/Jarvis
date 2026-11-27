@@ -1172,6 +1172,7 @@ pub fn volume_loop(music: Arc<Music>, host: Arc<Host>, duck: impl Fn() -> bool +
         let mut rx = music.playing_tx.subscribe();
         let mut last_yt = -1.0_f64;
         let mut alice_saved_vol: Option<i64> = None;
+        let mut alice_duck_checked = false;
         loop {
             let is_duck = duck();
             let yt_playing = *rx.borrow_and_update();
@@ -1189,19 +1190,25 @@ pub fn volume_loop(music: Arc<Music>, host: Arc<Host>, duck: impl Fn() -> bool +
                 last_yt = -1.0;
             }
 
-            if alice_playing && is_duck && alice_saved_vol.is_none() {
-                if let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
-                    && cur > 2
-                {
-                    alice_saved_vol = Some(cur);
-                    let _ = tokio::task::spawn_blocking(|| crate::speakervol::set_alice_volume(2)).await;
+            if alice_playing && is_duck {
+                if !alice_duck_checked && alice_saved_vol.is_none() {
+                    alice_duck_checked = true;
+                    if let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
+                        && cur > 2
+                    {
+                        alice_saved_vol = Some(cur);
+                        let _ = tokio::task::spawn_blocking(|| crate::speakervol::set_alice_volume(2)).await;
+                    }
                 }
-            } else if !is_duck
-                && let Some(saved) = alice_saved_vol.take()
-                && let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
-                && cur <= 2
-            {
-                let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(saved)).await;
+            } else {
+                alice_duck_checked = false;
+                if !is_duck
+                    && let Some(saved) = alice_saved_vol.take()
+                    && let Ok(Some(cur)) = tokio::task::spawn_blocking(crate::speakervol::speaker_volume).await
+                    && cur <= 2
+                {
+                    let _ = tokio::task::spawn_blocking(move || crate::speakervol::set_alice_volume(saved)).await;
+                }
             }
 
             if yt_playing || alice_playing || is_duck || alice_saved_vol.is_some() {

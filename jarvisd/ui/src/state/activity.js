@@ -56,7 +56,9 @@ export function startActivityPolling() {
   subscribers++;
   if (pollTimer) return;
   void refreshActivity();
-  pollTimer = setInterval(() => void refreshActivity(), 4000);
+  pollTimer = setInterval(() => {
+    if (!document.hidden) void refreshActivity();
+  }, 4000);
   tickTimer = setInterval(() => {
     activity.update((cur) => {
       let changed = false;
@@ -233,18 +235,24 @@ export function summarizeActivity(a) {
 
   const mode = a.modes?.mode;
   if (mode && mode !== "normal" && !["melody", "detective", "party"].includes(mode)) {
-    const label = mode === "rpg"
-      ? "RPG-спектакль"
+    const modeMeta = mode === "rpg"
+      ? { label: "RPG-спектакль", icon: "shield", href: "/studio?tab=games" }
       : mode === "quiz"
-        ? "Викторина"
-        : `Перевод (${a.modes?.lang || ""})`;
+        ? { label: "Викторина", icon: "sparkles", href: "/studio?tab=games" }
+        : mode === "tutor"
+          ? { label: "Урок", icon: "book", href: "/studio?tab=learn" }
+          : mode === "custom"
+            ? { label: a.modes?.topic || "Своя игра", icon: "sparkles", href: "/studio?tab=games" }
+            : mode === "chat"
+              ? { label: "Свободный диалог", icon: "message", href: "/" }
+              : { label: a.modes?.lang ? `Перевод (${a.modes.lang})` : "Переводчик", icon: "globe", href: "/studio?tab=podcast" };
     items.push({
       id: "modes",
       kind: "modes",
-      icon: mode === "translator" ? "globe" : "shield",
-      title: label,
+      icon: modeMeta.icon,
+      title: modeMeta.label,
       subtitle: "Голосовой режим",
-      href: "/studio?tab=podcast",
+      href: modeMeta.href,
       canNext: false,
       stopMethod: "POST",
       stopUrl: "/api/modes",

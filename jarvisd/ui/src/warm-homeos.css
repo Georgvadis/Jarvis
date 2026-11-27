@@ -2744,9 +2744,12 @@ dialog::backdrop {
   .topbar-wrap { display: none !important; }
   .dock-wrap { display: none; }
   .mobile-only-cards { display: grid; gap: 16px; }
-  .savebar { bottom: calc(76px + env(safe-area-inset-bottom)); }
+  .savebar { bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 46; }
+  .app.has-live .savebar { bottom: calc(136px + env(safe-area-inset-bottom)); }
   .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .app.has-live .toast { bottom: calc(144px + env(safe-area-inset-bottom)); }
   .view { padding: 18px 14px calc(94px + env(safe-area-inset-bottom)) !important; }
+  .app.has-live .view { padding-bottom: calc(154px + env(safe-area-inset-bottom)) !important; }
   .hearth-stage { padding: 18px 16px !important; }
   .hearth-clock { font-size: 30px; }
   .hearth-copy h1 { font-size: 20px; line-height: 24px; }

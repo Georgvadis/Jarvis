@@ -154,6 +154,7 @@
   $effect(() => {
     const q = page.url.searchParams.get("tab");
     if (q && VALID_TABS.has(q)) tab = q;
+    else if (!q) tab = "general";
   });
 
   function switchTab(id) {
@@ -166,16 +167,28 @@
     let stopped = false;
     let timer;
     const pollMic = async () => {
+      if (document.hidden) {
+        if (!stopped && !signal.aborted) timer = setTimeout(() => void pollMic(), 1000);
+        return;
+      }
       try {
         const res = await api("GET", "/api/mic-level", undefined, { signal });
         if (!stopped && !signal.aborted && typeof res?.peak === "number") micPeak = res.peak;
       } catch { /* ignore */ }
       if (!stopped && !signal.aborted) timer = setTimeout(() => void pollMic(), 250);
     };
+    const onVis = () => {
+      if (!document.hidden && !stopped && !signal.aborted) {
+        clearTimeout(timer);
+        void pollMic();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
     void pollMic();
     return () => {
       stopped = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
     };
   });
 
@@ -482,6 +495,7 @@
     const val = event.currentTarget.value;
     localModelInput = val;
     await save("local_llm_model", () => ({ local_llm_model: val }), val ? `Локальная модель: ${val}` : "Локальная модель: авто");
+    localModelInput = settings.local_llm_model || "";
   }
 
   async function saveBriefing() {
@@ -590,7 +604,7 @@
         </label>
         <div class="nav-sep"></div>
         <div class="mem-inline-stats">
-          {#if state.speaker?.version}<span class="chip">{state.speaker.version}</span>{/if}
+          {#if state.version}<span class="chip">v{state.version}</span>{/if}
           <span class="chip">{state.speaker?.mic ? "Микрофон активен" : "Микрофон выкл."}</span>
           {#if settings.night_now}<span class="chip">Ночной режим</span>{/if}
         </div>

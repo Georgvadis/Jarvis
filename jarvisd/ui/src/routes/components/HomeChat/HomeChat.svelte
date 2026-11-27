@@ -89,8 +89,10 @@
     return ["", "webm"];
   }
 
+  let pttStarting = false;
+
   async function togglePtt() {
-    if (pttBusy) return;
+    if (pttBusy || pttStarting) return;
     if (pttRecording) {
       clearInterval(pttTickTimer);
       clearTimeout(pttMaxTimer);
@@ -112,10 +114,17 @@
       return;
     }
 
+    pttStarting = true;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
+      pttStarting = false;
       toast("Нет доступа к микрофону браузера", true);
+      return;
+    }
+    pttStarting = false;
+    if (signal.aborted) {
+      stopPttCleanup();
       return;
     }
 
@@ -144,6 +153,7 @@
         mediaStream = null;
       }
       pttRecording = false;
+      if (signal.aborted) return;
       const blob = new Blob(chunks, { type: mime || "audio/webm" });
       if (blob.size < 256) {
         toast("Запись слишком короткая", true);

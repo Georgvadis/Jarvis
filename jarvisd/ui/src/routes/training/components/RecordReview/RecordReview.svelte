@@ -7,21 +7,27 @@
     near: "колонка насторожилась, но не сработала",
   };
 
-  async function waveform(url, signal) {
+  async function loadClipAudio(url, signal) {
     const response = await fetch(url, { signal });
-    if (!response.ok) return emptyWave;
+    if (!response.ok) return { peaks: emptyWave, blobUrl: "" };
+    const type = response.headers.get("content-type") || "audio/wav";
     const bytes = await response.arrayBuffer();
-    const context = new OfflineAudioContext(1, 1, 16000);
-    const samples = (await context.decodeAudioData(bytes)).getChannelData(0);
-    const peaks = emptyWave.map((_, i) => {
-      const from = Math.floor(i * samples.length / barCount);
-      const to = Math.floor((i + 1) * samples.length / barCount);
-      let peak = 0;
-      for (let sample = from; sample < to; sample++) peak = Math.max(peak, Math.abs(samples[sample]));
-      return peak;
-    });
-    const top = Math.max(0.05, ...peaks);
-    return peaks.map((peak) => Math.max(6, Math.round(peak * 100 / top)));
+    const blobUrl = URL.createObjectURL(new Blob([bytes], { type }));
+    try {
+      const context = new OfflineAudioContext(1, 1, 16000);
+      const samples = (await context.decodeAudioData(bytes.slice(0))).getChannelData(0);
+      const peaks = emptyWave.map((_, i) => {
+        const from = Math.floor(i * samples.length / barCount);
+        const to = Math.floor((i + 1) * samples.length / barCount);
+        let peak = 0;
+        for (let sample = from; sample < to; sample++) peak = Math.max(peak, Math.abs(samples[sample]));
+        return peak;
+      });
+      const top = Math.max(0.05, ...peaks);
+      return { peaks: peaks.map((peak) => Math.max(6, Math.round(peak * 100 / top))), blobUrl };
+    } catch {
+      return { peaks: emptyWave, blobUrl };
+    }
   }
 </script>
 
@@ -33,6 +39,7 @@
 
   let { clip, remaining, autoplay, archivePlaying, busy, onplay, onanswer } = $props();
   let audio = $state();
+  let audioSrc = $state("");
   let bars = $state.raw(emptyWave);
   let playing = $state(false);
   let wantPlay = $state(false);
@@ -52,9 +59,18 @@
   onMount(() => {
     const controller = new AbortController();
     const media = audio;
-    void waveform(clipUrl(clip), controller.signal).then((peaks) => {
-      if (!controller.signal.aborted) bars = peaks;
-    }).catch(() => {});
+    let createdUrl = "";
+    void loadClipAudio(clipUrl(clip), controller.signal).then(({ peaks, blobUrl }) => {
+      if (controller.signal.aborted) {
+        if (blobUrl) URL.revokeObjectURL(blobUrl);
+        return;
+      }
+      bars = peaks;
+      createdUrl = blobUrl;
+      audioSrc = blobUrl || clipUrl(clip);
+    }).catch(() => {
+      if (!controller.signal.aborted) audioSrc = clipUrl(clip);
+    });
     if (autoplay) {
       wantPlay = true;
       if (media?.readyState >= 1) handleMetadata();
@@ -62,6 +78,7 @@
     return () => {
       controller.abort();
       media.pause();
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
   });
 
@@ -162,13 +179,13 @@
     bind:this={audio}
     bind:currentTime
     bind:duration
-    src={clipUrl(clip)}
+    src={audioSrc || undefined}
     preload="auto"
     onloadedmetadata={handleMetadata}
     onended={handleEnded}
     onplaying={() => { playing = true; playbackError = false; onplay(); }}
     onpause={() => { playing = false; }}
-    onerror={() => { playbackError = true; }}
+    onerror={() => { if (audioSrc) playbackError = true; }}
   ></audio>
   <div class={styles.controls}>
     <button class="np-play" type="button" aria-label={playing ? "Пауза" : "Прослушать"} onclick={toggle}>

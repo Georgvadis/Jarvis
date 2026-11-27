@@ -281,15 +281,23 @@ pub(crate) fn apply_verified_backup(
 ) -> Result<RestoreReport, String> {
     let total_bytes: usize = files.iter().map(|(_, b)| b.len()).sum();
     let free = free_mb(data_dir);
-    if free > 0 && free < ((total_bytes >> 20) + 2) as u64 {
+    let need = ((total_bytes >> 20) * 2 + 4) as u64;
+    if free > 0 && free < need {
         return Err(format!(
-            "Мало места на колонке для восстановления: свободно {free} МБ"
+            "Мало места на колонке для восстановления: свободно {free} МБ, нужно ~{need} МБ"
         ));
     }
 
     let staging = data_dir.join(".backup-restore.tmp");
+    struct StagingGuard(std::path::PathBuf);
+    impl Drop for StagingGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let _staging_guard = StagingGuard(staging.clone());
     for (rel, bytes) in files {
         let staged = staging.join(rel);
         if let Some(parent) = staged.parent() {
@@ -380,6 +388,15 @@ pub async fn restore(State(app): State<App>, body: Bytes) -> Response {
         Err(error) => return bad(error),
     };
 
+    let total_bytes: usize = files.iter().map(|(_, b)| b.len()).sum();
+    let free = free_mb(&app.data_dir);
+    let need = ((total_bytes >> 20) * 2 + 4) as u64;
+    if free > 0 && free < need {
+        return bad(format!(
+            "Мало места на колонке для восстановления: свободно {free} МБ, нужно ~{need} МБ"
+        ));
+    }
+
     app.plugins.stop_all().await;
 
     let data_dir = app.data_dir.clone();
@@ -412,7 +429,11 @@ pub async fn restore(State(app): State<App>, body: Bytes) -> Response {
                 "pending_plugins": report.pending_plugins,
             }))
         }
-        Err(error) => bad(error),
+        Err(error) => {
+            // Если восстановление не удалось — поднимаем плагины обратно, чтобы колонка не осталась мёртвой.
+            app.plugins.load().await;
+            bad(error)
+        }
     }
 }
 

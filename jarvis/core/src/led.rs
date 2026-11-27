@@ -522,6 +522,23 @@ impl Leds {
         }
     }
 
+    /// Временная смена оттенка текущего режима (например, для эмоций в речи): уважает выключенную подсветку
+    /// и ночную яркость и не обрывает свечение коротким таймером `until` посреди длинного ответа.
+    pub fn set_temp_color(self: &Arc<Self>, mode: Mode, hex: &str) {
+        let s = (self.inner.source)();
+        if !s.enabled {
+            return;
+        }
+        let mut st = self.inner.st.lock().unwrap();
+        if st.off || !st.available() {
+            return;
+        }
+        st.palette.set(mode, color_rgbw(hex, s.brightness));
+        if st.mode == mode {
+            st.frame();
+        }
+    }
+
     /// Что делает Джарвис (даже если подсветки нет) — для панели.
     pub fn phase(&self) -> Mode {
         self.inner.st.lock().unwrap().phase
@@ -714,17 +731,21 @@ impl Leds {
 
     fn write_clock_masks_ext(&self, masks: Option<[u8; 4]>, colon: bool, degree: bool, brightness_ratio: f64) {
         let mut st = self.inner.st.lock().unwrap();
-        if st.clock.is_empty() || st.mode != Mode::Off {
+        if st.clock.is_empty() {
             return;
         }
-        st.clock_override = masks.is_some();
         let Some(m) = masks else {
-            // Сбросим last, чтобы следующий вызов maind или own-clock спокойно перерисовал часы
+            // Всегда снимаем clock_override (даже если сейчас Mode::Speaking/Listening), чтобы штатные часы не зависали.
+            st.clock_override = false;
             for c in st.clock.iter_mut() {
                 c.last = -1;
             }
             return;
         };
+        if st.mode != Mode::Off {
+            return;
+        }
+        st.clock_override = true;
         let ratio = brightness_ratio.clamp(0.05, 1.0);
         for c in st.clock.iter_mut() {
             let b = c.color.as_bytes();

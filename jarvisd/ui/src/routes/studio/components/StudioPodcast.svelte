@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api, icon, toast, toastProgress, upload } from "#helpers/core.js";
   import { activity, refreshActivity } from "#state/activity.js";
-  import { S } from "#state/panelState.js";
+  import { S, speaker } from "#state/panelState.js";
 
   const controller = new AbortController();
   const { signal } = controller;
@@ -28,7 +28,7 @@
   ];
 
   let modeTab = $state("notebook");
-  let profiles = $derived(S.profiles || []);
+  let profiles = $derived($speaker?.profiles || S?.profiles || []);
   let nbUrl = $state("");
   let nbText = $state("");
   let nbFile = $state(null);
@@ -51,6 +51,7 @@
 
   let activeMode = $derived($activity.modes?.mode || "normal");
   let activeLang = $derived($activity.modes?.lang || "");
+  let sameTransLang = $derived(activeMode === "translator" && activeLang === transLang);
   let debateActive = $derived(Boolean($activity.debate_active));
 
   async function loadEpisodes() {
@@ -175,6 +176,7 @@
       if (nbFile) {
         const qs = new URLSearchParams({
           filename: nbFile.name || "doc.txt",
+          turns: String(nbTurns),
           ...(p1 ? { p1_id: p1 } : {}),
           ...(p2 && p2 !== p1 ? { p2_id: p2 } : {}),
         }).toString();
@@ -390,9 +392,9 @@
         </div>
         <div class="mode-foot">
           <span class="meta">{activeMode === "translator" ? `Активен: ${activeLang}` : "Говорите фразы — колонка переведёт"}</span>
-          <button type="button" class="btn" class:primary={activeMode !== "translator"} disabled={busy} onclick={toggleTranslator}>
-            {@html icon(activeMode === "translator" ? "stop" : "play", "solid")}
-            {activeMode === "translator" ? "Выключить" : "Включить"}
+          <button type="button" class="btn" class:primary={!sameTransLang} disabled={busy} onclick={toggleTranslator}>
+            {@html icon(sameTransLang ? "stop" : "play", "solid")}
+            {sameTransLang ? "Выключить" : activeMode === "translator" ? "Переключить язык" : "Включить"}
           </button>
         </div>
       </div>

@@ -53,7 +53,7 @@ function acceptMusic(state) {
   mAt = Date.now();
   clearTimeout(bufferingTimer);
   bufferingTimer = 0;
-  if (state?.playing && state?.loading) {
+  if (state?.playing && state?.loading && musicListeners.size > 0 && !document.hidden) {
     bufferingTimer = setTimeout(() => { bufferingTimer = 0; void musicData(); }, 400);
   }
   if (Array.isArray(state?.liked_ids)) {
@@ -78,7 +78,13 @@ function acceptMusic(state) {
 export function subscribeMusic(listener) {
   listener(M);
   musicListeners.add(listener);
-  return () => musicListeners.delete(listener);
+  return () => {
+    musicListeners.delete(listener);
+    if (musicListeners.size === 0) {
+      clearTimeout(bufferingTimer);
+      bufferingTimer = 0;
+    }
+  };
 }
 
 export async function musicData() {

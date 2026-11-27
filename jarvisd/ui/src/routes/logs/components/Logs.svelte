@@ -112,7 +112,7 @@
     a.href = url;
     a.download = `jarvis-${source}.log`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 </script>
 

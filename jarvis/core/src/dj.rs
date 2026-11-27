@@ -491,6 +491,9 @@ impl AiDj {
 fn parse_dj_json(raw: &str) -> Option<(String, Vec<String>)> {
     let start = raw.find('{')?;
     let end = raw.rfind('}')?;
+    if end <= start {
+        return None;
+    }
     let val: Value = serde_json::from_str(&raw[start..=end]).ok()?;
     let station = val["station"].as_str().unwrap_or("Ночной эфир").trim().to_string();
     let tracks: Vec<String> = val["tracks"]

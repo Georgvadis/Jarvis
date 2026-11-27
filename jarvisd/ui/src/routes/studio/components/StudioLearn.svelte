@@ -250,14 +250,14 @@
     </div>
 
     {#if courses.length}
-      <div class="chip-row" style="margin-bottom: {showCreator ? '14px' : '0'};">
+      <div class="chip-row" class:learn-chips-gap={showCreator}>
         {#each courses as c (c.id)}
           {@const isLive = tutorLive && activeMode.course_id === c.id}
           <button
             type="button"
             class="chip"
             class:on={selected?.id === c.id}
-            onclick={() => { selectedId = c.id; confirmDelete = false; }}
+            onclick={() => { selectedId = c.id; confirmDelete = false; revealed = {}; }}
           >
             {#if isLive}<span class="sdot"></span>{/if}
             {c.title}
@@ -281,7 +281,7 @@
             <label for="crs-topic">Что изучаем</label>
             <input id="crs-topic" type="text" maxlength="120" placeholder="Напр.: Английский язык, Rust, История" bind:value={newTopic} disabled={genBusy}>
           </div>
-          <div class="f" style="max-width: 180px;">
+          <div class="f learn-level-field">
             <label for="crs-level">Уровень</label>
             <select id="crs-level" bind:value={newLevel} disabled={genBusy}>
               {#each LEVELS as lv (lv)}
@@ -312,7 +312,7 @@
       <div class="card-head">
         <div>
           <h2>{selected.title}</h2>
-          <div class="chip-row" style="margin-top: 6px;">
+          <div class="chip-row learn-meta-chips">
             <span class="badge">{selected.level}</span>
             <span class="badge">{doneCount}/{totalLessons} уроков</span>
             {#if selected.bilingual}
@@ -323,7 +323,7 @@
             {/if}
           </div>
         </div>
-        <div class="row" style="flex-wrap: wrap;">
+        <div class="row learn-head-acts">
           {#if tutorLive && activeMode.course_id === selected.id}
             <button type="button" class="btn sm primary" disabled={busy} onclick={() => finishLesson(selected, false)}>
               {@html icon("check")} Завершить и сохранить
@@ -355,7 +355,7 @@
 
       <div class="learn-bar"><span style:width={`${progressPct}%`}></span></div>
 
-      <div class="hub-tabs" style="margin-top: 12px;">
+      <div class="hub-tabs learn-mt">
         <button type="button" class="hub-tab" class:on={subTab === "lessons"} onclick={() => { subTab = "lessons"; }}>
           {@html icon("list")} Программа ({totalLessons})
         </button>
@@ -406,7 +406,7 @@
           {/each}
         </div>
       {:else}
-        <div class="studio-stack" style="margin-top: 12px;">
+        <div class="studio-stack learn-mt">
           <form class="row" onsubmit={addCard}>
             <input type="text" maxlength="120" placeholder="Слово / вопрос" bind:value={cardFront} disabled={busy}>
             <input type="text" maxlength="200" placeholder="Перевод / ответ" bind:value={cardBack} disabled={busy}>
@@ -424,20 +424,21 @@
 
           {#if selected.cards?.length}
             <div class="learn-list">
-              {#each selected.cards as card, idx (idx)}
+              {#each selected.cards as card, idx (`${selected.id}:${card.front}:${card.back}`)}
+                {@const cardKey = `${selected.id}:${card.front}:${card.back}`}
                 <div class="learn-row">
                   <div class="learn-body">
                     <div class="learn-top">
                       <strong>{card.front}</strong>
                       <span class="badge">{card.interval_days}д</span>
                     </div>
-                    {#if revealed[idx]}
+                    {#if revealed[cardKey]}
                       <div class="learn-notes">{card.back}</div>
                     {/if}
                   </div>
                   <div class="row">
-                    {#if !revealed[idx]}
-                      <button type="button" class="btn sm ghost" onclick={() => { revealed = { ...revealed, [idx]: true }; }}>
+                    {#if !revealed[cardKey]}
+                      <button type="button" class="btn sm ghost" onclick={() => { revealed = { ...revealed, [cardKey]: true }; }}>
                         {@html icon("eye")} Ответ
                       </button>
                     {:else}
@@ -465,6 +466,21 @@
 </div>
 
 <style>
+  .learn-chips-gap {
+    margin-bottom: 14px;
+  }
+  .learn-level-field {
+    max-width: 180px;
+  }
+  .learn-meta-chips {
+    margin-top: 6px;
+  }
+  .learn-head-acts {
+    flex-wrap: wrap;
+  }
+  .learn-mt {
+    margin-top: 12px;
+  }
   .learn-create {
     padding-top: 12px;
     border-top: 1px solid var(--line);

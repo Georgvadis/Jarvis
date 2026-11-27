@@ -210,10 +210,18 @@
   }
 
   async function stopGames() {
-    await api("POST", "/api/games/stop", {});
-    await api("POST", "/api/modes", { mode: "off" }).catch(() => {});
-    await refreshActivity();
-    toast("Игра остановлена");
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", "/api/games/stop", {});
+      await api("POST", "/api/modes", { mode: "off" }).catch(() => {});
+      await refreshActivity();
+      toast("Игра остановлена");
+    } catch (error) {
+      toast(error.message || "Не удалось остановить игру", true);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 

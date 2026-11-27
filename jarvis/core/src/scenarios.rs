@@ -322,7 +322,7 @@ impl ScenarioStore {
                             let p = s.active_profile();
                             let sys = format!(
                                 "{}\nОтвечай коротко и естественно для озвучки вслух на умной колонке (2–4 предложения, без markdown и списков).",
-                                p.prompt
+                                s.prompt_text(&p.prompt)
                             );
                             if let Ok(answer) = crate::llm::ask_with_pool(
                                 &engine.host,

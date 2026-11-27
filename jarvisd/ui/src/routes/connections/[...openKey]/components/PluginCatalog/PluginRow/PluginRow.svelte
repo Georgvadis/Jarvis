@@ -76,7 +76,7 @@
         </button>
         <button class="ib danger {styles.del}" type="button" disabled={busy}
           data-tip="Удалить плагин" aria-label={"Удалить " + plugin.name}
-          onclick={() => run(() => removeConnectionPlugin(installed.id))}>
+          onclick={(e) => { const btn = e.currentTarget; void run(() => removeConnectionPlugin(installed.id, btn)); }}>
           {@html icon("trash")}
         </button>
       </div>

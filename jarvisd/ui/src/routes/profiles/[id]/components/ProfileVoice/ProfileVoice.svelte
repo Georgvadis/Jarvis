@@ -334,6 +334,7 @@
     if (!vname) return toast("Введите название голоса", true);
     if (!qwenFile) return toast("Выберите аудиофайл (5–15 сек)", true);
     if (qwenFile.size > 15 * 1024 * 1024) return toast("Файл больше 15 МБ", true);
+    const form = event.currentTarget;
     qwenUploading = true;
     try {
       const qs = new URLSearchParams({
@@ -347,7 +348,7 @@
       qwenName = "";
       qwenRefText = "";
       qwenFile = null;
-      const input = event.currentTarget.querySelector('input[type="file"]');
+      const input = form?.querySelector('input[type="file"]');
       if (input) input.value = "";
       toast(res.ref_text ? `Голос «${res.name}» добавлен (текст распознан)` : `Голос «${res.name}» добавлен`);
       pluginVoices.delete(ttsProvider);
@@ -383,13 +384,14 @@
   );
 
   async function uploadEmotion(emo, event) {
-    const file = event.currentTarget.files?.[0];
+    const input = event.currentTarget;
+    const file = input?.files?.[0];
     if (!file || !selected || emoBusy) return;
     emoBusy = emo;
     try {
       const qs = new URLSearchParams({ filename: file.name || `${emo}.wav` }).toString();
       await upload("POST", `/api/local-voices/${encodeURIComponent(selected)}/emotions/${encodeURIComponent(emo)}?${qs}`, file, { signal });
-      event.currentTarget.value = "";
+      if (input) input.value = "";
       toast(`Эмоция «${emo}» загружена`);
       pluginVoices.delete(ttsProvider);
       await loadPluginVoices(ttsProvider);

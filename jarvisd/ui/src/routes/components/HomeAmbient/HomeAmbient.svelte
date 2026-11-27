@@ -20,7 +20,7 @@
   let newUrl = $state("");
   let busy = $state(false);
   let volSlider;
-  let draggingVol = false;
+  let draggingVol = $state(false);
   let localVol = $state(70);
 
   let amb = $derived($activity.ambient || {});
@@ -80,7 +80,13 @@
       await api("POST", "/api/ambient", { volume: val }, { signal });
       await refreshActivity();
     } catch (error) {
-      if (!signal.aborted) toast(error.message, true);
+      if (!signal.aborted) {
+        if (typeof amb.volume === "number") {
+          localVol = amb.volume;
+          volSlider?.set(amb.volume, true);
+        }
+        toast(error.message, true);
+      }
     }
   }
 

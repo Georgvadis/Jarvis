@@ -137,18 +137,40 @@ async fn answer_callback(client: &reqwest::Client, token: &str, callback_id: &st
         .await;
 }
 
-pub async fn notify_telegram(plugins: &Host, proxy: &Proxy, text: &str) {
+pub async fn notify_telegram_checked(plugins: &Host, proxy: &Proxy, text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
-        return;
+        return Err("Пустое сообщение".into());
     }
     let token = plugins.plugin_setting_str("telegram-sender", "bot_token");
     let chat_id = plugins.plugin_setting_str("telegram-sender", "chat_id");
     if token.trim().is_empty() || chat_id.trim().is_empty() {
-        return;
+        return Err("Telegram-бот не настроен (укажите bot_token и chat_id)".into());
     }
     let route = proxy.route("plugins");
-    if let Ok((_, client)) = build_tg_client(&route) {
-        send_tg(&client, token.trim(), chat_id.trim(), text).await;
+    let (_, client) = build_tg_client(&route)?;
+    let send_url = format!("https://api.telegram.org/bot{}/sendMessage", token.trim());
+    let resp = client
+        .post(&send_url)
+        .json(&json!({
+            "chat_id": chat_id.trim(),
+            "text": clip_tg(text, 3900),
+        }))
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| format!("Telegram недоступен: {e}"))?;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_default();
+    if !status.is_success() || body["ok"].as_bool() == Some(false) {
+        let desc = body["description"].as_str().unwrap_or("ошибка Telegram API");
+        return Err(format!("Telegram: {desc} (HTTP {})", status.as_u16()));
+    }
+    Ok(())
+}
+
+pub async fn notify_telegram(plugins: &Host, proxy: &Proxy, text: &str) {
+    if let Err(e) = notify_telegram_checked(plugins, proxy, text).await {
+        log::debug!("telegram notify skipped/failed: {e}");
     }
 }
 

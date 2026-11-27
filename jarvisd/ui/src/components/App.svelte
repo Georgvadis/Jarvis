@@ -24,8 +24,8 @@
   let Wizard = $state.raw(null);
   let pageRefresh;
   let session;
-  let interval;
-  let fastPoll;
+  let pollTimer;
+  let pollBusy = false;
 
   setPanel({ poll, onPoll });
 
@@ -71,6 +71,13 @@
     }
     const legacyPath = location.pathname === "/" ? legacyHashPath(location.hash) : "";
     if (legacyPath) void goto(legacyPath, { replaceState: true });
+    const onVis = () => {
+      if (!document.hidden && session) {
+        clearTimeout(pollTimer);
+        void poll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
     const unsubscribeRoutes = routeRequests.subscribe(() => setDirty(false));
     const unsubscribeAccess = access.subscribe(({ status }) => {
       stopPolling();
@@ -83,13 +90,13 @@
       session = new AbortController();
       orb = readOrb();
       if (!S.settings.onboarded) wizOpen(0);
-      interval = setInterval(poll, 2000);
       void poll();
       startActivityPolling();
     });
 
-    void start().catch(() => {});
+    void start();
     return () => {
+      document.removeEventListener("visibilitychange", onVis);
       lifetime.abort();
       stopPolling();
       resetActivityPolling();
@@ -111,8 +118,16 @@
   });
 
   async function start() {
-    await reload(lifetime.signal);
-    access.set({ status: "active" });
+    access.set({ status: "loading" });
+    try {
+      await reload(lifetime.signal);
+      if (!lifetime.signal.aborted) access.set({ status: "active" });
+    } catch (error) {
+      if (lifetime.signal.aborted) return;
+      // Если api() уже переключил в gate (401/428) — не затираем экран входа.
+      if ($access.status === "gate") return;
+      access.set({ status: "error", message: error?.message || "Колонка недоступна" });
+    }
   }
 
   async function login(setup, password) {
@@ -128,8 +143,14 @@
   function stopPolling() {
     session?.abort();
     session = undefined;
-    clearInterval(interval);
-    clearTimeout(fastPoll);
+    pollBusy = false;
+    clearTimeout(pollTimer);
+  }
+
+  function schedulePoll(ms) {
+    clearTimeout(pollTimer);
+    if (!session) return;
+    pollTimer = setTimeout(() => void poll(), ms);
   }
 
   function onPoll(refresh) {
@@ -140,26 +161,34 @@
   }
 
   async function poll() {
-    if (!session) return;
+    if (!session || pollBusy) return;
+    if (document.hidden) {
+      schedulePoll(5000);
+      return;
+    }
+    pollBusy = true;
     const { signal } = session;
     const view = navigation;
     try {
       if (!await readJournal(signal) || signal.aborted) return;
+      orb = readOrb();
+      refreshVolume();
+      if (view === navigation) void pageRefresh?.();
+      void musicData();
     } catch {
-      return;
+      // retry next cycle
+    } finally {
+      pollBusy = false;
+      if (session && !signal.aborted) {
+        schedulePoll(S?.speaker?.talking && navigation.nav === "home" ? 700 : 2200);
+      }
     }
-    orb = readOrb();
-    refreshVolume();
-    if (view === navigation) void pageRefresh?.();
-    void musicData();
-    clearTimeout(fastPoll);
-    if (S.speaker.talking && navigation.nav === "home") fastPoll = setTimeout(poll, 500);
   }
 </script>
 
 <svelte:window onbeforeunload={(event) => { if (dirty) event.preventDefault(); }} onkeydown={onGlobalKey} />
 
-<Shell access={$access} {login} {logout} {sidebar} {orb} {navigation}>
+<Shell access={$access} {login} {logout} retry={start} {sidebar} {orb} {navigation}>
   {#if $access.status === "active"}
     {#key $routeRequests}
       {@render children?.()}

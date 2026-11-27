@@ -2,7 +2,9 @@
   import SystemNav from "#components/Shell/SystemNav.svelte";
   import { act, api, icon, tip } from "#helpers/core.js";
   import { S, reload } from "#state/panelState.js";
+  import { wizOpen } from "#state/wizard.js";
   import Backup from "./Backup/Backup.svelte";
+  import Updates from "./Updates/Updates.svelte";
 
   let currentPassword = $state("");
   let newPassword = $state("");
@@ -54,12 +56,20 @@
 
 <header class="ph">
   <h1>Бэкап и доступ</h1>
+  <button class="btn sm ghost" type="button" onclick={() => wizOpen(0)}>
+    {@html icon("wand")}<span>Мастер настройки</span>
+  </button>
 </header>
 
 <div class="bento-2">
   <section class="card bento-card">
     <h2>{@html icon("archive")} Резервная копия</h2>
     <Backup />
+  </section>
+
+  <section class="card bento-card">
+    <h2>{@html icon("refresh")} Обновления</h2>
+    <Updates />
   </section>
 
   <section class="card bento-card">

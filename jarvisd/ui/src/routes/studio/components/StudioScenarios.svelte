@@ -474,6 +474,9 @@
                   <input type="text" maxlength="300" aria-label="Сообщение в Telegram" bind:value={step.value} disabled={busy} placeholder="Текст уведомления">
                 {:else if step.kind === "led"}
                   <select aria-label="Цвет подсветки" bind:value={step.value} disabled={busy}>
+                    {#if step.value && !LED_PRESETS.some((c) => c.id === step.value)}
+                      <option value={step.value}>{step.value}</option>
+                    {/if}
                     {#each LED_PRESETS as c (c.id)}
                       <option value={c.id}>{c.label}</option>
                     {/each}
@@ -487,6 +490,9 @@
                   <input type="text" maxlength="100" aria-label="Название курса" bind:value={step.value} disabled={busy} placeholder="Название курса (или пусто = активный)">
                 {:else if step.kind === "mode"}
                   <select aria-label="Режим" bind:value={step.value} disabled={busy}>
+                    {#if step.value && !MODE_PRESETS.some((m) => m.id === step.value)}
+                      <option value={step.value}>{step.value}</option>
+                    {/if}
                     {#each MODE_PRESETS as m (m.id)}
                       <option value={m.id}>{m.label}</option>
                     {/each}

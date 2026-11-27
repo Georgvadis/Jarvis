@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { api, icon, plural, tip, toast } from "#helpers/core.js";
+  import { api, copyText, icon, plural, tip, toast } from "#helpers/core.js";
   import { renderMarkdownInto } from "#helpers/markdown.js";
   import { reload } from "#state/panelState.js";
   import StudioNotes from "../../studio/components/StudioNotes.svelte";
@@ -247,7 +247,7 @@
   async function copySummary() {
     if (!memory.summary) return;
     try {
-      await navigator.clipboard.writeText(memory.summary);
+      await copyText(memory.summary);
       toast("Конспект скопирован");
     } catch {
       toast("Не удалось скопировать", true);

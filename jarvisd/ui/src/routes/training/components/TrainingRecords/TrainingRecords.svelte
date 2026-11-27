@@ -266,7 +266,11 @@
         onplay={() => { archivePlaying = true; }}
         onpause={() => { archivePlaying = false; }}
         onended={() => { archivePlaying = false; }}
-        onerror={() => toast("Не удалось воспроизвести запись.", true)}
+        onerror={(e) => {
+          if (selectedKey && e.currentTarget.getAttribute("src")) {
+            toast("Не удалось воспроизвести запись.", true);
+          }
+        }}
       ></audio>
       <div class="row">
         <div class="seg {styles.filters}" role="group" aria-label="Фильтр записей">

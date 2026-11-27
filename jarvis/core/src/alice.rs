@@ -335,7 +335,7 @@ fn follow_logs_loop(watches: Vec<(&'static str, Box<dyn Fn(&str) + Send + 'stati
         on_line: Box<dyn Fn(&str) + Send + 'static>,
         cur: Option<(u64, BufReader<std::fs::File>)>,
         first: bool,
-        part: String,
+        part: Vec<u8>,
         dir_wd: i32,
         file_wd: i32,
     }
@@ -357,7 +357,7 @@ fn follow_logs_loop(watches: Vec<(&'static str, Box<dyn Fn(&str) + Send + 'stati
                 on_line,
                 cur: None,
                 first: true,
-                part: String::new(),
+                part: Vec::new(),
                 dir_wd: -1,
                 file_wd: -1,
             }
@@ -425,13 +425,19 @@ fn follow_logs_loop(watches: Vec<(&'static str, Box<dyn Fn(&str) + Send + 'stati
             }
             if let Some((_, rd)) = it.cur.as_mut() {
                 loop {
-                    match rd.read_line(&mut it.part) {
+                    match rd.read_until(b'\n', &mut it.part) {
                         Ok(0) | Err(_) => break,
-                        Ok(_) if it.part.ends_with('\n') => {
-                            (it.on_line)(&it.part);
+                        Ok(_) if it.part.ends_with(b"\n") => {
+                            let line = String::from_utf8_lossy(&it.part);
+                            (it.on_line)(&line);
                             it.part.clear();
                         }
-                        Ok(_) => {} // строка ещё дописывается — ждём продолжения
+                        Ok(_) => {
+                            // Защита от переполнения буфера на сверхдлинной строке без перевода строки
+                            if it.part.len() > 64 * 1024 {
+                                it.part.clear();
+                            }
+                        }
                     }
                 }
             }

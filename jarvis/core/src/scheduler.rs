@@ -311,7 +311,8 @@ impl Scheduler {
     pub fn spawn(self: Arc<Self>, engine: Arc<Engine>) {
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                let has_timers = !self.inner.lock().unwrap().timers.is_empty();
+                tokio::time::sleep(Duration::from_secs(if has_timers { 1 } else { 2 })).await;
                 self.tick(&engine);
             }
         });
@@ -522,9 +523,10 @@ fn weekday_num(z: &jiff::Zoned) -> u8 {
 async fn execute_routine(engine: Arc<Engine>, r: RoutineEntry) {
     engine.journal.note("расписание", &r.title, "");
     if let Some(vol) = r.volume {
-        std::thread::spawn(move || {
+        let _ = tokio::task::spawn_blocking(move || {
             let _ = crate::speakervol::set_alice_volume(vol.clamp(1, 10));
-        });
+        })
+        .await;
     }
     let payload = r.payload.trim().to_string();
     match r.action.as_str() {
@@ -632,10 +634,10 @@ pub fn parse_duration_secs(text: &str) -> Option<u64> {
                 return Some(n.clamp(1, 86400));
             }
             if next.starts_with("мин") {
-                return Some((n * 60).clamp(1, 86400));
+                return Some(n.saturating_mul(60).clamp(1, 86400));
             }
             if next.starts_with("час") {
-                return Some((n * 3600).clamp(1, 86400));
+                return Some(n.saturating_mul(3600).clamp(1, 86400));
             }
         }
         if w.starts_with("мин") && idx == 0 {

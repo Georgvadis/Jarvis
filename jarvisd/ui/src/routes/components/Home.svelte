@@ -32,6 +32,7 @@
   let chatExpanded = $state(false);
   let busy = $state("");
   let pcBusy = $state("");
+  let isMobile = $state(false);
 
   let presence = $derived($activity.presence || { state: "unknown" });
   let ambActive = $derived($activity.ambient?.active || "");
@@ -59,9 +60,14 @@
   onMount(() => {
     const offPoll = onPoll(refresh);
     const clockTimer = setInterval(() => { now = new Date(); }, 15000);
+    const mq = window.matchMedia("(max-width: 860px)");
+    isMobile = mq.matches;
+    const onMq = (e) => { isMobile = e.matches; };
+    mq.addEventListener("change", onMq);
     return () => {
       offPoll();
       clearInterval(clockTimer);
+      mq.removeEventListener("change", onMq);
     };
   });
 
@@ -198,7 +204,7 @@
       <span class="hearth-status-row">
         <span class="dot" class:on={overview.micOnline} class:off={!overview.micOnline} id="home-dot"></span>
         <span id="home-sub">{overview.micOnline ? "На связи" : "Микрофон выкл"}</span>
-        {#if presence.phone_ip && presence.state !== "unknown"}
+        {#if presence.configured && presence.state !== "unknown"}
           <span class="sep">·</span>
           <span>{presence.state === "home" ? "Дома" : "Нет дома"}</span>
         {/if}
@@ -380,10 +386,12 @@
           </div>
         </section>
 
-        <div class="mobile-only-cards">
-          <HomePlayer />
-          <HomeVolume />
-        </div>
+        {#if isMobile}
+          <div class="mobile-only-cards">
+            <HomePlayer />
+            <HomeVolume />
+          </div>
+        {/if}
       </aside>
     {/if}
   </div>

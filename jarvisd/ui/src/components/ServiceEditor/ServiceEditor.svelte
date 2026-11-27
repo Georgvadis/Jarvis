@@ -36,12 +36,13 @@
   {:else if id === "vpn"}
     {#if vpn.set && vpn.host}
       <div class={["vpn", vpn.error ? "bad" : "ok"]}><b>{vpn.name || vpn.host}</b><small>{vpn.host}:{vpn.port} · {vpn.network} + {vpn.security}</small></div>
+      {#if vpn.error}<p class="err">{vpn.error}</p>{/if}
     {:else if vpn.set}
       <p class="err">{vpn.error || "VPN запускается…"}</p>
     {:else}
       <p class="note">Вставьте ссылку <code>vless://…</code> (3x-ui, Marzban, Hiddify).</p>
+      {#if vpn.error}<p class="err">{vpn.error}</p>{/if}
     {/if}
-    {#if vpn.error}<p class="err">{vpn.error}</p>{/if}
     <textarea id="vless" class="code" placeholder="vless://…" spellcheck="false" aria-label="Ссылка VLESS"></textarea>
     <div class="row">
       <button type="button" class="btn primary" id="vless-save" onclick={action}>{@html icon("save")}{vpn.set ? "Обновить" : "Сохранить"}</button>

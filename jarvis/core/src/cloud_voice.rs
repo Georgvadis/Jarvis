@@ -488,7 +488,6 @@ impl Voice {
         );
         loop {
             tokio::select! {
-                biased;
                 result = tasks.join_next(), if !tasks.is_empty() => {
                     self.dialog.working(-1);
                     let (name, args, outcome, value) = match result.ok_or("Вызов инструмента завершился")? {

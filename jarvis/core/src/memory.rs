@@ -983,6 +983,15 @@ impl Memory {
             st.compacting = true;
             (old, st.d.id.clone(), st.epoch, st.profile_rev, text)
         };
+        struct CompactingGuard(Arc<Memory>);
+        impl Drop for CompactingGuard {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.st.lock() {
+                    st.compacting = false;
+                }
+            }
+        }
+        let _compacting = CompactingGuard(self.clone());
         let out = self.ask(&COMPACT_INSTRUCTIONS, text).await.and_then(|o| if o.trim().is_empty() { Err("модель вернула пустой ответ".into()) } else { Ok(o) });
         let mut st = self.st.lock().unwrap();
         st.compacting = false;
@@ -1060,6 +1069,15 @@ impl Memory {
             st.compacting = true;
             (batch, month, st.epoch, text)
         };
+        struct FoldGuard(Arc<Memory>);
+        impl Drop for FoldGuard {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.st.lock() {
+                    st.compacting = false;
+                }
+            }
+        }
+        let _compacting = FoldGuard(self.clone());
         let out = self.ask(&CHRONICLE_INSTRUCTIONS, text).await.map(|o| o.trim().to_string());
         let out = out.and_then(|o| if o.is_empty() { Err("модель вернула пустую запись".to_string()) } else { Ok(o) });
         let mut st = self.st.lock().unwrap();
@@ -1173,6 +1191,15 @@ impl Memory {
             }
             (edits, task.join("\n"), st.epoch, st.profile_rev, st.d.id.clone(), mem, months, terms)
         };
+        struct EditGuard(Arc<Memory>);
+        impl Drop for EditGuard {
+            fn drop(&mut self) {
+                if let Ok(mut st) = self.0.st.lock() {
+                    st.compacting = false;
+                }
+            }
+        }
+        let _compacting = EditGuard(self.clone());
         let out = self.ask(EDIT_INSTRUCTIONS, format!("{task}\n\nПамять:\n{mem}")).await;
         let mut new_months = HashMap::new();
         if out.is_ok() {

@@ -484,4 +484,9 @@
       <p class="empty">Сохранённых плейлистов в аккаунте YouTube пока нет</p>
     {/if}
   </section>
+{:else}
+  <section class="card plg-empty">
+    <p class="muted">Войдите в аккаунт YouTube, чтобы видеть лайки и сохранённые плейлисты.</p>
+    <a class="btn sm primary" href="/connections/youtube">{@html icon("music")} Войти в YouTube</a>
+  </section>
 {/if}

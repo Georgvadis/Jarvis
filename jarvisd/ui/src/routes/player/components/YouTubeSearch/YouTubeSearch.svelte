@@ -377,4 +377,9 @@
       <p class="empty">По запросу «{lastQuery}» ничего не найдено</p>
     {/if}
   </section>
+{:else}
+  <section class="card plg-empty">
+    <p class="muted">Плагин YouTube не подключён или выключен.</p>
+    <a class="btn sm primary" href="/connections/youtube">{@html icon("music")} Подключить YouTube</a>
+  </section>
 {/if}

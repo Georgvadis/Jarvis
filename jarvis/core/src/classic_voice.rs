@@ -19,12 +19,12 @@ struct Context {
     profile: Profile,
     instructions: String,
     phrase: String,
-    history: Mutex<Vec<crate::llm::Turn>>,
+    history: Arc<Mutex<Vec<crate::llm::Turn>>>,
     gemini_pool: Option<Arc<crate::gemini_pool::GeminiPool>>,
     proxy: Option<Arc<crate::vpn::Proxy>>,
-    pending_user_text: Mutex<String>,
-    active_turn_pcm: Mutex<Option<Vec<i16>>>,
-    has_spoken_turn: AtomicBool,
+    pending_user_text: Arc<Mutex<String>>,
+    active_turn_pcm: Arc<Mutex<Option<Vec<i16>>>>,
+    has_spoken_turn: Arc<AtomicBool>,
 }
 impl Classic {
     pub fn open(rt:&tokio::runtime::Handle,host:Arc<Host>,tools:Arc<Tools>,journal:Arc<Journal>,settings:Settings,profile:Profile,instructions:String,phrase:String)->Arc<Self>{
@@ -58,7 +58,7 @@ impl Classic {
             }
         }
         let me=Arc::new(Self{dialog:Dialog::new(journal,"классический",model),frames,say,out:Mutex::new(Some(out)),audio:Mutex::new(Some(audio)),closed:AtomicBool::new(false),generation:AtomicU64::new(0),interrupted:AtomicBool::new(false),stop:tokio::sync::Notify::new(),last_failure:Mutex::new(None)});
-        let actor=me.clone();let context=Arc::new(Context{host,tools,settings,profile,instructions,phrase,history:Mutex::new(initial_history),gemini_pool,proxy,pending_user_text:Mutex::default(),active_turn_pcm:Mutex::default(),has_spoken_turn:AtomicBool::new(false)});
+        let actor=me.clone();let context=Arc::new(Context{host,tools,settings,profile,instructions,phrase,history:Arc::new(Mutex::new(initial_history)),gemini_pool,proxy,pending_user_text:Arc::new(Mutex::default()),active_turn_pcm:Arc::new(Mutex::default()),has_spoken_turn:Arc::new(AtomicBool::new(false))});
         rt.spawn(async move {
             let mut vad=Capture::new(context.settings.vad_threshold, context.settings.vad_silence_ms);let mut tasks=tokio::task::JoinSet::new();
             loop {tokio::select! {
@@ -270,12 +270,12 @@ impl Classic {
                         profile: new_p,
                         instructions: new_inst,
                         phrase: context.phrase.clone(),
-                        history: Mutex::new(context.history.lock().unwrap().clone()),
+                        history: context.history.clone(),
                         gemini_pool: context.gemini_pool.clone(),
                         proxy: context.proxy.clone(),
-                        pending_user_text: Mutex::default(),
-                        active_turn_pcm: Mutex::default(),
-                        has_spoken_turn: AtomicBool::new(false),
+                        pending_user_text: context.pending_user_text.clone(),
+                        active_turn_pcm: context.active_turn_pcm.clone(),
+                        has_spoken_turn: context.has_spoken_turn.clone(),
                     }));
                 }
             }
@@ -890,8 +890,7 @@ impl Classic {
                     self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
                 }
                 if let Some(c) = led_color && let Some(leds) = &context.tools.leds {
-                    let bright = context.settings.led.brightness.max(35);
-                    leds.show(crate::led::Mode::Speaking, c, bright, Duration::from_secs(4));
+                    leds.set_temp_color(crate::led::Mode::Speaking, c);
                 }
                 self.send_pcm_samples_ctx(Some(context), &buf, generation).await?;
                 buf.clear();
@@ -908,8 +907,7 @@ impl Classic {
                     self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
                 }
                 if let Some(c) = led_color && let Some(leds) = &context.tools.leds {
-                    let bright = context.settings.led.brightness.max(35);
-                    leds.show(crate::led::Mode::Speaking, c, bright, Duration::from_secs(4));
+                    leds.set_temp_color(crate::led::Mode::Speaking, c);
                 }
             }
             self.send_pcm_samples_ctx(Some(context), &buf, generation).await?;
@@ -1070,8 +1068,7 @@ impl Classic {
                 }
                 StreamAudioOp::Pcm { samples, led_color } => {
                     if let Some(c) = led_color && let Some(leds) = &context.tools.leds {
-                        let bright = context.settings.led.brightness.max(35);
-                        leds.show(crate::led::Mode::Speaking, c, bright, Duration::from_secs(4));
+                        leds.set_temp_color(crate::led::Mode::Speaking, c);
                     }
                     self.send_pcm_samples_ctx(Some(context), &samples, generation).await?;
                     played_pcm = true;
@@ -1296,8 +1293,7 @@ impl Classic {
                         .and_then(crate::sfx::emotion_led_color)
                         .or_else(|| (!spk_color.is_empty()).then_some(spk_color));
                     if let Some(leds) = &context.tools.leds && let Some(c) = led_color {
-                        let bright = context.settings.led.brightness.max(35);
-                        leds.show(crate::led::Mode::Speaking, c, bright, Duration::from_secs(4));
+                        leds.set_temp_color(crate::led::Mode::Speaking, c);
                     }
 
                     let emo_owned = emotion.clone();
@@ -2211,6 +2207,8 @@ fn tts_cache_get(key: &str) -> Option<Vec<i16>> {
 }
 
 fn tts_cache_put(key: &str, samples: &[i16]) {
+    const MAX_FILES: usize = 48;
+    const MAX_TOTAL_BYTES: u64 = 3 * 1024 * 1024;
     if samples.is_empty() || samples.len() > 24000 * 6 {
         return;
     }
@@ -2218,14 +2216,47 @@ fn tts_cache_put(key: &str, samples: &[i16]) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    if let Ok(rd) = std::fs::read_dir(&dir) && rd.count() >= 48 {
-        return;
+    let mut entries: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = Vec::new();
+    let mut total_bytes: u64 = 0;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for ent in rd.flatten() {
+            let path = ent.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("pcm") {
+                continue;
+            }
+            if let Ok(meta) = ent.metadata() {
+                let len = meta.len();
+                let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                total_bytes = total_bytes.saturating_add(len);
+                entries.push((mtime, len, path));
+            }
+        }
+    }
+    let new_bytes = (samples.len() * 2) as u64;
+    if entries.len() >= MAX_FILES || total_bytes.saturating_add(new_bytes) > MAX_TOTAL_BYTES {
+        entries.sort_by_key(|(mtime, _, _)| *mtime);
+        let mut count = entries.len();
+        for (_, len, path) in entries {
+            if count < MAX_FILES && total_bytes.saturating_add(new_bytes) <= MAX_TOTAL_BYTES {
+                break;
+            }
+            if std::fs::remove_file(&path).is_ok() {
+                count = count.saturating_sub(1);
+                total_bytes = total_bytes.saturating_sub(len);
+            }
+        }
     }
     let mut bytes = Vec::with_capacity(samples.len() * 2);
     for &s in samples {
         bytes.extend_from_slice(&s.to_le_bytes());
     }
-    let _ = std::fs::write(dir.join(format!("{key}.pcm")), bytes);
+    let tmp = dir.join(format!("{key}.{}.tmp", crate::settings::rand_hex(4)));
+    let dst = dir.join(format!("{key}.pcm"));
+    if std::fs::write(&tmp, bytes).is_ok() {
+        if std::fs::rename(&tmp, &dst).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
 }
 
 enum StreamAudioOp {
@@ -2506,7 +2537,7 @@ fn wav(pcm:&[i16])->Vec<u8>{
         let profile=Profile{mode:"classic".into(),engine:"classic".into(),stt_engine:"my-stt".into(),stt_model:"whisper-x".into(),llm_engine:"my-llm".into(),llm_model:"custom-m".into(),tts_engine:"my-tts".into(),tts_voice:"v1".into(),..Default::default()};
         let sess=Classic::open(&tokio::runtime::Handle::current(),host.clone(),tools.clone(),journal.clone(),Settings::default(),profile.clone(),"inst".into(),"Джарвис".into());
         let rx=sess.take_audio().unwrap();
-        let ctx=Arc::new(Context{host:host.clone(),tools,settings:Settings::default(),profile,instructions:"inst".into(),phrase:"Джарвис".into(),history:Mutex::new(Vec::new()),gemini_pool:None,proxy:None,pending_user_text:Mutex::default(),active_turn_pcm:Mutex::default(),has_spoken_turn:AtomicBool::new(false)});
+        let ctx=Arc::new(Context{host:host.clone(),tools,settings:Settings::default(),profile,instructions:"inst".into(),phrase:"Джарвис".into(),history:Arc::new(Mutex::new(Vec::new())),gemini_pool:None,proxy:None,pending_user_text:Arc::new(Mutex::default()),active_turn_pcm:Arc::new(Mutex::default()),has_spoken_turn:Arc::new(AtomicBool::new(false))});
         let recv_speech = || loop {
             let chunk = rx.recv_timeout(Duration::from_secs(2)).unwrap();
             if chunk.iter().any(|&v| v != 0) {

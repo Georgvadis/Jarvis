@@ -410,8 +410,8 @@ pub async fn order(State(app): State<App>, Json(v): Json<Value>) -> Response {
 }
 pub async fn prompt(State(app): State<App>, Json(mut p): Json<Prompt>) -> Response {
     p.name = p.name.trim().into();
-    if p.name.is_empty() || p.text.trim().is_empty() || p.text.len() > 20000 {
-        return bad("Нужны название и текст до 20000 байт");
+    if p.name.is_empty() || p.text.trim().is_empty() || p.text.chars().count() > 20000 || p.text.len() > 64000 {
+        return bad("Нужны название и текст до 20000 символов");
     }
     match app.store.update(|s| -> Result<(), std::io::Error> {
         if let Some(old) = s
