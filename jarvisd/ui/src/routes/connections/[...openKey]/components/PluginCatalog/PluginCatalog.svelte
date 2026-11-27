@@ -49,60 +49,62 @@
 
 <section class="cn-group">
   <div class="cn-gh">
-    <h2>Установлены</h2><span class="spacer"></span>
-    <button class="btn sm" id="pl-update-all" type="button" disabled={updating || !catalog.canUpdate} onclick={update}>
-      {updating ? "Обновляю плагины…" : "Обновить всё"}
-    </button>
+    <h2>Установлены</h2>
+    <span class="meta">{installed.length}</span>
+    <span class="spacer"></span>
+    {#if catalog.canUpdate}
+      <button class="btn sm primary" id="pl-update-all" type="button" disabled={updating} onclick={update}>
+        {@html icon("refresh")}{updating ? "Обновляю…" : "Обновить всё"}
+      </button>
+    {/if}
   </div>
   {#if installed.length}
     {@render rows(installed)}
   {:else}
     <div class="card plg-empty">
       {@html icon("puzzle")}
-      <p class="muted">Пока ни одного плагина. Ядро Джарвиса лёгкое: нужные умения ставятся отдельно — выберите ниже.</p>
+      <p class="muted">Плагинов пока нет — выберите ниже или загрузите .zip</p>
     </div>
   {/if}
 </section>
 
-<section class="cn-group">
-  <div class="cn-gh"><h2>Можно поставить</h2><span class="meta">официальные, от автора YaJarvis</span></div>
-  {#if official.length}
-    {@render rows(official)}
-  {:else}
-    <p class="note">{catalog.officialReady ? "Все официальные плагины уже стоят."
-      : catalog.officialError ? "Официальный каталог пока недоступен." : "Загружаю каталог…"}</p>
-  {/if}
-  {#if catalog.officialError}
-    <p class="note bad" role="status">Не удалось обновить официальный каталог: {catalog.officialError}</p>
-  {/if}
-</section>
+{#if official.length || catalog.officialError || !catalog.officialReady}
+  <section class="cn-group">
+    <div class="cn-gh"><h2>Доступные</h2><span class="meta">официальные</span></div>
+    {#if official.length}
+      {@render rows(official)}
+    {:else if catalog.officialError}
+      <p class="note bad" role="status">{catalog.officialError}</p>
+    {:else}
+      <p class="note">Загружаю каталог…</p>
+    {/if}
+  </section>
+{/if}
 
-<section class="cn-group">
-  <div class="cn-gh"><h2>От сообщества</h2><span class="meta">их пишут другие люди</span></div>
-  <p class="note cx-warn">
-    {@html icon("shield")}
-    <span>Автор YaJarvis сторонние плагины не проверяет: ставьте то, чему доверяете. Хотите сделать свой —
-      <a class="lnk" href={"https://github.com/" + catalog.repo + "/blob/main/docs/PLUGINS.md"} target="_blank" rel="noopener">инструкция</a>.</span>
-  </p>
-  {#if community.length}
-    {@render rows(community)}
-  {:else if catalog.communityEmpty}
-    <p class="note">Пока никто не опубликовал свой плагин.</p>
-  {/if}
-  {#if catalog.communityError}
-    <p class="note bad" role="status">Не удалось обновить каталог сообщества: {catalog.communityError}</p>
-  {/if}
-</section>
+{#if community.length || catalog.communityError}
+  <section class="cn-group">
+    <div class="cn-gh">
+      <h2>От сообщества</h2>
+      <span class="spacer"></span>
+      <a class="lnk" href={"https://github.com/" + catalog.repo + "/blob/main/docs/PLUGINS.md"} target="_blank" rel="noopener">Как создать</a>
+    </div>
+    {#if community.length}
+      {@render rows(community)}
+    {/if}
+    {#if catalog.communityError}
+      <p class="note bad" role="status">{catalog.communityError}</p>
+    {/if}
+  </section>
+{/if}
 
 <div class="cx-foot">
-  <span>{catalog.freeSpace ? `Свободно на колонке ${catalog.freeSpace} МБ` : ""}</span>
+  <span class="meta">{catalog.freeSpace ? `Свободно ${catalog.freeSpace} МБ` : ""}</span>
   <span class="spacer"></span>
   <input type="file" id="pl-file" bind:this={filePicker} accept=".zip,application/zip" hidden onchange={importFile}>
-  <button class="btn sm" type="button" disabled={uploading} onclick={() => filePicker.click()}
-    data-tip="Архив плагина .zip — например, скачанный из его релиза">
-    {@html icon("upload")}{uploading ? "Устанавливаю…" : "Плагин из файла"}
+  <button class="btn sm" type="button" disabled={uploading} onclick={() => filePicker.click()}>
+    {@html icon("upload")}{uploading ? "Ставлю…" : "Из .zip"}
   </button>
   <button class="btn sm ghost" type="button" id="pl-refresh" disabled={catalogBusy} onclick={refresh}>
-    {@html icon("search")}Обновить каталог
+    {@html icon("refresh")}Обновить каталог
   </button>
 </div>

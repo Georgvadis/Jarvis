@@ -46,34 +46,34 @@ export function connDefs() {
   });
   return [
     { id: "homeassistant", group: "home", plugin: servicePlugin("homeassistant"), mono: "HA", name: "Home Assistant",
-      about: "Устройства дома, Xiaomi Home и уборка выбранных комнат",
+      about: "Устройства дома и уборка комнат",
       on: Boolean(S.home_assistant?.configured), state: S.home_assistant?.configured ? "подключено" : "не подключено" },
-    { id: "chatgpt", plugin: "", group: "voice", mono: "GP", name: "Подписка ChatGPT",
-      about: "Голос Джарвиса за счёт подписки Plus или Pro — без оплаты API за минуты",
-      more: "Включается у ассистента: движок «GPT-Live по подписке».",
+    { id: "chatgpt", plugin: "", group: "voice", mono: "GP", name: "ChatGPT",
+      about: "Подписка Plus / Pro · без оплаты API",
+      more: "Движок «GPT-Live по подписке» или LLM в классическом режиме.",
       on: Boolean(chatgpt.signed_in), wait: !chatgpt.signed_in && Boolean(chatgpt.login?.code),
-      state: chatgpt.signed_in ? ["вход выполнен", chatgpt.plan].filter(Boolean).join(" · ")
-        : chatgpt.login?.code ? "ждёт код" : "не подключено" },
-    key("openai", { mono: "AI", name: "OpenAI", place: "sk-…", about: "Голос и «мозг» Джарвиса. Живой разговор — примерно 5 центов в минуту" }),
+      state: chatgpt.signed_in ? [chatgpt.plan || "подключён"].filter(Boolean).join(" · ")
+        : chatgpt.login?.code ? "ждёт код" : "не подключён" },
+    key("openai", { mono: "AI", name: "OpenAI API", place: "sk-…", about: "GPT-4o · Realtime · Transcribe" }),
     key("gemini", { mono: "Ge", name: "Google Gemini", place: "AIza…", optional: true,
-      about: "Gemini Live — примерно вдвое дешевле GPT-Live, есть бесплатный уровень. Можно добавить несколько ключей: у каждого свой бесплатный лимит",
-      more: "Какой движок отвечает, выбирается у ассистента." }),
-    key("grok", { mono: "xA", name: "xAI Grok", place: "xai-…", optional: true, about: "Grok Voice — сам ищет в интернете",
-      more: "Какой движок отвечает, выбирается у ассистента." }),
+      about: "Gemini Live · пул API-ключей",
+      more: "Поддерживает несколько ключей с авторотацией." }),
+    key("grok", { mono: "xA", name: "xAI Grok", place: "xai-…", optional: true, about: "Grok Voice · поиск в сети",
+      more: "Выбирается в настройках ассистента." }),
     key("elevenlabs", { mono: "11", name: "ElevenLabs", place: "sk_…", optional: true,
-      about: "Распознавание речи и голоса классического режима. Выбирается в настройках ассистента → Мозг" }),
+      about: "Scribe STT · голоса TTS · Realtime" }),
     key("yandex", { group: "home", plugin: servicePlugin("yandex"), mono: "Я", name: "Яндекс Умный дом", place: "y0_…",
-      about: "Джарвис сам управляет светом, пылесосом и сценариями", more: "В режиме «через Алису» можно обойтись без него." }),
-    homeProvider("smartlife", "SL", "Smart Life", "Лампы, розетки и другие устройства Tuya — напрямую, без Алисы",
-      "«Включи/выключи …» выполняется сразу по домашней сети, за доли секунды"),
-    homeProvider("xiaomi", "Mi", "Xiaomi Home", "Лампы, розетки, пылесосы и другие устройства из приложения Mi Home",
-      "Джарвис управляет ими голосом: «включи лампу в спальне», «запусти пылесос»"),
-    { id: "youtube", group: "media", plugin: "youtube", mono: "YT", name: "YouTube", about: "Музыка и видео голосом. Вход откроет ваши рекомендации, лайки, плейлисты и больше возможностей",
-      more: "Там, где YouTube заблокирован (Россия), включите «Через VPN»",
+      about: "Свет, пылесос и сценарии", more: "В режиме «через Алису» можно обойтись без него." }),
+    homeProvider("smartlife", "SL", "Smart Life", "Устройства Tuya напрямую по LAN",
+      "Выполняется локально без облака Алисы"),
+    homeProvider("xiaomi", "Mi", "Xiaomi Home", "Лампы, розетки и пылесосы Mi Home",
+      "Управление устройствами Mi Home голосом"),
+    { id: "youtube", group: "media", plugin: "youtube", mono: "YT", name: "YouTube Music", about: "Музыка, плейлисты и рекомендации",
+      more: "При блокировке YouTube используйте VPN.",
       on: Boolean(account.signed_in || youtube.set), wait: !account.signed_in && Boolean(account.code),
-      state: account.signed_in ? (ytLabel || "вход выполнен") : youtube.set ? (ytLabel ? `${ytLabel} · куки` : "куки загружены") : account.code ? "ждёт код" : "не подключено" },
-    { id: "vpn", group: "system", plugin: "vpn", icon: "shield", name: "VPN для Джарвиса",
-      about: "Через VPN идёт только сам Джарвис, Алиса — всегда напрямую. Что именно пускать через VPN — галочки ниже",
+      state: account.signed_in ? (ytLabel || "вход выполнен") : youtube.set ? (ytLabel ? `${ytLabel} · куки` : "куки загружены") : account.code ? "ждёт код" : "не подключён" },
+    { id: "vpn", group: "system", plugin: "vpn", icon: "shield", name: "VPN (VLESS)",
+      about: "Туннель только для трафика Jarvis",
       on: Boolean(vpn.set) && !vpn.error, bad: Boolean(vpn.error), need: !vpn.set,
       state: vpn.set ? (vpn.error ? "ошибка" : vpn.name || vpn.host) : "не задан" },
   ];
@@ -81,9 +81,9 @@ export function connDefs() {
 
 // Разделы вкладки «Сервисы» (без ненужного «Умного дома»).
 export const CONN_GROUPS = [
-  ["voice", "Голос и ИИ", "Движки речи и модели"],
-  ["media", "Музыка и видео", ""],
-  ["system", "Сеть", ""],
+  ["voice", "ИИ и голос", ""],
+  ["media", "Музыка и медиа", ""],
+  ["system", "Сеть и VPN", ""],
 ];
 const plKey = (x) => "pl:" + (x.official ? x.id : (x.repo || "file") + "/" + x.id);
 
@@ -152,7 +152,7 @@ function drawConns() {
   view.render({
     tab: CONN.tab,
     services: services.map((service) => ({
-      key: service.key, name: service.name, about: service.about, on: service.on,
+      id: service.id, key: service.key, name: service.name, about: service.about, on: service.on,
       group: service.group, mono: service.mono, icon: service.icon, status: tileState(service),
     })),
     plugins: items.filter((it) => it.kind === "pl").map((plugin) => ({ ...plugin, status: tileState(plugin) })),

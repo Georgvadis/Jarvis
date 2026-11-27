@@ -1,5 +1,255 @@
-.tabs {
-  overflow: clip;
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.headLeft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.headLeft h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+:global(.hub-tab.on) .count {
+  background: color-mix(in srgb, var(--acc) 26%, transparent);
+  color: var(--acc);
+}
+
+.pingBtn {
+  gap: 8px;
+}
+
+.body {
+  display: grid;
+  gap: 28px;
+}
+
+.group {
+  display: grid;
+  gap: 12px;
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 2px;
+}
+
+.groupIcon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--acc);
+  opacity: 0.85;
+}
+
+.groupIcon :global(svg) {
+  width: 16px;
+  height: 16px;
+}
+
+.groupHead h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.groupBadge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--mut);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.groupBadge.active {
+  background: color-mix(in srgb, var(--ok) 15%, transparent);
+  color: var(--ok);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--glass-border, var(--line));
+  border-radius: 18px;
+  background: var(--glass-bg, var(--card));
+  transition: transform 0.22s var(--spring, ease), border-color 0.2s ease, box-shadow 0.22s ease, background 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand) 42%, var(--line));
+  box-shadow: 0 12px 28px -12px rgb(0 0 0 / 0.55);
+}
+
+.card.isOn {
+  border-color: color-mix(in srgb, var(--brand) 30%, var(--line));
+  background: linear-gradient(155deg, color-mix(in srgb, var(--brand) 7%, var(--card)), var(--card) 58%);
+}
+
+.card.isBad {
+  border-color: color-mix(in srgb, var(--bad) 40%, var(--line));
+}
+
+.cardTop {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+}
+
+.logo {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--brand) 28%, transparent);
+  background: color-mix(in srgb, var(--brand) 14%, var(--raise));
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.logo :global(svg) {
+  width: 20px;
+  height: 20px;
+}
+
+.cardTitle {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.cardTitle h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.cardTitle p {
+  margin: 0;
+  color: var(--mut);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(255 255 255 / 0.06);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.05);
+  color: var(--mut);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.pillText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.65;
+}
+
+.pill.ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+
+.pill.ok .dot {
+  opacity: 1;
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.pill.warn {
+  background: color-mix(in srgb, var(--acc) 15%, transparent);
+  color: var(--acc);
+}
+
+.pill.bad {
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+
+.cta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--mut);
+  font-size: 12px;
+  font-weight: 700;
+  transition: color 0.18s ease, transform 0.18s ease;
+}
+
+.cta :global(svg) {
+  width: 14px;
+  height: 14px;
+}
+
+.card:hover .cta {
+  color: var(--fg);
+  transform: translateX(1px);
 }
 
 .serviceAction {
