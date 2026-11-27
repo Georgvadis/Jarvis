@@ -1096,41 +1096,43 @@ impl Classic {
                                 }
                             }
                         }
-                        if start_idx == 1 && let Some(h) = prefetch_next {
-                            let mut next_fut = Some(h);
-                            for i in 1..sentences.len() {
-                                if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
-                                    if let Some(h) = next_fut.take() { h.abort(); }
-                                    return Ok(());
-                                }
-                                let current_fut = next_fut.take().unwrap();
-                                let mut samples = match current_fut.await {
-                                    Ok(Ok(s)) => s,
-                                    Ok(Err(e)) => return Err(e),
-                                    Err(_) => return Ok(()),
-                                };
-                                if (speed - 1.0).abs() > 0.02 {
-                                    samples = time_stretch_pcm(&samples, speed);
-                                }
-                                if (mul - 1.0).abs() > 0.02 {
-                                    for s in &mut samples {
-                                        *s = ((*s as f32) * mul).clamp(-32767.0, 32767.0) as i16;
+                        if start_idx == 1 {
+                            if let Some(h) = prefetch_next {
+                                let mut next_fut = Some(h);
+                                for i in 1..sentences.len() {
+                                    if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                                        if let Some(h) = next_fut.take() { h.abort(); }
+                                        return Ok(());
                                     }
-                                }
-                                if i + 1 < sentences.len() {
-                                    let me = self.clone();
-                                    let ctx = context.clone();
-                                    let s_next = sentences[i + 1].clone();
-                                    let em = emo_owned.clone();
-                                    next_fut = Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s_next, em.as_deref()).await }));
-                                }
-                                if let Err(e) = self.send_pcm_samples_ctx(Some(context), &samples, generation).await {
-                                    if let Some(h) = next_fut.take() { h.abort(); }
-                                    return Err(e);
-                                }
-                                if i + 1 < sentences.len() {
-                                    let pause = vec![0i16; 2880];
-                                    let _ = self.send_pcm_samples(&pause, generation).await;
+                                    let current_fut = next_fut.take().unwrap();
+                                    let mut samples = match current_fut.await {
+                                        Ok(Ok(s)) => s,
+                                        Ok(Err(e)) => return Err(e),
+                                        Err(_) => return Ok(()),
+                                    };
+                                    if (speed - 1.0).abs() > 0.02 {
+                                        samples = time_stretch_pcm(&samples, speed);
+                                    }
+                                    if (mul - 1.0).abs() > 0.02 {
+                                        for s in &mut samples {
+                                            *s = ((*s as f32) * mul).clamp(-32767.0, 32767.0) as i16;
+                                        }
+                                    }
+                                    if i + 1 < sentences.len() {
+                                        let me = self.clone();
+                                        let ctx = context.clone();
+                                        let s_next = sentences[i + 1].clone();
+                                        let em = emo_owned.clone();
+                                        next_fut = Some(tokio::spawn(async move { me.synthesize_one(&ctx, &s_next, em.as_deref()).await }));
+                                    }
+                                    if let Err(e) = self.send_pcm_samples_ctx(Some(context), &samples, generation).await {
+                                        if let Some(h) = next_fut.take() { h.abort(); }
+                                        return Err(e);
+                                    }
+                                    if i + 1 < sentences.len() {
+                                        let pause = vec![0i16; 2880];
+                                        let _ = self.send_pcm_samples(&pause, generation).await;
+                                    }
                                 }
                             }
                             continue;
