@@ -882,13 +882,25 @@ impl Tools {
             defs.push(json!({
                 "type": "function",
                 "name": "search_notes",
-                "description": "Найти информацию по смыслу или ключевым словам в заметках CyberNotes и долгой памяти Джарвиса («что я записывал про...», «найди в моих заметках», «какая идея была насчёт...»).",
+                "description": "Найти и прочитать заметки в CyberNotes и долгой памяти Джарвиса («что я записывал про...», «найди в моих заметках», «прочитай список из заметки...»). Для лучших совпадений сразу возвращает полный текст заметки.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "поисковый запрос, тема или ключевые слова"}
                     },
                     "required": ["query"]
+                }
+            }));
+            defs.push(json!({
+                "type": "function",
+                "name": "read_note",
+                "description": "Прочитать полный текст конкретной заметки CyberNotes по её пути (path), если нужно открыть ещё одну заметку из результатов поиска.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "путь к заметке из результатов search_notes"}
+                    },
+                    "required": ["path"]
                 }
             }));
         }
@@ -1340,6 +1352,16 @@ impl Tools {
                 Err(e) => format!("Не удалось сохранить заметку: {e}"),
             };
         }
+        if name == "read_note" {
+            let path = field("path");
+            if path.is_empty() {
+                return "Нужен путь к заметке (path).".into();
+            }
+            return match read_cybernote(&self.host, &path).await {
+                Ok(content) => format!("Полный текст заметки ({path}):\n{content}"),
+                Err(e) => format!("Не удалось прочитать заметку: {e}"),
+            };
+        }
         if name == "search_notes" {
             let q = field("query");
             return match semantic_search_all(&self.host, self.memory.as_deref(), &q, 6).await {
@@ -1351,21 +1373,31 @@ impl Tools {
                             Err(e) => format!("Не удалось поискать в заметках: {e}"),
                         }
                     } else {
-                        let lines: Vec<String> = hits
-                            .iter()
-                            .map(|h| {
-                                let kind = if h["source"].as_str() == Some("note") { "Заметка" } else { "Память" };
-                                let title = h["title"].as_str().unwrap_or("");
-                                let folder = h["folder"].as_str().unwrap_or("");
-                                let snippet = h["snippet"].as_str().unwrap_or("");
-                                if folder.is_empty() {
-                                    format!("• [{kind}] «{title}»: {snippet}")
-                                } else {
-                                    format!("• [{kind}] «{title}» ({folder}): {snippet}")
-                                }
-                            })
-                            .collect();
-                        format!("Найдено по смыслу:\n{}", lines.join("\n"))
+                        let mut lines: Vec<String> = Vec::with_capacity(hits.len());
+                        let mut full_reads = 0usize;
+                        for h in &hits {
+                            let is_note = h["source"].as_str() == Some("note");
+                            let kind = if is_note { "Заметка" } else { "Память" };
+                            let title = h["title"].as_str().unwrap_or("");
+                            let folder = h["folder"].as_str().unwrap_or("");
+                            let path = h["path"].as_str().unwrap_or("");
+                            let snippet = h["snippet"].as_str().unwrap_or("");
+                            let body = if is_note && !path.is_empty() && full_reads < 2 {
+                                full_reads += 1;
+                                read_cybernote(&self.host, path).await.unwrap_or_else(|_| snippet.to_string())
+                            } else {
+                                snippet.to_string()
+                            };
+                            let loc = if !path.is_empty() {
+                                format!(" ({path})")
+                            } else if !folder.is_empty() {
+                                format!(" ({folder})")
+                            } else {
+                                String::new()
+                            };
+                            lines.push(format!("• [{kind}] «{title}»{loc}:\n{body}"));
+                        }
+                        format!("Найдено в базе знаний:\n{}", lines.join("\n\n"))
                     }
                 }
                 Err(_) => match search_cybernotes(&self.host, &q).await {
@@ -2260,6 +2292,29 @@ pub async fn semantic_search_all(
     Ok(v)
 }
 
+pub async fn read_cybernote(host: &Host, path: &str) -> Result<String, String> {
+    let srv = local_voice_url(host);
+    let resp = crate::net::direct()
+        .get(format!("{srv}/notes/read"))
+        .query(&[("path", path)])
+        .timeout(Duration::from_secs(6))
+        .send()
+        .await
+        .map_err(|e| format!("Сервер заметок недоступен: {e}"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(v["detail"].as_str().unwrap_or("Не удалось прочитать заметку").to_string());
+    }
+    let text = v["content"].as_str().unwrap_or("").trim();
+    let truncated: String = text.chars().take(8000).collect();
+    if text.chars().count() > 8000 {
+        Ok(format!("{truncated}\n…(заметка сокращена до 8000 символов)"))
+    } else {
+        Ok(truncated)
+    }
+}
+
 pub async fn search_cybernotes(host: &Host, query: &str) -> Result<String, String> {
     let srv = local_voice_url(host);
     let resp = crate::net::direct()
@@ -2274,18 +2329,19 @@ pub async fn search_cybernotes(host: &Host, query: &str) -> Result<String, Strin
     if hits.is_empty() {
         return Ok("По этому запросу в заметках CyberNotes ничего не нашлось.".into());
     }
-    let lines: Vec<String> = hits
-        .iter()
-        .map(|h| {
-            format!(
-                "• «{}» ({}): {}",
-                h["title"].as_str().unwrap_or(""),
-                h["path"].as_str().unwrap_or(""),
-                h["snippet"].as_str().unwrap_or("")
-            )
-        })
-        .collect();
-    Ok(format!("Найдено в CyberNotes:\n{}", lines.join("\n")))
+    let mut lines: Vec<String> = Vec::with_capacity(hits.len());
+    for (idx, h) in hits.iter().enumerate() {
+        let title = h["title"].as_str().unwrap_or("");
+        let path = h["path"].as_str().unwrap_or("");
+        let snippet = h["snippet"].as_str().unwrap_or("");
+        let body = if idx < 2 && !path.is_empty() {
+            read_cybernote(host, path).await.unwrap_or_else(|_| snippet.to_string())
+        } else {
+            snippet.to_string()
+        };
+        lines.push(format!("• «{title}» ({path}):\n{body}"));
+    }
+    Ok(format!("Найдено в CyberNotes:\n{}", lines.join("\n\n")))
 }
 
 pub fn parse_scenario_command(text: &str) -> Option<&'static str> {
