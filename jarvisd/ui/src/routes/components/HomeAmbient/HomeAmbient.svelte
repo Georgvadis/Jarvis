@@ -216,8 +216,27 @@
 {#if embedded}
   {@render body()}
 {:else}
-  <section class="card" aria-label="Камин и атмосфера">
+  <section class="card amb-card" aria-label="Камин и атмосфера">
     <h2>{@html icon("flame")} Камин и атмосфера</h2>
-    {@render body()}
+    <div class="amb-stack">
+      {@render body()}
+    </div>
   </section>
 {/if}
+
+<style>
+  .amb-card h2 {
+    margin-bottom: 14px;
+  }
+  .amb-stack {
+    display: grid;
+    gap: 14px;
+  }
+  .amb-stack :global(.amb-grid) {
+    gap: 10px;
+  }
+  .amb-stack :global(.amb-vol),
+  .amb-stack :global(.amb-sleep) {
+    margin-top: 2px;
+  }
+</style>
