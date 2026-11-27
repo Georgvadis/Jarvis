@@ -17,13 +17,16 @@
   }
 
   function voiceLabel(p) {
+    const looksLikeId = (s) => /^[a-f0-9_-]{16,}$/i.test(String(s || "").trim());
     if (isClassicProfile(p)) {
       const tts = p.tts_engine || (p.engine === "openai" ? "openai" : "elevenlabs");
       if (tts === "openai" && p.voice) return voiceName(p.voice);
-      if (p.tts_voice) return p.tts_voice;
-      return "";
+      if (p.tts_voice && !looksLikeId(p.tts_voice)) return p.tts_voice;
+      const pluginName = ($speaker?.tts_plugins || []).find((pl) => pl.id === tts)?.name;
+      return pluginName || (tts === "elevenlabs" ? "ElevenLabs" : tts);
     }
-    return p.voice ? voiceName(p.voice) : "";
+    if (p.voice && !looksLikeId(p.voice)) return voiceName(p.voice);
+    return "";
   }
 
   async function activate(p) {
