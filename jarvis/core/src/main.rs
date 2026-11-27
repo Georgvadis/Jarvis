@@ -437,8 +437,15 @@ async fn run(f: Flags, store: settings::Store) {
     {
         let e = Arc::downgrade(&engine);
         let amb = ambient.clone();
+        let gm = games.clone();
         music::volume_loop(music, host.clone(), move || {
-            let d = e.upgrade().is_some_and(|e| e.talking() || e.player.playing());
+            let d = e.upgrade().is_some_and(|e| {
+                if gm.melody_playing_snippet() {
+                    e.player.playing()
+                } else {
+                    e.talking() || e.player.playing()
+                }
+            });
             amb.set_duck(d);
             d
         });

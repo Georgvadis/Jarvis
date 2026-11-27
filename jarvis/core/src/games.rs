@@ -186,6 +186,11 @@ impl GameManager {
         })
     }
 
+    pub fn melody_playing_snippet(&self) -> bool {
+        let m = self.melody.lock().unwrap();
+        m.active && !m.awaiting_answer
+    }
+
     pub async fn start_melody(self: &Arc<Self>, engine: Arc<Engine>, theme: String) -> Result<Value, String> {
         self.start_melody_opts(engine, theme, 5, 8, 30.0, true).await
     }
@@ -300,6 +305,19 @@ impl GameManager {
             RoundStep::Play(t) => t,
         };
 
+        // Ждём завершения реплики ассистента и закрываем открытый диалог, чтобы микрофон не
+        // слушал песню и volume_loop не приглушал YouTube до 25%.
+        for _ in 0..40 {
+            if !engine.player.playing() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if engine.talking() {
+            let e_end = engine.clone();
+            let _ = tokio::task::spawn_blocking(move || e_end.end_chat("отрывок мелодии")).await;
+        }
+
         let search_res = engine
             .music
             .call(&engine.host, "search", json!({"query": track.query, "type": "video"}))
@@ -349,6 +367,9 @@ impl GameManager {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if let Ok(n) = engine.host.provider("youtube") {
+            let _ = n.notify("volume", json!({"v": 0.95})).await;
         }
         let (snippet_s, seek_s) = {
             let m = self.melody.lock().unwrap();
