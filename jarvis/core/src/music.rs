@@ -902,7 +902,7 @@ pub fn volume_loop(music: Arc<Music>, host: Arc<Host>, duck: impl Fn() -> bool +
             let alice_playing = !yt_playing && music.alice.lock().unwrap().playing();
 
             if yt_playing {
-                let v = if is_duck { 0.10 } else { 0.95 };
+                let v = if is_duck { 0.25 } else { 0.95 };
                 if v != last_yt
                     && let Ok(n) = host.provider("youtube")
                     && n.notify("volume", json!({"v": v})).await.is_ok()

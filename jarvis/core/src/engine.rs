@@ -829,18 +829,30 @@ impl Engine {
             self.stop(&format!("сказали «{phrase}»"));
             self.journal.note("стоп", phrase, "");
         } else if has("громче") || has("тише") {
-            let step = if has("тише") { -10 } else { 10 };
-            let mut v = 0;
-            // громкость голоса активного ассистента
-            let _ = self.store.update(|s| -> Result<(), std::io::Error> {
-                let id = s.active_profile().id.clone();
-                if let Some(p) = s.profiles.iter_mut().find(|p| p.id == id) {
-                    p.volume = (p.volume + step).clamp(10, 100);
-                    v = p.volume;
+            if self.music_playing() {
+                // Когда играет музыка — регулируем реальную громкость колонки на ±1 и сразу возвращаем музыку
+                let level = crate::speakervol::speaker_volume().unwrap_or(5) + if has("тише") { -1 } else { 1 };
+                let target = level.clamp(0, 10);
+                flash_volume_clock(self, target);
+                let _ = crate::speakervol::set_alice_volume(target);
+                log::info!("Джарвис: «{phrase}» — громкость колонки {target}/10 (встроенный распознаватель)");
+                if !self.player.playing() {
+                    self.end_chat("изменили громкость музыки");
                 }
-                Ok(())
-            });
-            log::info!("Джарвис: «{phrase}» — громкость {v}% (встроенный распознаватель)");
+            } else {
+                let step = if has("тише") { -10 } else { 10 };
+                let mut v = 0;
+                // громкость голоса активного ассистента
+                let _ = self.store.update(|s| -> Result<(), std::io::Error> {
+                    let id = s.active_profile().id.clone();
+                    if let Some(p) = s.profiles.iter_mut().find(|p| p.id == id) {
+                        p.volume = (p.volume + step).clamp(10, 100);
+                        v = p.volume;
+                    }
+                    Ok(())
+                });
+                log::info!("Джарвис: «{phrase}» — громкость голоса {v}% (встроенный распознаватель)");
+            }
         } else {
             log::info!("Джарвис: распознаватель услышал «{phrase}» — не моя команда");
         }

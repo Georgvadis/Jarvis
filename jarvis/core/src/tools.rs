@@ -2652,6 +2652,10 @@ fn format_time_date_reply(text: &str, now: &jiff::Zoned) -> Option<String> {
     None
 }
 
+pub(crate) fn is_volume_command(text: &str) -> bool {
+    parse_volume_intent(text).is_some()
+}
+
 fn parse_volume_intent(text: &str) -> Option<VolumeIntent> {
     let n = fastcmd::norm_text(text);
     let bare = fastcmd::strip_lead(&n);
@@ -2687,8 +2691,10 @@ fn parse_volume_intent(text: &str) -> Option<VolumeIntent> {
             | "увеличь громкость"
             | "чуть громче"
             | "немного громче"
+            | "сильно громче"
+            | "намного громче"
     ) {
-        let step = if bare.contains("чуть") || bare.contains("немного") { 1 } else { 2 };
+        let step = if bare.contains("сильно") || bare.contains("намного") { 2 } else { 1 };
         return Some(VolumeIntent::Up(step));
     }
     if matches!(
@@ -2704,8 +2710,10 @@ fn parse_volume_intent(text: &str) -> Option<VolumeIntent> {
             | "чуть потише"
             | "немного тише"
             | "немного потише"
+            | "сильно тише"
+            | "намного тише"
     ) {
-        let step = if bare.contains("чуть") || bare.contains("немного") { 1 } else { 2 };
+        let step = if bare.contains("сильно") || bare.contains("намного") { 2 } else { 1 };
         return Some(VolumeIntent::Down(step));
     }
     if matches!(bare, "выключи звук" | "без звука" | "заглуши" | "убери звук") {
@@ -2866,8 +2874,9 @@ mod tests {
         assert_eq!(format_time_date_reply("какое сегодня число", &dt).as_deref(), Some("Сегодня 26 ноября, четверг."));
         assert_eq!(format_time_date_reply("сколько времени лететь до токио", &dt), None);
 
-        assert_eq!(parse_volume_intent("сделай потише"), Some(VolumeIntent::Down(2)));
+        assert_eq!(parse_volume_intent("сделай потише"), Some(VolumeIntent::Down(1)));
         assert_eq!(parse_volume_intent("чуть громче"), Some(VolumeIntent::Up(1)));
+        assert_eq!(parse_volume_intent("сильно громче"), Some(VolumeIntent::Up(2)));
         assert_eq!(parse_volume_intent("поставь громкость на 6"), Some(VolumeIntent::Set(6)));
         assert_eq!(parse_volume_intent("громкость фона на 50"), None);
         assert_eq!(parse_volume_intent("говори чуть быстрее"), None);

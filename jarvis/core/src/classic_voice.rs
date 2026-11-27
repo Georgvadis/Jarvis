@@ -288,6 +288,16 @@ impl Classic {
             if let Some(answer) = context.tools.fast_local(command) {
                 context.pending_user_text.lock().unwrap().clear();
                 self.dialog.on_bot(&answer);
+                let music_vol_cmd = crate::tools::is_volume_command(command)
+                    && context.tools.engine().is_some_and(|e| e.music.playing());
+                if music_vol_cmd {
+                    // При смене громкости во время музыки — короткий сигнал и сразу закрываем диалог,
+                    // чтобы музыка мгновенно вернулась на полную громкость и было слышно реальный уровень
+                    let _ = self.send_pcm_samples(&thinking_chime_for("minimal"), generation).await;
+                    self.dialog.finish_turn("");
+                    self.dialog.request_close();
+                    return Ok(());
+                }
                 self.speak(context, &answer, generation, is_whisper).await?;
                 self.dialog.finish_turn("");
                 return Ok(());
