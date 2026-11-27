@@ -10,19 +10,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/newfpv/YaJarvis/releases/latest"><img src="https://img.shields.io/github/v/release/newfpv/YaJarvis?style=flat-square&amp;label=release&amp;color=f77b2c&amp;labelColor=202027" alt="Последний релиз"></a>
-  <a href="https://github.com/newfpv/YaJarvis/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/newfpv/YaJarvis/release.yml?style=flat-square&amp;label=build&amp;labelColor=202027" alt="Сборка релиза"></a>
+  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><img src="https://img.shields.io/github/v/release/Georgvadis/Jarvis?style=flat-square&amp;label=release&amp;color=f77b2c&amp;labelColor=202027" alt="Последний релиз"></a>
+  <a href="https://github.com/Georgvadis/Jarvis/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/Georgvadis/Jarvis/release.yml?style=flat-square&amp;label=build&amp;labelColor=202027" alt="Сборка релиза"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f77b2c?style=flat-square&amp;labelColor=202027" alt="Лицензия MIT"></a>
-  <a href="#сколько-колонок-с-джарвисом"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fnewfpv%2FYaJarvis%2Fstats-data%2Fbadge.json&amp;style=flat-square" alt="Колонок с Джарвисом"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/newfpv/YaJarvis/releases/latest"><strong>Скачать</strong></a> ·
+  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><strong>Скачать</strong></a> ·
   <a href="#установка"><strong>Установка</strong></a> ·
   <a href="docs/FAQ.md"><strong>FAQ и бесплатный старт</strong></a> ·
   <a href="docs/PLUGINS.md"><strong>Вики по плагинам</strong></a> ·
   <a href="#панель-управления"><strong>Панель</strong></a> ·
-  <a href="https://github.com/newfpv/YaJarvis/issues"><strong>Обратная связь</strong></a>
+  <a href="https://github.com/Georgvadis/Jarvis/issues"><strong>Обратная связь</strong></a>
 </p>
 
 ![Главная панель YaJarvis: диалог, состояние колонки и музыкальный плеер](docs/screenshots/dashboard.png)
@@ -121,7 +120,7 @@ YaJarvis работает на колонке рядом со штатной А�
 Откройте **PowerShell** и выполните:
 
 ```powershell
-irm https://github.com/newfpv/YaJarvis/releases/latest/download/install.ps1 | iex
+irm https://github.com/Georgvadis/Jarvis/releases/latest/download/install.ps1 | iex
 ```
 
 ### macOS и Linux
@@ -129,7 +128,7 @@ irm https://github.com/newfpv/YaJarvis/releases/latest/download/install.ps1 | ie
 Откройте **Терминал** и выполните:
 
 ```sh
-curl -fsSL https://github.com/newfpv/YaJarvis/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/Georgvadis/Jarvis/releases/latest/download/install.sh | sh
 ```
 
 Для macOS и Linux добавьте `adb` (Android Platform Tools) в `PATH`; на Windows установщик при необходимости сам подтянет `adb`. После запуска откроется страница установщика в браузере:
@@ -150,7 +149,7 @@ curl -fsSL https://github.com/newfpv/YaJarvis/releases/latest/download/install.s
 <details>
 <summary><strong>Скачать установщик вручную</strong></summary>
 
-Вы можете просмотреть скрипт установки заранее или скачать готовый бинарник со страницы [последнего релиза](https://github.com/newfpv/YaJarvis/releases/latest):
+Вы можете просмотреть скрипт установки заранее или скачать готовый бинарник со страницы [последнего релиза](https://github.com/Georgvadis/Jarvis/releases/latest):
 
 | Система | Файл |
 | :--- | :--- |
@@ -234,17 +233,9 @@ curl -fsSL https://github.com/newfpv/YaJarvis/releases/latest/download/install.s
 
 В панели откройте **Безопасность → Обновления → Проверить → Обновить**.
 
-Новая версия скачивается из [GitHub Releases](https://github.com/newfpv/YaJarvis/releases), подбирается под архитектуру колонки (`arm64` / `armv7`) и проверяется по **SHA-256** перед записью. При неудачном запуске `jarvis-supervisor` автоматически откатывает предыдущий рабочий бинарник. Автоматическая ночная установка (с 03:00 до 06:00 в простое) включается отдельно в настройках обновлений.
+Новая версия скачивается из [GitHub Releases](https://github.com/Georgvadis/Jarvis/releases), подбирается под архитектуру колонки (`arm64` / `armv7`) и проверяется по **SHA-256** перед записью. При неудачном запуске `jarvis-supervisor` автоматически откатывает предыдущий рабочий бинарник. Автоматическая ночная установка (с 03:00 до 06:00 в простое) включается отдельно в настройках обновлений.
 
 Для ручного обновления файлом загрузите в панель `jarvisd-arm64` или `jarvisd-armv7`.
-
----
-
-## Сколько колонок с Джарвисом
-
-<p align="center"><img src="https://raw.githubusercontent.com/newfpv/YaJarvis/stats-data/stats.svg" alt="Счётчик установок YaJarvis: колонки по моделям и версиям" width="100%"></p>
-
-Счёт ведёт сам GitHub: при первом запуске и при смене версии колонка один раз скачивает пустой файл из служебного релиза [`stats`](https://github.com/newfpv/YaJarvis/releases/tag/stats). В имени файла передаются только модель колонки и версия YaJarvis — без IP-адресов, ключей и идентификаторов владельца. Статистика обновляется раз в 6 часов и отключается в панели: **Безопасность → Счётчик установок**.
 
 ---
 
@@ -263,7 +254,7 @@ curl -fsSL https://github.com/newfpv/YaJarvis/releases/latest/download/install.s
 
 ## Поддержать проект и авторы
 
-Если YaJarvis пригодился, поставьте **Star** вверху страницы. О багах и идеях пишите в [Issues](https://github.com/newfpv/YaJarvis/issues) — прикладывайте модель колонки, версию YaJarvis и шаги воспроизведения (предварительно убрав из логов личные токены и ключи).
+Если проект пригодился, поставьте **Star** вверху страницы. О багах и идеях пишите в [Issues](https://github.com/Georgvadis/Jarvis/issues) — прикладывайте модель колонки, версию прошивки и шаги воспроизведения (предварительно убрав из логов личные токены и ключи). Форк основан на оригинальном [YaJarvis](https://github.com/newfpv/YaJarvis).
 
 ### Contributors и авторы проектов
 

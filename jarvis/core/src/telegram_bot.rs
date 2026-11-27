@@ -12,12 +12,7 @@ use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 
 fn voice_server(plugins: &Host) -> String {
-    let u = plugins.plugin_setting_str("local-rvc-voice", "server_url");
-    if u.is_empty() {
-        "http://192.168.1.3:8768".into()
-    } else {
-        u.trim_end_matches('/').to_string()
-    }
+    crate::tools::local_voice_url(plugins)
 }
 
 fn build_tg_client(route: &Route) -> Result<(String, reqwest::Client), String> {

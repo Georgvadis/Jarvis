@@ -201,6 +201,19 @@ impl Classic {
             context.tools.stop_all_activities(context.tools.engine().as_deref(), true);
             self.dialog.annotate("стоп","");self.dialog.finish_turn("");self.close();return Ok(());
         }
+        if context.tools.store.with(|s| s.profiles.len() > 1)
+            && let Some(target) = crate::fastcmd::profile_switch_target(command)
+        {
+            context.pending_user_text.lock().unwrap().clear();
+            let answer = match context.tools.switch_profile(&target) {
+                Ok(answer) | Err(answer) => answer,
+            };
+            self.dialog.on_bot(&answer);
+            self.speak(context, &answer, generation, is_whisper).await?;
+            self.dialog.provider_turn_complete();
+            self.dialog.finish_turn("");
+            return Ok(());
+        }
         if let Some(modes) = &context.tools.modes
             && let Some(mode_reply) = modes.try_command(command, context.tools.ambient.as_deref())
         {

@@ -536,8 +536,8 @@ impl Default for Settings {
             train_limit_mb: 2,
             update_repo: String::new(),
             update_check: true,
-            update_auto: true,
-            no_stats: false,
+            update_auto: false,
+            no_stats: true,
             auto_once: 1,
             extra,
         }
@@ -777,9 +777,6 @@ impl Store {
         let mut s: Settings = serde_json::from_slice(&data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let mut dirty = migrate(&mut s);
         if s.auto_once < 1 || !contains(&data, b"\"auto_once\"") {
-            // автообновление теперь по умолчанию: один раз включаем и тем, кто ставил раньше
-            s.update_check = true;
-            s.update_auto = true;
             s.auto_once = 1;
             dirty = true;
         }
@@ -937,6 +934,10 @@ fn migrate(s: &mut Settings) -> bool {
     let mut dirty = false;
     if s.session_key.is_empty() {
         s.session_key = rand_hex(32);
+    }
+    if s.update_repo.trim().eq_ignore_ascii_case("newfpv/YaJarvis") {
+        s.update_repo.clear();
+        dirty = true;
     }
     if !s.place_moved {
         // город и пояс общие — у колонки; берём те, что были у активного ассистента

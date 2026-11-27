@@ -465,7 +465,7 @@ mod tests {
                 BackupPlugin {
                     id: "weather".into(),
                     kind: "lua".into(),
-                    source: "newfpv/YaJarvis".into(),
+                    source: "Georgvadis/Jarvis".into(),
                     official: true,
                     version: "1.1.0".into(),
                     enabled: true,
@@ -473,7 +473,7 @@ mod tests {
                 BackupPlugin {
                     id: "youtube".into(),
                     kind: "rust".into(),
-                    source: "newfpv/YaJarvis".into(),
+                    source: "Georgvadis/Jarvis".into(),
                     official: true,
                     version: "1.0.0".into(),
                     enabled: true,

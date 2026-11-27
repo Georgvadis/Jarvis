@@ -30,7 +30,7 @@ include!(concat!(env!("OUT_DIR"), "/ui_files.rs"));
 
 const REPO: &str = match option_env!("JARVIS_REPO") {
     Some(s) => s,
-    None => "newfpv/YaJarvis",
+    None => "Georgvadis/Jarvis",
 };
 const VERSION: &str = match option_env!("JARVIS_VERSION") {
     Some(s) => s,

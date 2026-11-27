@@ -137,7 +137,15 @@ async fn install_batch(app: &App, requests: &mut [InstallRequest], automatic: bo
 fn automatic_requests(installed: &[Value], catalog: &[Value]) -> Vec<InstallRequest> {
     installed.iter().filter_map(|plugin| {
         let id = plugin["id"].as_str()?;
-        let repo = plugin["source"].as_str()?;
+        let repo = if plugin["official"] == true {
+            crate::DEFAULT_REPO
+        } else {
+            let source = plugin["source"].as_str()?;
+            if source.eq_ignore_ascii_case("newfpv/YaJarvis") {
+                return None;
+            }
+            source
+        };
         if !valid_repo(repo) || !matches!(plugin["kind"].as_str(), Some("lua" | "rust")) {
             return None;
         }

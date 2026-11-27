@@ -19,8 +19,24 @@ pub type MusicFastFn=Arc<dyn Fn(String)->crate::plugins::BoxFut<Option<String>>+
 
 pub fn local_voice_url(host: &Host) -> String {
     let url = host.plugin_setting_str("local-rvc-voice", "server_url");
-    let u = if url.is_empty() { "http://192.168.1.3:8768" } else { url.as_str() };
+    let fallback = std::env::var("JARVIS_VOICE_URL").unwrap_or_else(|_| "http://127.0.0.1:8768".into());
+    let u = if url.is_empty() { fallback.as_str() } else { url.as_str() };
     u.trim_end_matches('/').to_string()
+}
+
+#[derive(Clone)]
+pub struct VoiceSessionContext {
+    pub close_after_reply: Arc<dyn Fn() + Send + Sync>,
+}
+
+pub struct VoiceSessionGuard {
+    slot: Arc<std::sync::Mutex<Option<VoiceSessionContext>>>,
+}
+
+impl Drop for VoiceSessionGuard {
+    fn drop(&mut self) {
+        *self.slot.lock().unwrap() = None;
+    }
 }
 
 pub struct Tools {
@@ -63,6 +79,7 @@ pub struct Tools {
     pub scenarios: Option<Arc<crate::scenarios::ScenarioStore>>,
     /// Определение присутствия по Wi-Fi.
     pub presence: Option<Arc<crate::presence::Presence>>,
+    session_ctx: Arc<std::sync::Mutex<Option<VoiceSessionContext>>>,
 }
 
 const DAYS: [&str; 7] = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
@@ -82,6 +99,91 @@ fn as_str(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         _ => String::new(),
+    }
+}
+
+fn clean_profile_query(query: &str) -> String {
+    let norm = fastcmd::norm_text(query);
+    let cleaned = norm
+        .split_whitespace()
+        .filter(|w| {
+            !matches!(
+                *w,
+                "профиль"
+                    | "профиля"
+                    | "профилю"
+                    | "профиле"
+                    | "режим"
+                    | "режима"
+                    | "режиме"
+                    | "ассистент"
+                    | "ассистента"
+                    | "ассистенту"
+                    | "на"
+                    | "в"
+                    | "для"
+                    | "пожалуйста"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if cleaned.is_empty() { norm } else { cleaned }
+}
+
+fn shared_stem_match(a: &str, b: &str) -> bool {
+    let wa: Vec<&str> = a.split_whitespace().collect();
+    let wb: Vec<&str> = b.split_whitespace().collect();
+    if wa.is_empty() || wb.is_empty() {
+        return false;
+    }
+    wa.iter().all(|pa| {
+        let ca: Vec<char> = pa.chars().collect();
+        wb.iter().any(|pb| {
+            let cb: Vec<char> = pb.chars().collect();
+            if ca == cb {
+                return true;
+            }
+            let common = ca.iter().zip(&cb).take_while(|(x, y)| x == y).count();
+            common >= 4 && common + 3 >= ca.len().max(cb.len())
+        })
+    })
+}
+
+fn match_profile<'a>(
+    profiles: &'a [crate::settings::Profile],
+    query: &str,
+) -> Result<&'a crate::settings::Profile, String> {
+    let q_trim = query.trim();
+    if q_trim.is_empty() {
+        return Err("Скажи, на какой профиль переключить.".into());
+    }
+    if let Some(p) = profiles.iter().find(|p| p.id.eq_ignore_ascii_case(q_trim)) {
+        return Ok(p);
+    }
+    let clean_q = clean_profile_query(q_trim);
+    if let Some(p) = profiles.iter().find(|p| fastcmd::norm_text(&p.name) == clean_q) {
+        return Ok(p);
+    }
+    let partial: Vec<&crate::settings::Profile> = profiles
+        .iter()
+        .filter(|p| {
+            let pn = fastcmd::norm_text(&p.name);
+            !pn.is_empty()
+                && (pn.contains(&clean_q)
+                    || clean_q.contains(&pn)
+                    || shared_stem_match(&clean_q, &pn))
+        })
+        .collect();
+    match partial.len() {
+        0 => {
+            let list = profiles.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ");
+            Err(format!("Профиль «{clean_q}» не найден. Доступны: {list}."))
+        }
+        1 => Ok(partial[0]),
+        _ => {
+            let names = partial.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ");
+            Err(format!("Подойдут несколько профилей: {names}. Уточни название."))
+        }
     }
 }
 
@@ -109,7 +211,54 @@ impl Tools {
             dj: None,
             scenarios: None,
             presence: None,
+            session_ctx: Arc::default(),
         }
+    }
+
+    pub fn enter_voice_session(&self, ctx: VoiceSessionContext) -> VoiceSessionGuard {
+        *self.session_ctx.lock().unwrap() = Some(ctx);
+        VoiceSessionGuard { slot: self.session_ctx.clone() }
+    }
+
+    fn request_close_after_reply(&self) {
+        let cb = self
+            .session_ctx
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|ctx| ctx.close_after_reply.clone());
+        if let Some(cb) = cb {
+            cb();
+        }
+    }
+
+    pub fn switch_profile(&self, query: &str) -> Result<String, String> {
+        let (target_id, target_name, already_active) = self.store.with(|s| {
+            if s.profiles.len() <= 1 {
+                return Err(String::from("На колонке настроен только один профиль."));
+            }
+            let target = match_profile(&s.profiles, query)?;
+            Ok((target.id.clone(), target.name.clone(), s.active == target.id))
+        })?;
+        if already_active {
+            return Ok(format!("Профиль «{target_name}» уже активен."));
+        }
+        self.store
+            .update(|s| -> std::io::Result<()> {
+                if s.profiles.iter().any(|p| p.id == target_id) {
+                    s.active = target_id.clone();
+                }
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+        if let Some(leds) = &self.leds {
+            let l = self.store.led_for();
+            leds.configure(&l);
+            leds.show(crate::led::Mode::Listening, &l.listening, l.brightness, Duration::from_secs(2));
+        }
+        self.request_close_after_reply();
+        log::info!("профиль переключён голосом: «{target_name}» ({target_id})");
+        Ok(format!("Переключил на профиль «{target_name}»."))
     }
 
     pub fn engine(&self) -> Option<Arc<crate::engine::Engine>> {
@@ -1040,10 +1189,13 @@ impl Tools {
             }
             return res;
         }
-        if name == "switch_assistant" {
+        if name == "switch_assistant" || name == "switch_profile" {
             let action = field("action");
-            let target = field("name").to_lowercase();
-            if action == "list" || target.is_empty() {
+            let target = {
+                let p = field("profile");
+                if !p.is_empty() { p } else { field("name") }
+            };
+            if action == "list" || (name == "switch_assistant" && target.is_empty()) {
                 let list = self.store.with(|s| {
                     s.profiles.iter().map(|p| {
                         if p.id == s.active { format!("{} (сейчас активен)", p.name) } else { p.name.clone() }
@@ -1051,34 +1203,8 @@ impl Tools {
                 });
                 return format!("Доступные ассистенты: {list}.");
             }
-            let found = self.store.with(|s| {
-                s.profiles.iter().find(|p| {
-                    let pn = p.name.to_lowercase();
-                    pn == target || pn.contains(&target) || p.id.to_lowercase() == target
-                }).map(|p| (p.id.clone(), p.name.clone()))
-            });
-            return match found {
-                Some((id, pname)) => {
-                    let res = self.store.update(|s| {
-                        s.active = id.clone();
-                        Ok::<(), std::io::Error>(())
-                    });
-                    match res {
-                        Ok(()) => {
-                            if let Some(leds) = &self.leds {
-                                let l = self.store.led_for();
-                                leds.configure(&l);
-                                leds.show(crate::led::Mode::Listening, &l.listening, l.brightness, Duration::from_secs(2));
-                            }
-                            format!("Переключил ассистента на «{pname}». Со следующего обращения будет отвечать он.")
-                        }
-                        Err(e) => format!("Не удалось переключить ассистента: {e}"),
-                    }
-                }
-                None => {
-                    let list = self.store.with(|s| s.profiles.iter().map(|p| p.name.clone()).collect::<Vec<_>>().join(", "));
-                    format!("Ассистент «{target}» не найден. Доступны: {list}.")
-                }
+            return match self.switch_profile(&target) {
+                Ok(msg) | Err(msg) => msg,
             };
         }
         if name == "music_control"
@@ -2693,5 +2819,59 @@ mod tests {
         assert_eq!(parse_sleep_sound_intent("включи музыку для сна"), Some("ocean"));
         assert_eq!(parse_sleep_sound_intent("включи шум для сна"), Some("white"));
         assert_eq!(parse_sleep_sound_intent("включи музыку для сна на ютубе"), None);
+    }
+
+    #[tokio::test]
+    async fn switch_profile_matches_russian_inflections_and_arms_close() {
+        let dir = std::env::temp_dir().join(format!("jarvis-switch-prof-{}", crate::settings::rand_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(dir.join("settings.json")).unwrap();
+        let host = Host::new(dir.clone(), crate::plugins::Hooks::default());
+        let tools = Tools::new(host, store.clone());
+
+        assert!(tools.switch_profile("рюка").is_err());
+
+        store
+            .update(|s| -> std::io::Result<()> {
+                s.profiles = vec![
+                    crate::settings::Profile { id: "p1".into(), name: "Аянами".into(), prompt: "a".into(), ..Default::default() },
+                    crate::settings::Profile { id: "p2".into(), name: "Рюк".into(), prompt: "r".into(), ..Default::default() },
+                ];
+                s.active = "p1".into();
+                Ok(())
+            })
+            .unwrap();
+
+        let close_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _guard = tools.enter_voice_session(VoiceSessionContext {
+            close_after_reply: {
+                let f = close_flag.clone();
+                Arc::new(move || f.store(true, std::sync::atomic::Ordering::SeqCst))
+            },
+        });
+
+        let msg = tools.switch_profile("на Рюка").unwrap();
+        assert!(msg.contains("Рюк"));
+        assert_eq!(store.with(|s| s.active.clone()), "p2");
+        assert!(close_flag.load(std::sync::atomic::Ordering::SeqCst));
+
+        let msg_back = tools.call("switch_assistant", r#"{"action":"switch","name":"Аянами"}"#).await;
+        assert!(msg_back.contains("Аянами"));
+        assert_eq!(store.with(|s| s.active.clone()), "p1");
+
+        let msg_id = tools.switch_profile("p2").unwrap();
+        assert!(msg_id.contains("Рюк"));
+
+        store
+            .update(|s| -> std::io::Result<()> {
+                s.profiles.push(crate::settings::Profile { id: "p3".into(), name: "Взрослый 1".into(), prompt: "x".into(), ..Default::default() });
+                s.profiles.push(crate::settings::Profile { id: "p4".into(), name: "Взрослый 2".into(), prompt: "y".into(), ..Default::default() });
+                Ok(())
+            })
+            .unwrap();
+        let err = tools.switch_profile("взрослый").unwrap_err();
+        assert!(err.contains("Взрослый 1") && err.contains("Взрослый 2"));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

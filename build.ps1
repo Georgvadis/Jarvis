@@ -29,7 +29,7 @@ foreach ($arch in $arches) {
     }
 }
 $version = if ($env:VERSION) { $env:VERSION -creplace '^v' } else { 'dev' }
-$repo = if ($env:REPO) { $env:REPO } else { 'newfpv/YaJarvis' }
+$repo = if ($env:REPO) { $env:REPO } else { 'Georgvadis/Jarvis' }
 $zigName = if ($env:ZIG) { $env:ZIG } else { 'zig' }
 $zig = (Get-Command $zigName -CommandType Application | Select-Object -First 1).Source
 foreach ($name in 'cargo', 'cmake', 'ninja', 'python', 'tar.exe') {

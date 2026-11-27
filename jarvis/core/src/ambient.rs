@@ -311,14 +311,7 @@ impl Ambient {
         let sleep_bg = self.sleep_until.clone();
         let active_bg = self.active.clone();
         let store_bg = self.store.clone();
-        let server_url = {
-            let u = self.plugins.plugin_setting_str("local-rvc-voice", "server_url");
-            if u.is_empty() {
-                "http://192.168.1.3:8768".into()
-            } else {
-                u.trim_end_matches('/').to_string()
-            }
-        };
+        let server_url = crate::tools::local_voice_url(&self.plugins);
         let (preset_id, preset_name, preset_kind, preset_url) = target;
         let ret_name = preset_name.clone();
 

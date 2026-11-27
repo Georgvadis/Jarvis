@@ -63,7 +63,7 @@
     </div>
     <div class={styles.topMeta}>
       <span class={styles.version}>{version}</span>
-      <a href="https://github.com/newfpv/YaJarvis" target="_blank" rel="noopener noreferrer">
+      <a href="https://github.com/Georgvadis/Jarvis" target="_blank" rel="noopener noreferrer">
         Проект на GitHub <span aria-hidden="true">↗</span>
       </a>
     </div>
@@ -114,7 +114,7 @@
 
   <footer class={styles.bottomBar}>
     <span>Установка на вашу колонку · Без отдельного сервера</span>
-    <a href="https://github.com/newfpv/YaJarvis#contributors-и-авторы-проектов" target="_blank" rel="noopener noreferrer">
+    <a href="https://github.com/Georgvadis/Jarvis#contributors-и-авторы-проектов" target="_blank" rel="noopener noreferrer">
       Авторы и благодарности
     </a>
   </footer>

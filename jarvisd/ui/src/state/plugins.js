@@ -66,7 +66,7 @@ export function plDescription(p, catalog = plCatItem(p)) {
   return values.find((value) => value && !/\?{3,}/.test(value)) || "";
 }
 export function plOfficial(id) { return plOfficialItems().find((c) => c.id === id); }
-export const plRepo = () => PL.data?.repo || S.repo || "newfpv/YaJarvis";
+export const plRepo = () => PL.data?.repo || S.repo || "Georgvadis/Jarvis";
 
 // plItems — всё, что можно показать: каталог плюс установленное, чего в каталоге нет (из файла, снятое с каталога).
 export function plItems() {

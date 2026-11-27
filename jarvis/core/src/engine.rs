@@ -1247,6 +1247,14 @@ impl Engine {
         let opening_at = wake_at;
         let mut ready_at = Instant::now();
         let mut last_voice: Option<Instant> = None;
+        let mut close_armed_at: Option<Instant> = None;
+        let close_after_flag = Arc::new(AtomicBool::new(false));
+        let _session_guard = self.tools.enter_voice_session(crate::tools::VoiceSessionContext {
+            close_after_reply: {
+                let flag = close_after_flag.clone();
+                Arc::new(move || flag.store(true, Ordering::SeqCst))
+            },
+        });
         let _ = (sure, &clip);
 
         // открыть разговор с моделью и отдать ему весь звук с момента слова
@@ -1447,6 +1455,22 @@ impl Engine {
                 close(&sess);
                 return None;
             }
+            if close_after_flag.load(Ordering::SeqCst) || x.dialog().close_after_reply_requested() {
+                let armed = *close_armed_at.get_or_insert_with(Instant::now);
+                let wait = if x.dialog().is_turn_complete() {
+                    Duration::from_millis(300)
+                } else {
+                    Duration::from_millis(800)
+                };
+                let done_speaking = last_voice.is_some_and(|t| t >= armed && t.elapsed() >= wait);
+                if done_speaking || armed.elapsed() >= Duration::from_secs(8) {
+                    log::info!("разговор: завершён после переключения профиля");
+                    self.player.finish(Duration::from_secs(3));
+                    x.dialog().finish_turn("");
+                    close(&sess);
+                    return None;
+                }
+            }
             if tick.elapsed() < Duration::from_millis(100) {
                 continue;
             }
@@ -1543,6 +1567,17 @@ impl Engine {
             quiet();
             log::info!("Джарвис: «{text}» — разговор закрыт, музыка не тронута ({from})");
             note("стоп", "");
+            return true;
+        }
+        if self.store.with(|s| s.profiles.len() > 1)
+            && let Some(target) = fastcmd::profile_switch_target(&cmd)
+        {
+            let answer = match self.tools.switch_profile(&target) {
+                Ok(answer) | Err(answer) => answer,
+            };
+            quiet();
+            note("профиль", &answer);
+            (self.say_hook())(answer);
             return true;
         }
         if fastcmd::youtube_request(&cmd)

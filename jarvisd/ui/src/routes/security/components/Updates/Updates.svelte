@@ -12,7 +12,7 @@
 
   let automatic = $derived(!!(update?.check || update?.auto));
   let releasesUrl = $derived(
-    update?.repo ? `https://github.com/${update.repo}/releases` : "https://github.com/newfpv/YaJarvis/releases"
+    update?.repo ? `https://github.com/${update.repo}/releases` : "https://github.com/Georgvadis/Jarvis/releases"
   );
   let releaseUrl = $derived(
     update?.repo && update?.latest ? `https://github.com/${update.repo}/releases/tag/v${update.latest}` : releasesUrl

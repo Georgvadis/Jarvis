@@ -592,6 +592,8 @@ impl Host {
                 if builtin_state {
                     state.source = "core".into();
                     state.official = true;
+                } else if state.official && state.source.eq_ignore_ascii_case("newfpv/YaJarvis") {
+                    state.source = crate::DEFAULT_REPO.into();
                 }
                 let enabled = state.enabled;
                 if enabled && !later && broken.is_empty() {
