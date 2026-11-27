@@ -1,7 +1,7 @@
 <script module>
   const effects = [
     ["listening", "Дыхание"],
-    ["thinking", "Огонёк по кругу"],
+    ["thinking", "По кругу"],
     ["speaking", "Пульс"],
   ];
   const presets = ["#ffffff", "#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#00b4ff", "#3d6bff", "#5a2dff", "#ff2d92"];
