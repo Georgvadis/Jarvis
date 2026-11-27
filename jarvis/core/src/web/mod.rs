@@ -60,6 +60,7 @@ pub struct Web {
     pub presence: Arc<crate::presence::Presence>,
     pub scheduler: Arc<crate::scheduler::Scheduler>,
     pub scenarios: Arc<crate::scenarios::ScenarioStore>,
+    pub courses: Arc<crate::courses::CourseStore>,
     pub data_dir: PathBuf,
     pub started: Instant,
     pub telemetry: Arc<crate::telemetry::Telemetry>,
@@ -88,10 +89,11 @@ impl Web {
         presence: Arc<crate::presence::Presence>,
         scheduler: Arc<crate::scheduler::Scheduler>,
         scenarios: Arc<crate::scenarios::ScenarioStore>,
+        courses: Arc<crate::courses::CourseStore>,
     ) -> App {
         let telemetry=crate::telemetry::Telemetry::start(data_dir.clone());
         let updater = crate::updates::Updater::new(data_dir.clone(), store.clone(), plugins.clone());
-        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, reader, games, dj, presence, scheduler, scenarios, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
+        Arc::new(Web { store, plugins, proxy, engine, ambient, focus, modes, reader, games, dj, presence, scheduler, scenarios, courses, data_dir, telemetry, updater, wake_update:Arc::default(), started: Instant::now(), fails: Mutex::default(), reset_at: Mutex::default() })
     }
 }
 
@@ -215,6 +217,13 @@ pub fn router(app: App) -> Router {
         .route("/api/scenarios", get(talk::scenarios_list).post(talk::scenarios_create))
         .route("/api/scenarios/generate", post(talk::scenarios_generate))
         .route("/api/scenarios/{id}", put(talk::scenarios_update).delete(talk::scenarios_delete))
+        .route("/api/courses", get(talk::courses_list))
+        .route("/api/courses/generate", post(talk::courses_generate))
+        .route("/api/courses/{id}", delete(talk::courses_delete))
+        .route("/api/courses/{id}/start", post(talk::courses_start))
+        .route("/api/courses/{id}/finish", post(talk::courses_finish))
+        .route("/api/courses/{id}/card", post(talk::courses_card))
+        .route("/api/courses/{id}/export", post(talk::courses_export))
         .route("/api/journal", get(talk::journal))
         .route("/api/journal/clear", post(talk::journal_clear))
         .route("/api/debate", post(talk::debate_start))

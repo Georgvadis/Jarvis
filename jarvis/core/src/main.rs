@@ -11,6 +11,7 @@ mod dj;
 mod focus;
 mod games;
 mod modes;
+mod courses;
 mod presence;
 mod reader;
 mod scenarios;
@@ -320,6 +321,7 @@ async fn run(f: Flags, store: settings::Store) {
     let presence = presence::Presence::new();
     let scheduler = scheduler::Scheduler::load(f.data.clone(), store.clone());
     let scenarios = scenarios::ScenarioStore::load(f.data.clone());
+    let courses = courses::CourseStore::load(f.data.clone());
     {
         let host = host.clone();
         let ambient = ambient.clone();
@@ -462,7 +464,7 @@ async fn run(f: Flags, store: settings::Store) {
     presence.clone().spawn(engine.clone());
     scheduler.clone().spawn(engine.clone());
     telegram_bot::spawn(engine.clone(), host.clone(), proxy.clone(), ambient.clone(), focus.clone());
-    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes, reader, games, dj, presence, scheduler, scenarios);
+    let app = web::Web::new(store.clone(), host.clone(), proxy, f.data.clone(), engine, ambient, focus, modes, reader, games, dj, presence, scheduler, scenarios, courses);
     #[cfg(unix)]
     {
         let app = app.clone();

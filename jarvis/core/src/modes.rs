@@ -14,6 +14,7 @@ pub enum SpecialMode {
     Rpg(String),
     Quiz(String),
     Custom { title: String, prompt: String },
+    Tutor { course_id: String, lesson_idx: usize, title: String, prompt: String, bilingual: bool },
     Melody,
     Detective,
     PartyHost,
@@ -55,6 +56,14 @@ impl ModeManager {
             SpecialMode::Rpg(topic) => json!({"mode": "rpg", "lang": "", "topic": topic}),
             SpecialMode::Quiz(topic) => json!({"mode": "quiz", "lang": "", "topic": topic}),
             SpecialMode::Custom { title, .. } => json!({"mode": "custom", "lang": "", "topic": title}),
+            SpecialMode::Tutor { course_id, lesson_idx, title, bilingual, .. } => json!({
+                "mode": "tutor",
+                "lang": "",
+                "topic": title,
+                "course_id": course_id,
+                "lesson_idx": lesson_idx,
+                "bilingual": bilingual,
+            }),
             SpecialMode::Translator(lang) => json!({"mode": "translator", "lang": lang, "topic": ""}),
             SpecialMode::Melody => json!({"mode": "melody", "lang": "", "topic": ""}),
             SpecialMode::Detective => json!({"mode": "detective", "lang": "", "topic": ""}),
@@ -114,7 +123,7 @@ impl ModeManager {
                         started_amb = amb.start("jazz").is_ok();
                     }
                 }
-                SpecialMode::Normal | SpecialMode::Chat | SpecialMode::Translator(_) => {
+                SpecialMode::Normal | SpecialMode::Chat | SpecialMode::Translator(_) | SpecialMode::Tutor { .. } => {
                     if prev_started {
                         amb.stop();
                     }
@@ -140,6 +149,11 @@ impl ModeManager {
             SpecialMode::Custom { title, .. } => format!(
                 "[sfx:chime] Игра «{}» запущена! Скажи «начинаем», и поехали.",
                 if title.trim().is_empty() { "Свой сценарий" } else { title.trim() }
+            ),
+            SpecialMode::Tutor { title, lesson_idx, .. } => format!(
+                "[sfx:chime] Начинаем урок {}: «{}». Готов к разминке?",
+                lesson_idx + 1,
+                title.trim()
             ),
             SpecialMode::Melody => "Музыкальная игра «Угадай мелодию» запущена!".into(),
             SpecialMode::Detective => "[sfx:thunder] Нуарный детектив запущен!".into(),
@@ -304,6 +318,7 @@ impl ModeManager {
             SpecialMode::Custom { title, prompt } => format!(
                 "Ты ведущий голосовой игры «{title}». Правила и сеттинг: {prompt}. Отвечай живо, коротко (2–4 предложения), без Markdown и списков, вовлекая игрока.{whisper_hint}"
             ),
+            SpecialMode::Tutor { prompt, .. } => format!("{prompt}{whisper_hint}"),
             SpecialMode::Melody | SpecialMode::Detective | SpecialMode::PartyHost => base.to_string(),
         }
     }

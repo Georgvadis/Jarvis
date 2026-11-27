@@ -5,10 +5,11 @@
   import { activity, refreshActivity } from "#state/activity.js";
   import StudioBooks from "./StudioBooks.svelte";
   import StudioGames from "./StudioGames.svelte";
+  import StudioLearn from "./StudioLearn.svelte";
   import StudioPodcast from "./StudioPodcast.svelte";
   import StudioSchedule from "./StudioSchedule.svelte";
 
-  const VALID_TABS = new Set(["podcast", "books", "games", "schedule"]);
+  const VALID_TABS = new Set(["podcast", "books", "games", "learn", "schedule"]);
   let tab = $state("podcast");
   let busy = $state(false);
 
@@ -57,7 +58,8 @@
   let tabs = $derived([
     { id: "podcast", label: "Подкасты и эфир", ic: "podcast", live: Boolean($activity.debate_active || $activity.modes?.mode === "translator") },
     { id: "books", label: "Книги", ic: "book", live: Boolean($activity.reader?.running) },
-    { id: "games", label: "Игры", ic: "gamepad", live: Boolean($activity.games?.active_game || $activity.modes?.mode === "rpg" || $activity.modes?.mode === "quiz") },
+    { id: "games", label: "Игры", ic: "gamepad", live: Boolean($activity.games?.active_game || $activity.modes?.mode === "rpg" || $activity.modes?.mode === "quiz" || $activity.modes?.mode === "custom") },
+    { id: "learn", label: "Учёба", ic: "graduation", live: Boolean($activity.modes?.mode === "tutor") },
     { id: "schedule", label: "Автоматизации", ic: "clock", live: Boolean($activity.timers?.length) },
   ]);
 </script>
@@ -98,6 +100,8 @@
   <StudioBooks />
 {:else if tab === "games"}
   <StudioGames />
+{:else if tab === "learn"}
+  <StudioLearn />
 {:else}
   <StudioSchedule />
 {/if}

@@ -142,12 +142,17 @@ impl Classic {
                 }
             },
             "local-rvc-voice" => {
-                match stt_local_whisper(&context.host, &wav_bytes, &context.settings.language, &context.profile.stt_model).await {
+                let bilingual_tutor = context.tools.modes.as_ref().is_some_and(|m| {
+                    matches!(m.current(), crate::modes::SpecialMode::Tutor { bilingual: true, .. })
+                });
+                let stt_lang = if bilingual_tutor { "" } else { context.settings.language.as_str() };
+                let stt_mdl = if bilingual_tutor { "whisper" } else { context.profile.stt_model.as_str() };
+                match stt_local_whisper(&context.host, &wav_bytes, stt_lang, stt_mdl).await {
                     Ok(txt) => json!({"text": txt}),
                     Err(direct_err) => {
                         log::warn!("Local Whisper direct STT failed ({direct_err}), falling back to plugin_stt");
                         let wav_b64 = B64.encode(&wav_bytes);
-                        match context.host.plugin_stt("local-rvc-voice", json!({"audio_b64":wav_b64,"format":"wav","rate":16000,"model":context.profile.stt_model,"language":context.settings.language})).await {
+                        match context.host.plugin_stt("local-rvc-voice", json!({"audio_b64":wav_b64,"format":"wav","rate":16000,"model":stt_mdl,"language":stt_lang})).await {
                             Ok(v) => v,
                             Err(e) => { self.record_failure(context, "local-rvc-voice", crate::voice_error::Stage::Connect, &e); return Err(e); }
                         }

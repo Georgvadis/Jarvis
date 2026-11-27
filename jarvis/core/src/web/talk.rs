@@ -358,6 +358,316 @@ pub async fn modes_get(State(app): State<App>) -> Response {
     reply(StatusCode::OK, app.modes.status())
 }
 
+pub async fn courses_list(State(app): State<App>) -> Response {
+    reply(StatusCode::OK, app.courses.list_json())
+}
+
+pub async fn courses_generate(
+    State(app): State<App>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    let topic = value["topic"].as_str().unwrap_or("").trim().to_string();
+    let level = value["level"].as_str().unwrap_or("Начинающий").trim().to_string();
+    let goal = value["goal"].as_str().unwrap_or("").trim().to_string();
+    if topic.is_empty() {
+        return super::bad("Укажите предмет или тему курса");
+    }
+    let sys = r##"Ты методист и составитель голосовых учебных курсов. Построй чёткую, прогрессивную программу обучения из 10 уроков (от простого к сложному) и 6 стартовых карточек для запоминания.
+Верни ТОЛЬКО валидный JSON без пояснений и markdown:
+{"title":"Короткое название курса","subject":"Предмет","level":"Уровень","goal":"Цель в 1 предложении","bilingual":true,"lessons":[{"title":"Название урока","goal":"Чему научимся","key_points":["пункт 1","пункт 2","пункт 3"]}],"cards":[{"front":"слово / вопрос","back":"перевод / ответ"}]}
+Ставь "bilingual": true, если курс по изучению иностранного языка (английский, японский, немецкий и т.д.), иначе false."##;
+    let user_msg = format!(
+        "Предмет/тема: {topic}. Уровень: {level}.{}",
+        if goal.is_empty() { String::new() } else { format!(" Цель: {goal}.") }
+    );
+    let s = app.store.get();
+    let p = s.active_profile();
+    let raw = match crate::llm::ask_with_pool(
+        &app.plugins,
+        &s,
+        &p,
+        sys,
+        &user_msg,
+        &app.engine.tools,
+        Vec::new(),
+        Some(&app.engine.gemini_pool),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return super::bad(format!("Не удалось составить курс: {e}")),
+    };
+    let trimmed = raw.trim();
+    let json_slice = trimmed
+        .find('{')
+        .and_then(|a| trimmed.rfind('}').filter(|&b| b > a).map(|b| &trimmed[a..=b]))
+        .unwrap_or(trimmed);
+    let parsed: serde_json::Value = match serde_json::from_str(json_slice) {
+        Ok(v) => v,
+        Err(_) => return super::bad("Модель вернула некорректный JSON — попробуйте ещё раз"),
+    };
+    let lessons: Vec<crate::courses::Lesson> = parsed["lessons"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .take(20)
+                .filter_map(|l| {
+                    let t = l["title"].as_str()?.trim();
+                    if t.is_empty() {
+                        return None;
+                    }
+                    let key_points = l["key_points"]
+                        .as_array()
+                        .map(|kp| kp.iter().filter_map(|x| x.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).take(6).collect())
+                        .unwrap_or_default();
+                    Some(crate::courses::Lesson {
+                        title: t.chars().take(100).collect(),
+                        goal: l["goal"].as_str().unwrap_or("").trim().chars().take(200).collect(),
+                        key_points,
+                        status: "todo".into(),
+                        notes: String::new(),
+                        completed_at: 0,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let cards: Vec<crate::courses::ReviewCard> = parsed["cards"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .take(20)
+                .filter_map(|c| {
+                    let f = c["front"].as_str()?.trim();
+                    let b = c["back"].as_str()?.trim();
+                    if f.is_empty() || b.is_empty() {
+                        return None;
+                    }
+                    Some(crate::courses::ReviewCard {
+                        front: f.chars().take(120).collect(),
+                        back: b.chars().take(200).collect(),
+                        interval_days: 1,
+                        next_review: 0,
+                        hits: 0,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let course = crate::courses::Course {
+        id: String::new(),
+        title: parsed["title"].as_str().unwrap_or(&topic).trim().chars().take(80).collect(),
+        subject: parsed["subject"].as_str().unwrap_or(&topic).trim().chars().take(60).collect(),
+        level: parsed["level"].as_str().unwrap_or(&level).trim().chars().take(40).collect(),
+        goal: parsed["goal"].as_str().unwrap_or(&goal).trim().chars().take(200).collect(),
+        bilingual: parsed["bilingual"].as_bool().unwrap_or(false),
+        current_lesson: 0,
+        lessons,
+        cards,
+        weak_spots: Vec::new(),
+        created_at: 0,
+        updated_at: 0,
+    };
+    match app.courses.create(course) {
+        Ok(created) => reply(StatusCode::OK, json!({"course": created, "courses": app.courses.list_json()["courses"]})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn courses_delete(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    match app.courses.delete(&id) {
+        Ok(list) => reply(StatusCode::OK, list),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn courses_start(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    let Some(existing) = app.courses.get(&id) else {
+        return super::bad("Курс не найден");
+    };
+    let lesson_idx = value
+        .get("lesson_idx")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(existing.current_lesson);
+    let (course, idx) = match app.courses.mark_lesson_started(&id, lesson_idx) {
+        Ok(v) => v,
+        Err(e) => return super::bad(e),
+    };
+    app.engine.tools.stop_for(&app.engine, "modes");
+    let prompt = crate::courses::CourseStore::build_tutor_prompt(&course, idx);
+    let title = course.lessons[idx].title.clone();
+    let greeting = app.modes.activate(
+        crate::modes::SpecialMode::Tutor {
+            course_id: course.id.clone(),
+            lesson_idx: idx,
+            title,
+            prompt,
+            bilingual: course.bilingual,
+        },
+        Some(&app.ambient),
+    );
+    let eng = app.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        eng.say_text(&greeting);
+        if eng.mic.online() {
+            eng.trigger("урок репетитора", 1.0);
+        }
+    });
+    reply(StatusCode::OK, json!({"ok": true, "course": course, "mode": app.modes.status()}))
+}
+
+pub async fn courses_finish(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    let Some(course) = app.courses.get(&id) else {
+        return super::bad("Курс не найден");
+    };
+    let lesson_idx = value
+        .get("lesson_idx")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(course.current_lesson)
+        .min(course.lessons.len().saturating_sub(1));
+    let send_tg = value["telegram"].as_bool().unwrap_or(false);
+
+    let history = app.modes.history();
+    let mut notes = value["notes"].as_str().unwrap_or("").trim().to_string();
+    let mut new_cards: Vec<(String, String)> = Vec::new();
+    let mut weak: Vec<String> = Vec::new();
+
+    if !history.is_empty() {
+        let mut transcript = String::new();
+        for t in history.iter().rev().take(24).rev() {
+            let who = if t.role == "user" { "Ученик" } else { "Репетитор" };
+            transcript.push_str(&format!("{who}: {}\n", t.content));
+        }
+        let sys = r#"Подведи краткий итог пройденного голосового урока. Верни ТОЛЬКО JSON:
+{"notes":"Краткий конспект в 2–3 предложениях: что разобрали и как справился ученик","cards":[{"front":"новое слово/правило","back":"перевод/объяснение"}],"weak_spots":["слабое место (если было)"]}"#;
+        let s = app.store.get();
+        let p = s.active_profile();
+        if let Ok(raw) = crate::llm::ask_with_pool(
+            &app.plugins,
+            &s,
+            &p,
+            sys,
+            &transcript,
+            &app.engine.tools,
+            Vec::new(),
+            Some(&app.engine.gemini_pool),
+        )
+        .await
+        {
+            let trimmed = raw.trim();
+            let slice = trimmed
+                .find('{')
+                .and_then(|a| trimmed.rfind('}').filter(|&b| b > a).map(|b| &trimmed[a..=b]))
+                .unwrap_or(trimmed);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(slice) {
+                if notes.is_empty() && let Some(n) = v["notes"].as_str() {
+                    notes = n.trim().to_string();
+                }
+                if let Some(arr) = v["cards"].as_array() {
+                    for c in arr.iter().take(6) {
+                        if let (Some(f), Some(b)) = (c["front"].as_str(), c["back"].as_str()) {
+                            new_cards.push((f.to_string(), b.to_string()));
+                        }
+                    }
+                }
+                if let Some(arr) = v["weak_spots"].as_array() {
+                    for w in arr.iter().take(3) {
+                        if let Some(ws) = w.as_str() {
+                            weak.push(ws.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if notes.is_empty() {
+        notes = format!("Урок «{}» завершён.", course.lessons[lesson_idx].title);
+    }
+
+    let updated = match app.courses.complete_lesson(&id, lesson_idx, notes, new_cards, weak) {
+        Ok(c) => c,
+        Err(e) => return super::bad(e),
+    };
+    app.modes.reset(Some(&app.ambient));
+    let eng = app.engine.clone();
+    tokio::task::spawn_blocking(move || eng.end_chat("урок завершён"));
+    if send_tg {
+        let md = crate::courses::CourseStore::build_summary_markdown(&updated, Some(lesson_idx));
+        crate::telegram_bot::notify_telegram(&app.plugins, &app.proxy, &md).await;
+    }
+    reply(StatusCode::OK, json!({"ok": true, "course": updated, "courses": app.courses.list_json()["courses"]}))
+}
+
+pub async fn courses_card(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    let op = value["op"].as_str().unwrap_or("add");
+    let res = match op {
+        "review" => {
+            let idx = value["index"].as_u64().unwrap_or(0) as usize;
+            let ok = value["ok"].as_bool().unwrap_or(true);
+            app.courses.review_card(&id, idx, ok)
+        }
+        "delete" => {
+            let idx = value["index"].as_u64().unwrap_or(0) as usize;
+            app.courses.delete_card(&id, idx)
+        }
+        _ => {
+            let front = value["front"].as_str().unwrap_or("").to_string();
+            let back = value["back"].as_str().unwrap_or("").to_string();
+            app.courses.add_card(&id, front, back)
+        }
+    };
+    match res {
+        Ok(course) => reply(StatusCode::OK, json!({"course": course, "courses": app.courses.list_json()["courses"]})),
+        Err(e) => super::bad(e),
+    }
+}
+
+pub async fn courses_export(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::Json(value): axum::Json<serde_json::Value>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    let Some(course) = app.courses.get(&id) else {
+        return super::bad("Курс не найден");
+    };
+    let idx = value.get("lesson_idx").and_then(|v| v.as_u64()).map(|n| n as usize);
+    let md = crate::courses::CourseStore::build_summary_markdown(&course, idx);
+    crate::telegram_bot::notify_telegram(&app.plugins, &app.proxy, &md).await;
+    reply(StatusCode::OK, json!({"ok": true}))
+}
+
 pub async fn modes_set(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {
     let mode = value["mode"].as_str().unwrap_or("").trim().to_lowercase();
     match mode.as_str() {
