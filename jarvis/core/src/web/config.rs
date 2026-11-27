@@ -216,6 +216,16 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
     if p.name.is_empty() || p.name.chars().count() > 40 {
         return bad("Имя — от 1 до 40 символов");
     }
+    p.tagline = p.tagline.trim().chars().take(120).collect();
+    p.avatar = p.avatar.trim().into();
+    if !p.avatar.is_empty() {
+        let ok_prefix = p.avatar.starts_with("data:image/jpeg;base64,")
+            || p.avatar.starts_with("data:image/webp;base64,")
+            || p.avatar.starts_with("data:image/png;base64,");
+        if !ok_prefix || p.avatar.len() > 180_000 {
+            return bad("Некорректный формат или слишком большой размер аватара");
+        }
+    }
     if !p.timezone.is_empty() && timezone(&p.timezone).is_err() {
         return bad("Неизвестный часовой пояс");
     }

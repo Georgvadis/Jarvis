@@ -578,7 +578,7 @@ body.hearth-lit::after {
 .asst-pop-foot {
   margin-top: 2px; padding-top: 6px;
   border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
 }
 .asst-pop-foot a {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
@@ -862,6 +862,322 @@ h2 { font-size: 15.5px; line-height: 22px; font-weight: 700; letter-spacing: -.0
 .sdot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 8px var(--acc-glow); flex: none; }
 .sdot.ok { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 65%, transparent); }
 .av.sm { width: 20px; height: 20px; border-radius: 6px; font-size: 11px; font-weight: 700; flex: none; }
+.av.av-img {
+  padding: 0 !important;
+  overflow: hidden;
+  background: var(--glass-inset) !important;
+}
+.av.av-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ==========================================================================
+   Студия ассистентов: карточки личностей, портреты и редактор образа
+   ========================================================================== */
+.persona-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 18px;
+  align-items: stretch;
+}
+
+.persona-card {
+  padding: 0 !important;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform .2s var(--spring), border-color .2s, box-shadow .2s;
+}
+.persona-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--acc) 45%, var(--glass-border)) !important;
+  box-shadow: inset 0 1px 0 var(--glass-spec), 0 22px 48px -22px rgb(0 0 0 / .82), 0 0 28px -14px var(--acc-glow) !important;
+}
+.persona-card.active {
+  border-color: color-mix(in srgb, var(--acc) 62%, var(--glass-border)) !important;
+  box-shadow: inset 0 1px 0 rgb(255 240 218 / .24), 0 20px 46px -22px rgb(0 0 0 / .8), 0 0 34px -14px var(--acc-glow) !important;
+}
+
+.persona-cover {
+  position: relative;
+  height: 196px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg, rgb(242 153 74 / .24), rgb(34 24 18 / .85));
+  border-bottom: 1px solid var(--glass-border);
+}
+.persona-cover.c1 { background: radial-gradient(280px 180px at 30% 20%, rgb(242 153 74 / .36), transparent 72%), linear-gradient(160deg, #2b1d14 0%, #17100c 100%); }
+.persona-cover.c2 { background: radial-gradient(280px 180px at 30% 20%, rgb(99 184 136 / .34), transparent 72%), linear-gradient(160deg, #13251c 0%, #0e1612 100%); }
+.persona-cover.c3 { background: radial-gradient(280px 180px at 30% 20%, rgb(118 162 214 / .36), transparent 72%), linear-gradient(160deg, #142030 0%, #0e131b 100%); }
+.persona-cover.c4 { background: radial-gradient(280px 180px at 30% 20%, rgb(168 146 214 / .36), transparent 72%), linear-gradient(160deg, #201830 0%, #130f1c 100%); }
+.persona-cover.c5 { background: radial-gradient(280px 180px at 30% 20%, rgb(223 120 109 / .36), transparent 72%), linear-gradient(160deg, #2c1716 0%, #190f0e 100%); }
+.persona-cover.c6 { background: radial-gradient(280px 180px at 30% 20%, rgb(240 190 91 / .34), transparent 72%), linear-gradient(160deg, #2b2212 0%, #17130b 100%); }
+
+:root[data-theme="light"] .persona-cover.c1 { background: radial-gradient(280px 180px at 30% 20%, rgb(242 153 74 / .32), transparent 72%), linear-gradient(160deg, #f8e8d6 0%, #ecd6be 100%); }
+:root[data-theme="light"] .persona-cover.c2 { background: radial-gradient(280px 180px at 30% 20%, rgb(99 184 136 / .28), transparent 72%), linear-gradient(160deg, #dff1e7 0%, #cbe4d6 100%); }
+:root[data-theme="light"] .persona-cover.c3 { background: radial-gradient(280px 180px at 30% 20%, rgb(118 162 214 / .30), transparent 72%), linear-gradient(160deg, #e1ebf6 0%, #cde0f2 100%); }
+:root[data-theme="light"] .persona-cover.c4 { background: radial-gradient(280px 180px at 30% 20%, rgb(168 146 214 / .30), transparent 72%), linear-gradient(160deg, #eae4f6 0%, #dcd3f0 100%); }
+:root[data-theme="light"] .persona-cover.c5 { background: radial-gradient(280px 180px at 30% 20%, rgb(223 120 109 / .30), transparent 72%), linear-gradient(160deg, #f6e3e1 0%, #ecd0cd 100%); }
+:root[data-theme="light"] .persona-cover.c6 { background: radial-gradient(280px 180px at 30% 20%, rgb(240 190 91 / .30), transparent 72%), linear-gradient(160deg, #f6eedb 0%, #ece0c2 100%); }
+
+.persona-cover-link {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.persona-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 22%;
+  display: block;
+  transition: transform .35s var(--ease);
+}
+.persona-card:hover .persona-cover-img {
+  transform: scale(1.04);
+}
+.persona-cover::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 54px;
+  background: linear-gradient(180deg, transparent, rgb(17 13 10 / .58));
+  pointer-events: none;
+}
+:root[data-theme="light"] .persona-cover::after {
+  background: linear-gradient(180deg, transparent, rgb(92 64 38 / .18));
+}
+.persona-monogram {
+  font-size: 64px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -.04em;
+  color: rgb(255 244 230 / .84);
+  text-shadow: 0 10px 30px rgb(0 0 0 / .45);
+  user-select: none;
+}
+:root[data-theme="light"] .persona-monogram {
+  color: rgb(38 29 21 / .72);
+  text-shadow: none;
+}
+
+.persona-cover-top {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.persona-badge-live {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: rgb(18 14 11 / .76);
+  backdrop-filter: blur(12px);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, rgb(255 255 255 / .14));
+  color: #e9faef;
+  font-size: 12px;
+  font-weight: 700;
+}
+.persona-cam-btn {
+  pointer-events: auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  background: rgb(18 14 11 / .64);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgb(255 240 220 / .22);
+  color: #faf4ec;
+  cursor: pointer;
+  opacity: .85;
+  transition: opacity .15s, transform .15s var(--spring), background-color .15s, border-color .15s;
+}
+.persona-cam-btn:hover {
+  opacity: 1;
+  background: rgb(18 14 11 / .86);
+  border-color: var(--acc);
+  transform: scale(1.06);
+}
+.persona-cam-btn.busy { opacity: .5; pointer-events: none; }
+.persona-cam-btn .ic { width: 16px; height: 16px; }
+
+.persona-body {
+  padding: 16px 18px 14px;
+  display: grid;
+  gap: 10px;
+  flex: 1;
+  align-content: start;
+}
+.persona-title-link {
+  display: grid;
+  gap: 2px;
+}
+.persona-title-link h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 23px;
+  font-weight: 750;
+  color: var(--fg);
+}
+.persona-sub {
+  font-size: 13px;
+  color: var(--acc-ink);
+  font-weight: 600;
+}
+.persona-quote {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.persona-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.persona-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  padding: 4px 9px;
+}
+.persona-chip .ic { width: 12.5px; height: 12.5px; color: var(--acc); flex: none; }
+
+.persona-foot {
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--glass-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgb(255 236 214 / .018);
+}
+.persona-active-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ok);
+}
+.persona-active-lbl .ic { width: 14px; height: 14px; }
+
+.persona-add {
+  min-height: 320px;
+  border-radius: var(--r-lg);
+  border: 1.5px dashed var(--line2) !important;
+  background: var(--glass-inset) !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  padding: 28px 20px !important;
+  color: var(--fg2);
+}
+.persona-add:hover {
+  border-color: var(--acc) !important;
+  background: var(--acc-soft) !important;
+  color: var(--fg);
+}
+.persona-add-ic {
+  width: 48px;
+  height: 48px;
+  border-radius: 15px;
+  display: grid;
+  place-items: center;
+  background: var(--glass-inset-hover);
+  border: 1px solid var(--glass-border);
+  color: var(--acc-ink);
+  margin-bottom: 4px;
+}
+.persona-add-ic .ic { width: 22px; height: 22px; }
+.persona-add b { font-size: 15px; color: var(--fg); }
+.persona-add small { font-size: 12.5px; color: var(--fg3); }
+
+/* Редактор портрета и характера в профиле */
+.persona-avatar-picker {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--glass-inset);
+  border: 1.5px dashed var(--glass-border);
+  transition: border-color .16s, background-color .16s;
+}
+.persona-avatar-picker.over {
+  border-color: var(--acc);
+  background: var(--acc-soft);
+}
+.persona-avatar-preview {
+  width: 78px;
+  height: 78px;
+  border-radius: 18px;
+  flex: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 28px;
+  font-weight: 800;
+  color: #fff;
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 10px 24px -12px rgb(0 0 0 / .65);
+}
+.persona-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.persona-avatar-controls {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.persona-avatar-controls .btn.disabled { opacity: .6; pointer-events: none; }
+.persona-prompt-preview {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--glass-inset);
+  border: 1px solid var(--glass-border);
+}
+.persona-prompt-preview p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--fg2);
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.persona-prompt-edit {
+  display: grid;
+  gap: 10px;
+}
 
 .sched-sub-seg, .asst-sub-seg { margin-bottom: 18px; width: fit-content; }
 

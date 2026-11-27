@@ -96,6 +96,10 @@ pub struct Profile {
     pub id: String,
     pub name: String,
     pub color: i64,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub avatar: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tagline: String,
     pub mode: String,
     pub engine: String,
     pub live_model: String,

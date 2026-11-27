@@ -10,9 +10,16 @@
 </script>
 
 <nav class="hub-tabs asst-tabs" aria-label="Ассистенты и характеры">
+  <a href="/assistants" class="hub-tab" class:on={current === "assistants"}>
+    {@html icon("users")}
+    <span>Галерея</span>
+  </a>
+  <span class="hub-tab-sep" aria-hidden="true"></span>
   {#each profiles as p (p.id)}
     <a href={profilePath(p.id)} class="hub-tab" class:on={current === "p:" + p.id}>
-      <span class={"av sm c" + (p.color || 1)}>{(p.name || "?").trim()[0] || "?"}</span>
+      <span class={"av sm c" + (p.color || 1)} class:av-img={Boolean(p.avatar)}>
+        {#if p.avatar}<img src={p.avatar} alt="">{:else}{(p.name || "?").trim()[0] || "?"}{/if}
+      </span>
       <span>{p.name}</span>
       {#if p.id === activeId}<span class="sdot ok" title="Активный"></span>{/if}
     </a>

@@ -15,6 +15,7 @@
   let items = $derived.by(() => {
     const list = [
       { id: "nav-home", group: "Навигация", label: "Гостиная", hint: "Очаг, сценарии, беседа и уют", icon: "flame", action: () => goto("/") },
+      { id: "nav-assistants", group: "Навигация", label: "Студия ассистентов", hint: "Личности, портреты и характеры", icon: "users", action: () => goto("/assistants") },
       { id: "nav-player", group: "Навигация", label: "Медиа", hint: "Плеер, YouTube, AI-DJ, фон", icon: "music", action: () => goto("/player") },
       { id: "nav-dj", group: "Навигация", label: "AI-DJ", hint: "Медиа · Умный радиоэфир", icon: "disc", action: () => goto("/player?tab=dj") },
       { id: "nav-ambient", group: "Навигация", label: "Камин и радио", hint: "Медиа · Фоновые звуки", icon: "radio", action: () => goto("/player?tab=ambient") },

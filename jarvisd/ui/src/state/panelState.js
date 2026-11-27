@@ -66,7 +66,13 @@ export function readOrb() {
 }
 
 // ---------------------------------------------------------------- сайдбар
-export const avatar = (p, big = false) => `<span class="av c${p.color || 1}${big ? " big" : ""}">${esc((p.name || "?").trim()[0] || "?")}</span>`;
+export const avatar = (p, big = false) => {
+  const cls = `av c${p?.color || 1}${big ? " big" : ""}`;
+  if (p?.avatar) {
+    return `<span class="${cls} av-img"><img src="${esc(p.avatar)}" alt=""></span>`;
+  }
+  return `<span class="${cls}">${esc((p?.name || "?").trim()[0] || "?")}</span>`;
+};
 export const voiceName = (id) => (S.live_voices.find((v) => v.id === id)?.name) || id || "cedar";
 const BUILTIN_VOICE = ["chatgpt", "openai", "gemini", "grok", "elevenlabs"];
 export const voicePlugin = (engine) => ({ live: "openai", eleven_realtime: "elevenlabs" })[engine] || engine;
@@ -102,6 +108,7 @@ export function readSidebar(state) {
     const sideVoice = showVoice && p.voice ? voiceName(p.voice) : "";
     return {
       id: p.id, name: p.name, initial: (p.name || "?").trim()[0] || "?", color: p.color || 1,
+      avatar: p.avatar || "", tagline: p.tagline || "",
       detail: engineName(p) + (sideVoice ? " · " + sideVoice : ""), active: p.id === state.active,
     };
   });

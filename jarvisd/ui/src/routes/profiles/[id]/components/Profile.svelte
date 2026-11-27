@@ -172,8 +172,13 @@
 </header>
 
 <div class="profile-bento" class:hidden={ptab !== "brain"}>
-  <ProfileBasics bind:this={basics} initial={{ name: initial.name, color: initial.color, prompt: initial.prompt }}
-    prompts={S.prompts} onedit={edit} />
+  <ProfileBasics bind:this={basics} initial={{
+    name: initial.name,
+    tagline: initial.tagline,
+    avatar: initial.avatar,
+    color: initial.color,
+    prompt: initial.prompt,
+  }} prompts={S.prompts} onedit={edit} />
   <ProfileBrain bind:this={brain} {initial} {profile} {engines} {ttsProvider} {engineReady}
     onedit={edit} onchange={mark} onrefreshvoices={() => voice?.refreshEleven()} />
 </div>

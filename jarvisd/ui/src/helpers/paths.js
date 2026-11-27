@@ -1,4 +1,4 @@
-const LEGACY_PAGES = new Set(["characters", "charts", "logs", "memory", "player", "security", "speaker", "studio", "training"]);
+const LEGACY_PAGES = new Set(["assistants", "characters", "charts", "logs", "memory", "player", "security", "speaker", "studio", "training"]);
 
 export function profilePath(id) {
   return "/profiles/" + encodeURIComponent(id);

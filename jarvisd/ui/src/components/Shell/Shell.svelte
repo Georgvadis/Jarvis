@@ -36,7 +36,7 @@
   );
   let mediaActive = $derived(Boolean(playing || $activity.dj?.active || $activity.ambient?.active));
   let isSettingsPage = $derived(["speaker", "connections", "charts", "logs", "security", "training"].includes(page));
-  let isAssistantsPage = $derived(page.startsWith("p:") || page === "characters");
+  let isAssistantsPage = $derived(page === "assistants" || page.startsWith("p:") || page === "characters");
 
   onMount(() => subscribeMusic((state) => { playing = !!state?.playing && !state.paused; }));
 
@@ -151,6 +151,9 @@
         <a href="/" data-page="home" class:on={page === "home"}>
           {@html icon("flame")}<span>Гостиная</span>
         </a>
+        <a href="/assistants" data-page="assistants" class:on={isAssistantsPage}>
+          {@html icon("users")}<span>Ассистенты</span>
+        </a>
         <a href="/player" data-page="player" class:on={page === "player"}>
           {@html icon("music")}<span>Медиа</span>
           <span class="nav-eq" class:hidden={!playing} id="nav-eq"><i></i><i></i><i></i></span>
@@ -179,7 +182,9 @@
               title="Ассистенты и характеры"
               onclick={() => { themeOpen = false; asstOpen = !asstOpen; }}
             >
-              <span class={"av sm c" + activeProfile.color}>{activeProfile.initial}</span>
+              <span class={"av sm c" + activeProfile.color} class:av-img={Boolean(activeProfile.avatar)}>
+                {#if activeProfile.avatar}<img src={activeProfile.avatar} alt="">{:else}{activeProfile.initial}{/if}
+              </span>
               <span class="top-asst-name">{activeProfile.name}</span>
               <span class="top-asst-chev" class:open={asstOpen} aria-hidden="true">{@html icon("chevronDown")}</span>
             </button>
@@ -192,8 +197,10 @@
                     ondragstart={(event) => startDrag(event, profile.id)} ondragend={() => { dragged = ""; }}
                     ondragover={(event) => event.preventDefault()} ondrop={(event) => reorder(event, profile.id)}>
                     <a href={profilePath(profile.id)} class="asst-pop-link">
-                      <span class={"av c" + profile.color}>{profile.initial}</span>
-                      <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.detail}</div></div>
+                      <span class={"av c" + profile.color} class:av-img={Boolean(profile.avatar)}>
+                        {#if profile.avatar}<img src={profile.avatar} alt="">{:else}{profile.initial}{/if}
+                      </span>
+                      <div class="meta"><div class="n">{profile.name}</div><div class="s">{profile.tagline || profile.detail}</div></div>
                     </a>
                     <button type="button" class="asst-act-pill" class:on={profile.active}
                       title={profile.active ? "Активный ассистент" : `Выбрать «${profile.name}»`}
@@ -204,6 +211,7 @@
                   </div>
                 {/each}
                 <div class="asst-pop-foot">
+                  <a href="/assistants">{@html icon("users")}Все</a>
                   <a href={profilePath("new")} id="add-profile">{@html icon("plus")}Новый</a>
                   <a href="/characters">{@html icon("smile")}Характеры</a>
                 </div>
@@ -279,8 +287,10 @@
     </a>
     <div class="mbar-actions">
       {#if activeProfile}
-        <a class="ib" href={profilePath(activeProfile.id)} aria-label="Ассистент">
-          <span class={"av sm c" + activeProfile.color}>{activeProfile.initial}</span>
+        <a class="ib" href="/assistants" aria-label="Студия ассистентов">
+          <span class={"av sm c" + activeProfile.color} class:av-img={Boolean(activeProfile.avatar)}>
+            {#if activeProfile.avatar}<img src={activeProfile.avatar} alt="">{:else}{activeProfile.initial}{/if}
+          </span>
         </a>
       {/if}
       <button type="button" class="ib" aria-label="Переключить тему" onclick={toggleThemeMode}>

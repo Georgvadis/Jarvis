@@ -5,9 +5,11 @@ export const usesOpenAiModel = (engine) => ["", "openai", "chatgpt"].includes(en
 
 export function createProfile(base, state) {
   const profile = structuredClone(base || {
-    id: "", name: "", color: state.profiles.length % 6 + 1, mode: "live", engine: "", voice: "",
+    id: "", name: "", color: state.profiles.length % 6 + 1, avatar: "", tagline: "", mode: "live", engine: "", voice: "",
     effort: "low", priority: true, web_search: true, idle_s: 8, prompt: state.prompts[0]?.id || "",
   });
+  profile.avatar ||= "";
+  profile.tagline ||= "";
   profile.led ||= { ...state.settings.led };
   profile.led.brightness ||= 45;
   profile.volume ||= state.settings.volume || 40;
