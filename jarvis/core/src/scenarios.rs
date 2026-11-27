@@ -6,9 +6,29 @@ use serde_json::{Value, json};
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
+
+static SCENARIO_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Отменяет все текущие выполняющиеся шаги сценариев (`wait`, `sunrise` и т.д.).
+pub fn cancel_running() {
+    SCENARIO_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+async fn sleep_cancelable(secs: u64, run_gen: u64) -> bool {
+    for _ in 0..secs {
+        if SCENARIO_GEN.load(Ordering::SeqCst) != run_gen {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    SCENARIO_GEN.load(Ordering::SeqCst) == run_gen
+}
 
 const VALID_KINDS: &[&str] = &[
     "stop_all", "volume", "ambient", "dj", "music", "focus", "timer", "wait",
@@ -236,11 +256,16 @@ impl ScenarioStore {
 
     pub fn execute(engine: Arc<Engine>, sc: CustomScenario) {
         engine.journal.note("сценарий", &sc.name, "");
+        let run_gen = SCENARIO_GEN.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
         tokio::spawn(async move {
             for step in sc.steps {
+                if SCENARIO_GEN.load(Ordering::SeqCst) != run_gen {
+                    break;
+                }
                 match step.kind.as_str() {
                     "stop_all" => {
-                        engine.tools.stop_all_activities(Some(&engine), true);
+                        // Не сбрасываем собственный run_gen, чтобы последующие шаги этого же сценария выполнились
+                        engine.tools.stop_all_activities_keep_scenario(Some(&engine), true);
                         if engine.music.playing() {
                             engine.music.stop_all(&engine.host).await;
                         }
@@ -286,7 +311,9 @@ impl ScenarioStore {
                     }
                     "wait" => {
                         let secs = step.number.unwrap_or(10).clamp(1, 7200) as u64;
-                        tokio::time::sleep(Duration::from_secs(secs)).await;
+                        if !sleep_cancelable(secs, run_gen).await {
+                            break;
+                        }
                     }
                     "ai" => {
                         let prompt = step.value.trim();
@@ -393,17 +420,29 @@ impl ScenarioStore {
                             ("#ffc266", 68),
                             ("#ffe6b3", 88),
                         ];
-                        let step_dur = Duration::from_secs((mins * 60 / stages.len() as u64).max(8));
+                        let step_secs = (mins * 60 / stages.len() as u64).max(8);
                         if let Some(amb) = &engine.tools.ambient {
                             let _ = amb.start("ocean");
                             amb.set_volume(20);
                         }
+                        let mut finished = true;
                         for (i, (hex, bright)) in stages.iter().enumerate() {
-                            engine.leds.show(crate::led::Mode::Listening, hex, *bright, step_dur + Duration::from_secs(5));
+                            if SCENARIO_GEN.load(Ordering::SeqCst) != run_gen {
+                                finished = false;
+                                break;
+                            }
+                            engine.leds.show(crate::led::Mode::Listening, hex, *bright, Duration::from_secs(step_secs + 5));
                             if let Some(amb) = &engine.tools.ambient {
                                 amb.set_volume((20 + i * 12) as i64);
                             }
-                            tokio::time::sleep(step_dur).await;
+                            if !sleep_cancelable(step_secs, run_gen).await {
+                                finished = false;
+                                break;
+                            }
+                        }
+                        if !finished {
+                            engine.leds.set(crate::led::Mode::Off);
+                            break;
                         }
                         let _ = crate::briefing::run_briefing(engine.clone(), "Доброе утро! Сделай тёплую утреннюю сводку.", true).await;
                     }

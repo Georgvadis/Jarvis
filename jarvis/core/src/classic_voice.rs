@@ -270,6 +270,106 @@ impl Classic {
         }
         let context = owned_ctx.as_ref().unwrap_or(context);
         let command = command_owned.as_deref().unwrap_or(command);
+        // Если мы сейчас на уроке (SpecialMode::Tutor) и пользователь просит закончить урок —
+        // сохраняем конспект, новые карточки, слабые места и заметку в CyberNotes до сброса истории.
+        if let Some(modes) = &context.tools.modes
+            && let crate::modes::SpecialMode::Tutor { course_id, lesson_idx, .. } = modes.current()
+        {
+            let low = command.trim().to_lowercase();
+            let wants_off = low.contains("выключи")
+                || low.contains("закончи")
+                || low.contains("заверш")
+                || low.contains("выйди")
+                || low.contains("хватит")
+                || low.contains("останови");
+            let mentions_lesson = low.contains("урок")
+                || low.contains("курс")
+                || low.contains("блиц")
+                || low.contains("обучен")
+                || low.contains("репетитор")
+                || low.contains("занят");
+            if wants_off && mentions_lesson {
+                let history = modes.history();
+                let send_tg = low.contains("телеграм") || low.contains("telegram");
+                modes.reset(context.tools.ambient.as_deref());
+                if let (Some(courses), Some(eng)) = (context.tools.courses.clone(), context.tools.engine()) {
+                    tokio::spawn(async move {
+                        let mut notes = String::new();
+                        let mut new_cards: Vec<(String, String)> = Vec::new();
+                        let mut weak: Vec<String> = Vec::new();
+                        if !history.is_empty() {
+                            let mut transcript = String::new();
+                            for t in history.iter().rev().take(24).rev() {
+                                let who = if t.role == "user" { "Ученик" } else { "Репетитор" };
+                                transcript.push_str(&format!("{who}: {}\n", t.content));
+                            }
+                            let sys = r#"Подведи краткий итог пройденного голосового урока. Верни ТОЛЬКО JSON:
+{"notes":"Краткий конспект в 2–3 предложениях","cards":[{"front":"новое слово/правило","back":"перевод/объяснение"}],"weak_spots":["слабое место"]}"#;
+                            let s = eng.store.get();
+                            let p = s.active_profile();
+                            if let Ok(raw) = crate::llm::ask_with_pool(
+                                &eng.host,
+                                &s,
+                                &p,
+                                sys,
+                                &transcript,
+                                &eng.tools,
+                                Vec::new(),
+                                Some(&eng.gemini_pool),
+                            )
+                            .await
+                            {
+                                let trimmed = raw.trim();
+                                let slice = trimmed
+                                    .find('{')
+                                    .and_then(|a| trimmed.rfind('}').filter(|&b| b > a).map(|b| &trimmed[a..=b]))
+                                    .unwrap_or(trimmed);
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(slice) {
+                                    if let Some(n) = v["notes"].as_str() {
+                                        notes = n.trim().to_string();
+                                    }
+                                    if let Some(arr) = v["cards"].as_array() {
+                                        for c in arr.iter().take(6) {
+                                            if let (Some(f), Some(b)) = (c["front"].as_str(), c["back"].as_str()) {
+                                                new_cards.push((f.to_string(), b.to_string()));
+                                            }
+                                        }
+                                    }
+                                    if let Some(arr) = v["weak_spots"].as_array() {
+                                        for w in arr.iter().take(3) {
+                                            if let Some(ws) = w.as_str() {
+                                                weak.push(ws.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Ok(updated) = courses.complete_lesson(&course_id, lesson_idx, notes, new_cards, weak) {
+                            let md = crate::courses::CourseStore::build_summary_markdown(&updated, Some(lesson_idx));
+                            if send_tg {
+                                crate::telegram_bot::notify_telegram(&eng.host, &eng.proxy, &md).await;
+                            }
+                            if eng.store.with(|s| s.cybernotes_enabled) {
+                                let title = format!("Урок {} — {}", lesson_idx + 1, updated.lessons[lesson_idx].title);
+                                let folder = format!("Обучение/{}", updated.title);
+                                let _ = crate::tools::save_cybernote(&eng.host, &title, &md, &["обучение".into(), updated.subject.to_lowercase()], &folder).await;
+                            }
+                        }
+                    });
+                }
+                let done_msg = if send_tg {
+                    "Отлично поработали! Сохраняю итоги урока и отправляю конспект в Telegram."
+                } else {
+                    "Отлично поработали! Сохраняю конспект урока и новые карточки."
+                };
+                context.pending_user_text.lock().unwrap().clear();
+                self.dialog.on_bot(done_msg);
+                self.speak(context, done_msg, generation, is_whisper).await?;
+                self.dialog.finish_turn("");
+                return Ok(());
+            }
+        }
         if let Some(modes) = &context.tools.modes
             && let Some(mode_reply) = modes.try_command(command, context.tools.ambient.as_deref())
         {

@@ -105,7 +105,8 @@ fn as_str(v: &Value) -> String {
 }
 
 fn extract_temp_celsius(s: &str) -> Option<i32> {
-    let bytes = s.as_bytes();
+    let norm = s.replace('\u{2212}', "-");
+    let bytes = norm.as_bytes();
     for i in 0..bytes.len() {
         let ch = bytes[i];
         if ch == b'+' || ch == b'-' || ch.is_ascii_digit() {
@@ -114,9 +115,9 @@ fn extract_temp_celsius(s: &str) -> Option<i32> {
                 j += 1;
             }
             if j > i && (bytes[i].is_ascii_digit() || j > i + 1) {
-                let rest = &s[j..];
+                let rest = &norm[j..];
                 if rest.starts_with('°') || rest.starts_with(" °") || rest.starts_with(" град") {
-                    if let Ok(val) = s[i..j].parse::<i32>() {
+                    if let Ok(val) = norm[i..j].parse::<i32>() {
                         return Some(val);
                     }
                 }
@@ -442,6 +443,16 @@ impl Tools {
 
     /// Централизованная остановка всех интерактивных активностей.
     pub fn stop_all_activities(
+        &self,
+        eng: Option<&crate::engine::Engine>,
+        include_ambient_and_focus: bool,
+    ) {
+        crate::scenarios::cancel_running();
+        self.stop_all_activities_keep_scenario(eng, include_ambient_and_focus);
+    }
+
+    /// Останавливает активности без отмены шагов текущего выполняющегося сценария.
+    pub fn stop_all_activities_keep_scenario(
         &self,
         eng: Option<&crate::engine::Engine>,
         include_ambient_and_focus: bool,
@@ -3181,5 +3192,24 @@ mod tests {
         assert!(err.contains("Взрослый 1") && err.contains("Взрослый 2"));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parses_weather_temp_duo_advice_and_diary_safely() {
+        assert_eq!(extract_temp_celsius("Москва: +18°C"), Some(18));
+        assert_eq!(extract_temp_celsius("Москва: -5°C"), Some(-5));
+        assert_eq!(extract_temp_celsius("Москва: \u{2212}12°C"), Some(-12));
+        assert_eq!(
+            extract_duo_advice_question("  Спроси обоих, какой ноутбук взять "),
+            Some("какой ноутбук взять".into())
+        );
+        assert_eq!(
+            extract_diary_entry(" Запиши в дневник: отличный день"),
+            Some(("Дневник", "отличный день".into()))
+        );
+        assert_eq!(
+            extract_diary_entry("Запиши мысль — проверить бэкап"),
+            Some(("Мысль", "проверить бэкап".into()))
+        );
     }
 }

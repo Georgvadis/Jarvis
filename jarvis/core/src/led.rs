@@ -602,10 +602,24 @@ impl Leds {
         };
         let bright = if night { 0.16 } else { 0.50 };
         let gen_id = self.clock_flash_gen.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
-        self.write_clock_masks_ext(Some(masks), false, true, bright);
         let me = Arc::clone(self);
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_secs(4));
+            // Если колонка сейчас думает или говорит о погоде — ждём завершения реплики (до 20с),
+            // иначе write_clock_masks_ext пропустит отрисовку из-за st.mode != Mode::Off.
+            for _ in 0..100 {
+                if me.clock_flash_gen.load(Ordering::SeqCst) != gen_id {
+                    return;
+                }
+                if me.inner.st.lock().unwrap().mode == Mode::Off {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            if me.clock_flash_gen.load(Ordering::SeqCst) != gen_id {
+                return;
+            }
+            me.write_clock_masks_ext(Some(masks), false, true, bright);
+            std::thread::sleep(Duration::from_secs(5));
             if me.clock_flash_gen.load(Ordering::SeqCst) == gen_id {
                 me.write_clock_masks(None, false, 0.45);
             }

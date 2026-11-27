@@ -486,3 +486,93 @@ impl CourseStore {
         out
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_course() -> Course {
+        Course {
+            id: String::new(),
+            title: "Английский B1".into(),
+            subject: "Английский язык".into(),
+            level: "B1".into(),
+            goal: "Говорить свободно".into(),
+            bilingual: true,
+            current_lesson: 0,
+            lessons: vec![
+                Lesson {
+                    title: "Времена Past Simple".into(),
+                    goal: "Рассказывать о прошлом".into(),
+                    key_points: vec!["did".into(), "went".into()],
+                    status: "todo".into(),
+                    notes: String::new(),
+                    completed_at: 0,
+                },
+                Lesson {
+                    title: "Фразовые глаголы".into(),
+                    goal: "Использовать в речи".into(),
+                    key_points: vec!["give up".into()],
+                    status: "todo".into(),
+                    notes: String::new(),
+                    completed_at: 0,
+                },
+            ],
+            cards: vec![ReviewCard {
+                front: "give up".into(),
+                back: "сдаваться".into(),
+                interval_days: 1,
+                next_review: 0,
+                hits: 0,
+            }],
+            weak_spots: Vec::new(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn course_crud_srs_and_voice_match() {
+        let dir = std::env::temp_dir().join(format!("jarvis-crs-{}", crate::settings::rand_hex(6)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = CourseStore::load(dir.clone());
+
+        let c = store.create(sample_course()).unwrap();
+        assert!(c.id.starts_with("crs_"));
+
+        let (started, idx) = store.mark_lesson_started(&c.id, 0).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(started.lessons[0].status, "in_progress");
+
+        let done = store
+            .complete_lesson(
+                &c.id,
+                0,
+                "Разобрали Past Simple".into(),
+                vec![("went".into(), "ходил".into())],
+                vec!["артикли".into()],
+            )
+            .unwrap();
+        assert_eq!(done.lessons[0].status, "done");
+        assert_eq!(done.current_lesson, 1);
+        assert_eq!(done.cards.len(), 2);
+        assert_eq!(done.weak_spots, vec!["артикли".to_string()]);
+
+        let r1 = store.review_card(&c.id, 0, true).unwrap();
+        assert_eq!(r1.cards[0].interval_days, 3);
+        let r2 = store.review_card(&c.id, 0, true).unwrap();
+        assert_eq!(r2.cards[0].interval_days, 7);
+        let r3 = store.review_card(&c.id, 0, false).unwrap();
+        assert_eq!(r3.cards[0].interval_days, 1);
+
+        let (vc, vidx, blitz) = store.match_voice_start("Аянами, вернёмся к 1 уроку английского").unwrap();
+        assert_eq!(vc.id, c.id);
+        assert_eq!(vidx, 0);
+        assert!(!blitz);
+
+        let (_, _, blitz2) = store.match_voice_start("запусти блиц по карточкам").unwrap();
+        assert!(blitz2);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
