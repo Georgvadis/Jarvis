@@ -33,6 +33,22 @@ impl Engine {
             self.journal.note("стоп", text, "");
             return Ok("Остановил.".into());
         }
+        let profile_names: Vec<(String, String)> = self
+            .store
+            .with(|s| s.profiles.iter().map(|p| (p.id.clone(), p.name.clone())).collect());
+        let mut command_owned: Option<String> = None;
+        if profile_names.len() > 1
+            && let Some((target_id, tail)) = fastcmd::addressed_profile(command, &profile_names)
+        {
+            let current_id = self.store.with(|s| s.active.clone());
+            if target_id != current_id {
+                let _ = self.switch_active_profile_silent(&target_id);
+            }
+            if !tail.is_empty() {
+                command_owned = Some(tail);
+            }
+        }
+        let command = command_owned.as_deref().unwrap_or(command);
         let s = self.store.get();
         let p = s.active_profile();
         let llm_engine = p.effective_llm_engine();

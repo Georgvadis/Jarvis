@@ -543,6 +543,252 @@ impl crate::Wake for Oww {
     }
 }
 
+struct HeadWeights {
+    seq: usize,
+    emb: usize,
+    h: usize,
+    w1: Vec<f32>,
+    b1: Vec<f32>,
+    w2: Vec<f32>,
+    b2: Vec<f32>,
+    w3: Vec<f32>,
+    b3: f32,
+    thresholds: [f32; 10],
+    h1: Vec<f32>,
+}
+
+impl HeadWeights {
+    fn parse(head: &[u8]) -> Result<Self, String> {
+        let head_compact = match head.get(..4) {
+            Some(b"OWWH") => false,
+            Some(b"OWH2") => true,
+            _ => return Err("не те файлы модели openWakeWord".into()),
+        };
+        if head.len() < 16 {
+            return Err("не те файлы модели openWakeWord".into());
+        }
+        let mut hr = Bin::new(&head[4..]);
+        let (seq, emb, h) = (hr.u32(), hr.u32(), hr.u32());
+        let expected_head_len = if head_compact {
+            16 + 4 * (10 + 5 * h + 1) + 2 * (h * seq * emb + h * h)
+        } else {
+            16 + 4 * (10 + h * seq * emb + h * h + 3 * h + 1)
+        };
+        if !(1..=40).contains(&seq) || emb != 96 || !(1..=256).contains(&h) || head.len() != expected_head_len {
+            return Err("Неверные размеры классификатора openWakeWord".into());
+        }
+        let th = hr.f32s(10);
+        let w1 = if head_compact { hr.i16s_scaled(h, seq * emb) } else { hr.f32s(h * seq * emb) };
+        let b1 = hr.f32s(h);
+        let w2 = if head_compact { hr.i16s_scaled(h, h) } else { hr.f32s(h * h) };
+        let b2 = hr.f32s(h);
+        let w3 = hr.f32s(h);
+        let b3 = hr.f32s(1)[0];
+        if hr.err
+            || !b3.is_finite()
+            || th.iter().any(|p| !(0.0..=1.0).contains(p))
+            || w1.len() != h * seq * emb
+            || w2.len() != h * h
+            || w1.iter().chain(&w2).chain(&w3).chain(&b1).chain(&b2).any(|v| !v.is_finite())
+        {
+            return Err("модель слова активации повреждена".into());
+        }
+        let mut thresholds = [0f32; 10];
+        thresholds.copy_from_slice(&th);
+        Ok(Self {
+            seq,
+            emb,
+            h,
+            w1,
+            b1,
+            w2,
+            b2,
+            w3,
+            b3,
+            thresholds,
+            h1: vec![0.0; h],
+        })
+    }
+
+    fn score(&mut self, ring: &[Vec<f32>]) -> Option<f32> {
+        if ring.len() < self.seq {
+            return None;
+        }
+        let slice = &ring[ring.len() - self.seq..];
+        let inp = self.emb * self.seq;
+        for (j, out) in self.h1.iter_mut().enumerate() {
+            let mut acc = self.b1[j];
+            let wj = &self.w1[j * inp..(j + 1) * inp];
+            for (t, v) in slice.iter().enumerate() {
+                acc += dot(v, &wj[t * self.emb..(t + 1) * self.emb]);
+            }
+            *out = acc.max(0.0);
+        }
+        let mut acc = self.b3;
+        for j in 0..self.h {
+            let a = (self.b2[j] + dot(&self.h1, &self.w2[j * self.h..(j + 1) * self.h])).max(0.0);
+            acc += a * self.w3[j];
+        }
+        Some((1.0 / (1.0 + (-(acc as f64)).exp())) as f32)
+    }
+}
+
+struct NamedHead {
+    tag: String,
+    weights: HeadWeights,
+    cooldown: u32,
+    pending: u32,
+    peak: f32,
+    last_prob: f32,
+    last_wake_prob: f32,
+}
+
+impl NamedHead {
+    fn detect(&mut self, p: f32, sens: usize) -> bool {
+        self.last_prob = p;
+        if self.cooldown > 0 {
+            self.cooldown -= 1;
+            return false;
+        }
+        if self.pending > 0 {
+            self.peak = self.peak.max(p);
+            self.pending -= 1;
+            if self.pending == 0 {
+                self.last_wake_prob = self.peak;
+                self.cooldown = 21;
+                return true;
+            }
+            return false;
+        }
+        if p >= self.thresholds(sens) {
+            self.pending = 1;
+            self.peak = p;
+        }
+        false
+    }
+
+    fn thresholds(&self, sens: usize) -> f32 {
+        self.weights.thresholds[sens.clamp(1, 10) - 1]
+    }
+}
+
+/// Параллельный детектор нескольких слов активации поверх одного экстрактора признаков `oww.bin`.
+pub struct OwwMulti {
+    base: Oww,
+    heads: Vec<NamedHead>,
+    sensitivity: Box<dyn Fn() -> i64 + Send>,
+    max_seq: usize,
+    ring: Vec<Vec<f32>>,
+    last_prob: f32,
+    last_wake_prob: f32,
+    last_hit_tag: Option<String>,
+}
+
+impl OwwMulti {
+    pub fn load(
+        feat: &[u8],
+        head_entries: Vec<(String, Vec<u8>)>,
+        sensitivity: Box<dyn Fn() -> i64 + Send>,
+    ) -> Result<Self, String> {
+        let first_head = head_entries
+            .first()
+            .ok_or_else(|| "нужна хотя бы одна модель слова активации".to_string())?;
+        let base = Oww::load(feat, &first_head.1, Box::new(|| 5))?;
+        let mut heads = Vec::with_capacity(head_entries.len());
+        let mut max_seq = 1usize;
+        for (tag, bytes) in head_entries {
+            let weights = HeadWeights::parse(&bytes)?;
+            max_seq = max_seq.max(weights.seq);
+            heads.push(NamedHead {
+                tag,
+                weights,
+                cooldown: 0,
+                pending: 0,
+                peak: 0.0,
+                last_prob: 0.0,
+                last_wake_prob: 0.0,
+            });
+        }
+        Ok(Self {
+            base,
+            heads,
+            sensitivity,
+            max_seq,
+            ring: Vec::with_capacity(max_seq),
+            last_prob: 0.0,
+            last_wake_prob: 0.0,
+            last_hit_tag: None,
+        })
+    }
+
+    fn step_embedding(&mut self, e: &[f32]) -> bool {
+        if self.ring.len() < self.max_seq {
+            self.ring.push(e.to_vec());
+        } else {
+            self.ring.rotate_left(1);
+            self.ring.last_mut().unwrap().copy_from_slice(e);
+        }
+        let sens = (self.sensitivity)().clamp(1, 10) as usize;
+        let mut max_p = 0.0f32;
+        let mut best_hit: Option<(String, f32)> = None;
+        for head in &mut self.heads {
+            let Some(p) = head.weights.score(&self.ring) else {
+                continue;
+            };
+            max_p = max_p.max(p);
+            if head.detect(p, sens) {
+                let wp = head.last_wake_prob;
+                if best_hit.as_ref().is_none_or(|(_, prev)| wp > *prev) {
+                    best_hit = Some((head.tag.clone(), wp));
+                }
+            }
+        }
+        self.last_prob = max_p;
+        if let Some((tag, wp)) = best_hit {
+            self.last_wake_prob = wp;
+            self.last_hit_tag = Some(tag);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl crate::Wake for OwwMulti {
+    fn feed(&mut self, pcm: &[i16]) -> bool {
+        let mut embs: Vec<Vec<f32>> = Vec::new();
+        self.base.stream(pcm, |model, _| {
+            embs.push(model.convs.last().unwrap().out.clone());
+        });
+        let mut hit = false;
+        for e in &embs {
+            if self.step_embedding(e) {
+                hit = true;
+            }
+        }
+        hit
+    }
+
+    fn reset(&mut self) {
+        for head in &mut self.heads {
+            head.cooldown = 12;
+            head.pending = 0;
+        }
+    }
+
+    fn last_prob(&self) -> f32 {
+        self.last_prob
+    }
+
+    fn wake_prob(&self) -> f32 {
+        self.last_wake_prob
+    }
+
+    fn wake_tag(&self) -> Option<&str> {
+        self.last_hit_tag.as_deref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,5 +879,30 @@ mod tests {
         }
         assert!(!oww.detect(0.99));
         assert!(oww.detect(0.99));
+    }
+
+    #[test]
+    fn multi_oww_shares_features_and_reports_triggered_tag() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let (Ok(feat), Ok(head)) = (std::fs::read(root.join("models/oww.bin")), std::fs::read(root.join("models/wake_oww.bin"))) else {
+            eprintln!("нет моделей — пропускаю");
+            return;
+        };
+        let mut multi = OwwMulti::load(
+            &feat,
+            vec![("p1".into(), head.clone()), ("p2".into(), head)],
+            Box::new(|| 5),
+        )
+        .unwrap();
+        assert!(multi.wake_tag().is_none());
+        let silence = vec![0i16; STEP * 4];
+        assert!(!multi.feed(&silence));
+        let thr = multi.heads[1].thresholds(5);
+        assert!(!multi.heads[1].detect(thr, 5));
+        assert!(multi.heads[1].detect(0.98, 5));
+        assert_eq!(multi.heads[1].last_wake_prob, 0.98);
+        multi.reset();
+        assert_eq!(multi.heads[0].cooldown, 12);
+        assert_eq!(multi.heads[1].cooldown, 12);
     }
 }

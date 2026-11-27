@@ -180,8 +180,8 @@ pub fn select(data: &Path, id: &str, store: &Store) -> Result<(), String> {
 }
 
 pub fn remove(data: &Path, id: &str, store: &Store) -> Result<(), String> {
-    if store.with(|s| s.wake_profile == id) {
-        return Err("Сначала выберите другое слово активации".into());
+    if store.with(|s| s.wake_profile == id || s.profiles.iter().any(|p| p.wake_profile == id)) {
+        return Err("Сначала отвяжите это слово активации от колонки или ассистента".into());
     }
     match fs::remove_file(path(data, id)?) {
         Ok(()) => Ok(()),

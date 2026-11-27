@@ -217,6 +217,12 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
         return bad("Имя — от 1 до 40 символов");
     }
     p.tagline = p.tagline.trim().chars().take(120).collect();
+    p.wake_profile = p.wake_profile.trim().into();
+    if !p.wake_profile.is_empty()
+        && (p.wake_profile.len() != 32 || !p.wake_profile.bytes().all(|c| c.is_ascii_hexdigit()))
+    {
+        return bad("Неверный ID слова активации персонажа");
+    }
     p.avatar = p.avatar.trim().into();
     if !p.avatar.is_empty() {
         let ok_prefix = p.avatar.starts_with("data:image/jpeg;base64,")
@@ -332,7 +338,10 @@ pub async fn profile(State(app): State<App>, Json(mut p): Json<Profile>) -> Resp
         Ok(())
     });
     match result {
-        Ok(()) => reply(StatusCode::OK, json!({"ok":true,"id":p.id})),
+        Ok(()) => {
+            app.engine.listener.request_reload();
+            reply(StatusCode::OK, json!({"ok":true,"id":p.id}))
+        }
         Err(e) => bad(e.to_string()),
     }
 }

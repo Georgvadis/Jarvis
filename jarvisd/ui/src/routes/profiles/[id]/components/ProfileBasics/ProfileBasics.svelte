@@ -1,7 +1,9 @@
 <script>
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { resizeAvatarFile } from "#helpers/avatar.js";
   import { icon, tip, toast } from "#helpers/core.js";
+  import { loadWakeProfiles } from "#helpers/wake-training.js";
+  import { S } from "#state/panelState.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
 
@@ -10,8 +12,23 @@
   let text = $state(untrack(() => promptText));
   let dragOver = $state(false);
   let uploading = $state(false);
+  let wakeModels = $state.raw([]);
+  let wakeTrainingEnabled = $derived(Boolean(S.settings?.wake_training));
 
   let initialLetter = $derived((draft.name || "?").trim()[0] || "?");
+
+  onMount(() => {
+    if (!wakeTrainingEnabled) return;
+    const ac = new AbortController();
+    loadWakeProfiles(ac.signal)
+      .then((res) => {
+        if (!ac.signal.aborted) {
+          wakeModels = (res.profiles || []).filter((m) => m.id);
+        }
+      })
+      .catch(() => {});
+    return () => ac.abort();
+  });
 
   function edit(field, value) {
     if (draft[field] === value) return;
@@ -115,6 +132,21 @@
         {/each}
       </div>
     </div>
+
+    {#if wakeTrainingEnabled}
+      <div class="f">
+        <label for="p-wake">Слово активации персонажа {@html tip("Если выбрать обученное слово (например, «Рюк» или «Аянами»), колонка будет слушать его параллельно с другими и сразу откликаться этим персонажем.")}</label>
+        <div class="row">
+          <select id="p-wake" value={draft.wake_profile || ""} onchange={(event) => edit("wake_profile", event.currentTarget.value)}>
+            <option value="">Общее слово колонки</option>
+            {#each wakeModels as m (m.id)}
+              <option value={m.id}>{m.phrase}</option>
+            {/each}
+          </select>
+          <a class="btn sm ghost" href="/training">{@html icon("mic")} Обучить слово</a>
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="nav-sep"></div>

@@ -3,7 +3,7 @@
 //! Нет модели — Джарвиса можно позвать кнопкой «Поговорить» в панели.
 
 use crate::settings::Store;
-use jarvis_dsp::{Wake, kws::Kws, oww::Oww};
+use jarvis_dsp::{Wake, kws::Kws, oww::{Oww, OwwMulti}};
 use std::path::Path;
 
 struct NoWake;
@@ -27,6 +27,66 @@ pub struct Loaded {
 
 fn load(data: &Path, store: &Store, training: bool) -> Loaded {
     use crate::wake_profiles::{self, DEFAULT_PHRASE};
+    let sens = |store: &Store| {
+        let s = store.clone();
+        Box::new(move || s.wake_sensitivity()) as Box<dyn Fn() -> i64 + Send>
+    };
+    // Multi-WakeWord: если у одного или нескольких ассистентов задано своё слово активации (OWW head),
+    // запускаем все головы параллельно поверх одного экстрактора признаков oww.bin.
+    if training && !data.join("disable-oww").exists() {
+        let profiles = store.with(|s| s.profiles.clone());
+        let mut multi_heads: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut phrases: Vec<String> = Vec::new();
+        let mut any_without_custom = false;
+        for prof in &profiles {
+            if prof.wake_profile.is_empty() {
+                any_without_custom = true;
+                continue;
+            }
+            match wake_profiles::get(data, &prof.wake_profile) {
+                Ok((phrase, bytes)) if bytes.starts_with(b"OWWH") || bytes.starts_with(b"OWH2") => {
+                    multi_heads.push((prof.id.clone(), bytes));
+                    phrases.push(phrase);
+                }
+                Ok(_) => {
+                    log::warn!("Multi-WakeWord: профиль «{}» использует KWS, нужен openWakeWord", prof.name);
+                    any_without_custom = true;
+                }
+                Err(err) => {
+                    log::warn!("Multi-WakeWord: слово для «{}»: {err}", prof.name);
+                    any_without_custom = true;
+                }
+            }
+        }
+        if !multi_heads.is_empty()
+            && let Ok(feat) = std::fs::read(data.join("oww.bin"))
+        {
+            if any_without_custom {
+                let global_id = store.with(|s| s.wake_profile.clone());
+                let global_head = if !global_id.is_empty() {
+                    wake_profiles::get(data, &global_id)
+                        .ok()
+                        .filter(|(_, b)| b.starts_with(b"OWWH") || b.starts_with(b"OWH2"))
+                } else {
+                    std::fs::read(data.join("wake_oww.bin"))
+                        .ok()
+                        .map(|b| (DEFAULT_PHRASE.to_string(), b))
+                };
+                if let Some((gphrase, gbytes)) = global_head {
+                    multi_heads.push((String::new(), gbytes));
+                    phrases.push(gphrase);
+                }
+            }
+            match OwwMulti::load(&feat, multi_heads, sens(store)) {
+                Ok(m) => {
+                    let label = phrases.join(" / ");
+                    log::info!("слово активации: Multi-WakeWord загружен ({}): {}", phrases.len(), label);
+                    return Loaded { det: Box::new(m), ready: true, phrase: label, custom: true };
+                }
+                Err(err) => log::warn!("Multi-WakeWord: {err}. Откат к одиночной модели"),
+            }
+        }
+    }
     if training {
         let selected = store.with(|s| s.wake_profile.clone());
         if !selected.is_empty() {
@@ -45,10 +105,6 @@ fn load(data: &Path, store: &Store, training: bool) -> Loaded {
             }
         }
     }
-    let sens = |store: &Store| {
-        let s = store.clone();
-        Box::new(move || s.wake_sensitivity()) as Box<dyn Fn() -> i64 + Send>
-    };
     if !data.join("disable-oww").exists() {
         if let (Ok(feat), Ok(head)) = (std::fs::read(data.join("oww.bin")), std::fs::read(data.join("wake_oww.bin"))) {
             match Oww::load(&feat, &head, sens(store)) {
@@ -147,7 +203,7 @@ impl Listener {
         if !forced {
             let had_custom = self.loaded_custom.load(std::sync::atomic::Ordering::Acquire);
             let wants_custom = training
-                && (!store.with(|s| s.wake_profile.is_empty())
+                && (!store.with(|s| s.wake_profile.is_empty() && s.profiles.iter().all(|p| p.wake_profile.is_empty()))
                     || data.join(crate::wake_profiles::TUNED_MODEL).is_file());
             if !had_custom && !wants_custom {
                 return None;

@@ -214,6 +214,50 @@ impl Classic {
             self.dialog.finish_turn("");
             return Ok(());
         }
+        let mut owned_ctx: Option<Arc<Context>> = None;
+        let mut command_owned: Option<String> = None;
+        let profile_names: Vec<(String, String)> = context
+            .tools
+            .store
+            .with(|s| s.profiles.iter().map(|p| (p.id.clone(), p.name.clone())).collect());
+        if profile_names.len() > 1
+            && let Some((target_id, tail)) = crate::fastcmd::addressed_profile(command, &profile_names)
+        {
+            if target_id != context.profile.id {
+                if let Some(eng) = context.tools.engine()
+                    && let Some((new_s, new_p, new_inst)) = eng.switch_active_profile_silent(&target_id)
+                {
+                    log::info!("адресация по имени: переключил на «{}» (фраза: «{}»)", new_p.name, tail);
+                    owned_ctx = Some(Arc::new(Context {
+                        host: context.host.clone(),
+                        tools: context.tools.clone(),
+                        settings: new_s,
+                        profile: new_p,
+                        instructions: new_inst,
+                        phrase: context.phrase.clone(),
+                        history: Mutex::new(context.history.lock().unwrap().clone()),
+                        gemini_pool: context.gemini_pool.clone(),
+                        proxy: context.proxy.clone(),
+                        pending_user_text: Mutex::default(),
+                        active_turn_pcm: Mutex::default(),
+                        has_spoken_turn: AtomicBool::new(false),
+                    }));
+                }
+            }
+            if tail.is_empty() {
+                let ctx_ref = owned_ctx.as_ref().unwrap_or(context);
+                context.pending_user_text.lock().unwrap().clear();
+                let greet = "Слушаю";
+                self.dialog.on_bot(greet);
+                self.speak(ctx_ref, greet, generation, is_whisper).await?;
+                self.dialog.provider_turn_complete();
+                self.dialog.finish_turn("");
+                return Ok(());
+            }
+            command_owned = Some(tail);
+        }
+        let context = owned_ctx.as_ref().unwrap_or(context);
+        let command = command_owned.as_deref().unwrap_or(command);
         if let Some(modes) = &context.tools.modes
             && let Some(mode_reply) = modes.try_command(command, context.tools.ambient.as_deref())
         {

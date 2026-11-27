@@ -241,6 +241,72 @@ pub fn profile_switch_target(text: &str) -> Option<String> {
     (!target.is_empty()).then_some(target)
 }
 
+re!(ADDR_LEAD_WORD, r"^(?:джарвис|жарвис|jarvis|эй|хей|слушай|привет|пожалуйста|окей|ок)$");
+
+fn matches_profile_name(word: &str, name: &str) -> bool {
+    if word.is_empty() || name.is_empty() {
+        return false;
+    }
+    if word == name {
+        return true;
+    }
+    let wlen = word.chars().count();
+    let nlen = name.chars().count();
+    if nlen >= 3 && word.starts_with(name) && wlen <= nlen + 2 {
+        return true;
+    }
+    if nlen >= 4 && wlen.abs_diff(nlen) <= 1 && edit_distance(word, name) <= 1 {
+        return true;
+    }
+    false
+}
+
+/// Обращение к персонажу по имени в начале фразы: «Рюк, расскажи про яблоки» → Some((id, "расскажи про яблоки")).
+pub fn addressed_profile(text: &str, profiles: &[(String, String)]) -> Option<(String, String)> {
+    let mut rest = text.trim();
+    for _ in 0..3 {
+        let token_end = rest
+            .find(|c: char| c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.'))
+            .unwrap_or(rest.len());
+        let raw_tok = &rest[..token_end];
+        let norm_tok = norm_text(raw_tok);
+        if norm_tok.is_empty() {
+            let next = rest[token_end..].trim_start_matches(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+            });
+            if next.len() == rest.len() {
+                break;
+            }
+            rest = next;
+            continue;
+        }
+        // Сначала проверяем совпадение с именем персонажа (даже если персонажа зовут «Джарвис»)
+        for (id, name) in profiles {
+            let norm_name = norm_text(name);
+            let first_part = norm_name.split_whitespace().next().unwrap_or("");
+            if first_part.chars().count() < 2 {
+                continue;
+            }
+            if matches_profile_name(&norm_tok, first_part) {
+                let tail = rest[token_end..]
+                    .trim_start_matches(|c: char| {
+                        c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+                    })
+                    .trim();
+                return Some((id.clone(), tail.to_string()));
+            }
+        }
+        if ADDR_LEAD_WORD.is_match(&norm_tok) {
+            rest = rest[token_end..].trim_start_matches(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | ':' | ';' | '!' | '?' | '.' | '-' | '—')
+            });
+            continue;
+        }
+        break;
+    }
+    None
+}
+
 /// Короткая команда умного дома без обращения к каталогу устройств — её можно отдать Алисе целиком.
 pub fn home_command_local(text: &str) -> Option<String> {
     if youtube_request(text) || clarification(text).is_some() {
@@ -449,5 +515,30 @@ mod tests {
         assert!(profile_switch_target("включи детский свет").is_none());
         assert!(profile_switch_target("включи ночной режим").is_none());
         assert!(profile_switch_target("включи музыку").is_none());
+    }
+
+    #[test]
+    fn addressed_profile_routes_by_name() {
+        let profiles = vec![
+            ("p1".to_string(), "Аянами".to_string()),
+            ("p2".to_string(), "Рюк".to_string()),
+        ];
+        assert_eq!(
+            addressed_profile("Рюк, расскажи про яблоки", &profiles),
+            Some(("p2".into(), "расскажи про яблоки".into()))
+        );
+        assert_eq!(
+            addressed_profile("Джарвис, Аянами, поставь таймер на 5 минут", &profiles),
+            Some(("p1".into(), "поставь таймер на 5 минут".into()))
+        );
+        assert_eq!(
+            addressed_profile("Эй, Рюк!", &profiles),
+            Some(("p2".into(), "".into()))
+        );
+        assert_eq!(
+            addressed_profile("Аянаме включи музыку", &profiles),
+            Some(("p1".into(), "включи музыку".into()))
+        );
+        assert_eq!(addressed_profile("какая сегодня погода", &profiles), None);
     }
 }

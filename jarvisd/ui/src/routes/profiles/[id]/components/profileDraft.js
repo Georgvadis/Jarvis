@@ -10,6 +10,7 @@ export function createProfile(base, state) {
   });
   profile.avatar ||= "";
   profile.tagline ||= "";
+  profile.wake_profile ||= "";
   profile.led ||= { ...state.settings.led };
   profile.led.brightness ||= 45;
   profile.volume ||= state.settings.volume || 40;

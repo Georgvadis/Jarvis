@@ -17,6 +17,10 @@ pub trait Wake: Send {
     fn wake_prob(&self) -> f32 {
         self.last_prob()
     }
+    /// Идентификатор сработавшей цели (например, ID профиля ассистента в Multi-WakeWord).
+    fn wake_tag(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// Классический радикс-2 FFT на месте (как в Go: те же операции в том же порядке).

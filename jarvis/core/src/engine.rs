@@ -762,7 +762,18 @@ impl Engine {
                     }
                     if hit {
                         let p = det.wake_prob();
+                        let hit_tag = det.wake_tag().map(str::to_owned);
                         det.reset(); // хвост этого же слова не должен сработать ещё раз
+                        if let Some(pid) = hit_tag
+                            && !pid.is_empty()
+                        {
+                            let cur = e.store.with(|s| s.active.clone());
+                            if cur != pid
+                                && let Some((_, prof, _)) = e.switch_active_profile_silent(&pid)
+                            {
+                                log::info!("слово активации: вызван персонаж «{}» (вероятность {:.2})", prof.name, p);
+                            }
+                        }
                         e.trigger("слово", p);
                     }
                 }
@@ -932,7 +943,28 @@ impl Engine {
             .expect("поток разговора");
     }
 
-    fn instructions(&self, s: &Settings, p: &Profile) -> String {
+    pub(crate) fn switch_active_profile_silent(&self, profile_id: &str) -> Option<(Settings, Profile, String)> {
+        let switched = self
+            .store
+            .update(|s| -> std::io::Result<()> {
+                if !s.profiles.iter().any(|p| p.id == profile_id) {
+                    return Err(std::io::Error::other("нет профиля"));
+                }
+                s.active = profile_id.into();
+                Ok(())
+            })
+            .is_ok();
+        if !switched {
+            return None;
+        }
+        let s = self.store.get();
+        self.leds.configure(&s.led_for());
+        let p = s.active_profile();
+        let inst = self.instructions(&s, &p);
+        Some((s, p, inst))
+    }
+
+    pub(crate) fn instructions(&self, s: &Settings, p: &Profile) -> String {
         if let Some(modes) = &self.tools.modes {
             let active_mode = modes.current();
             if active_mode != crate::modes::SpecialMode::Normal {
