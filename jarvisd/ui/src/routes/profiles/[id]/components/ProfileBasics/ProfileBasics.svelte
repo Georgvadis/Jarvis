@@ -4,20 +4,12 @@
   import { icon, tip, toast } from "#helpers/core.js";
 
   const colors = [1, 2, 3, 4, 5, 6];
-  const presets = [
-    ["Дворецкий", "Ты — Джарвис, голосовой помощник в умной колонке. Говоришь по-русски, коротко и по делу, с лёгкой иронией, как дворецкий из фильма. Обращаешься к хозяину на «ты»."],
-    ["Кореш", "Ты — близкий друг: общаешься на «ты», с юмором и подколами, живо и по-простому. Говоришь коротко и честно: не знаешь — так и скажи."],
-    ["Учёный", "Ты — спокойный и точный учёный. Объясняешь просто, но без ошибок, приводишь одну яркую деталь или цифру. Отвечаешь в 2–3 предложения, если не просят подробнее."],
-    ["Лаконичный", "Отвечай максимально коротко: одно предложение, без вступлений и вежливых оборотов. Только суть."],
-    ["Детский", "Ты — добрый помощник для ребёнка. Говоришь просто, тепло и весело, без сложных слов и без страшного. Хвалишь за интересные вопросы."],
-  ];
 
   let { initial, promptText = "", onedit, onprompt } = $props();
   let draft = $state({ ...untrack(() => initial) });
   let text = $state(untrack(() => promptText));
   let dragOver = $state(false);
   let uploading = $state(false);
-  let pendingPreset = $state(null);
 
   let initialLetter = $derived((draft.name || "?").trim()[0] || "?");
 
@@ -29,7 +21,6 @@
 
   function editPrompt(value) {
     text = value;
-    pendingPreset = null;
     onprompt?.(value);
   }
 
@@ -63,19 +54,6 @@
     dragOver = false;
     const file = event.dataTransfer?.files?.[0];
     if (file) void pickFile(file);
-  }
-
-  function applyPreset(presetName, presetText) {
-    if (text.trim() && text.trim() !== presetText) {
-      pendingPreset = { name: presetName, text: presetText };
-      return;
-    }
-    editPrompt(presetText);
-  }
-
-  function confirmApplyPreset() {
-    if (!pendingPreset) return;
-    editPrompt(pendingPreset.text);
   }
 </script>
 
@@ -146,24 +124,6 @@
       <label for="p-prompt-text">Характер и манера речи {@html tip("Как ассистент говорит, тон, обращение, привычки и роль. Передаётся модели в каждом разговоре.")}</label>
       <span class="meta">{text.length} симв.</span>
     </div>
-    <div class="persona-presets" role="group" aria-label="Быстрые шаблоны характера">
-      {#each presets as [presetName, presetText] (presetName)}
-        <button type="button" class="chip persona-preset-btn" onclick={() => applyPreset(presetName, presetText)}>
-          {presetName}
-        </button>
-      {/each}
-    </div>
-    {#if pendingPreset}
-      <div class="inline-confirm" role="alert">
-        <span>Заменить характер шаблоном «{pendingPreset.name}»?</span>
-        <button class="btn danger sm" type="button" onclick={confirmApplyPreset}>
-          {@html icon("check")} Заменить
-        </button>
-        <button class="btn ghost sm" type="button" onclick={() => { pendingPreset = null; }}>
-          {@html icon("x")} Отмена
-        </button>
-      </div>
-    {/if}
     <textarea
       id="p-prompt-text"
       rows="8"
