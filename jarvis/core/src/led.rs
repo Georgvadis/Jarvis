@@ -223,6 +223,13 @@ impl St {
     }
 
     fn clock_shape_at(mode: Mode, mouth: f64, hear: f64, seg: &str, t: f64) -> f64 {
+        // Центральная точка «dm» между 1-й и 2-й цифрами — участвует в волне размышления
+        if seg == "dm" {
+            return match mode {
+                Mode::Thinking => 0.22 + 0.72 * (0.5 + 0.5 * (2.0 * PI * t * 0.9 - PI * 0.35).sin()),
+                _ => 0.0,
+            };
+        }
         let b = seg.as_bytes();
         // 4-разрядный 7-сегментный дисплей (Лайт 2 / Мини 3): живое лицо (глазки на 0 и 3, рот на 1 и 2).
         if b.len() != 2 || !(b'a'..=b'g').contains(&b[0]) || !(b'0'..=b'3').contains(&b[1]) {
@@ -322,7 +329,15 @@ impl St {
         if !self.clock.is_empty() {
             self.frames += 1;
             let k = (pal.iter().fold(0f64, |a, &v| a.max(v)) * 1.4).clamp(0.35, 1.0);
-            let rewrite = self.frames % 25 == 0; // раз в ~1 сек перестраховка от maind
+            // Мгновенный детектор перезаписи от maind (смена минуты / датчика освещённости):
+            // пока мы рисуем лицо, двоеточие dh/dl держим в 0. Как только maind нарисовал время,
+            // dh/dl становится > 0 — перехватываем на этом же 40-мс кадре, не давая времени промелькнуть.
+            let maind_overwrote = self
+                .clock
+                .iter()
+                .find(|c| c.color == "dh" || c.color == "dl")
+                .is_some_and(|c| read_int(&c.path) > 0);
+            let rewrite = maind_overwrote || self.frames % 10 == 0;
             for c in self.clock.iter_mut() {
                 if rewrite {
                     c.last = -1;
