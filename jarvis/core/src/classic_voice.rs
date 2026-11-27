@@ -81,7 +81,14 @@ impl Classic {
                 },
                 Some(pcm)=input.recv()=>{
                     let starting=!vad.speaking && vad.is_loud(&pcm);
-                    if starting {tasks.abort_all();actor.generation.fetch_add(1,Ordering::SeqCst);actor.interrupted.store(true,Ordering::SeqCst);context.has_spoken_turn.store(false,Ordering::SeqCst);}
+                    if starting && context.has_spoken_turn.load(Ordering::SeqCst) {
+                        // Перебиваем сразу только когда ассистент уже говорит вслух;
+                        // пока идёт поиск музыки или ответ LLM, случайный шорох не должен убивать задачу.
+                        tasks.abort_all();
+                        actor.generation.fetch_add(1,Ordering::SeqCst);
+                        actor.interrupted.store(true,Ordering::SeqCst);
+                        context.has_spoken_turn.store(false,Ordering::SeqCst);
+                    }
                     if let Some(pcm)=vad.feed(&pcm){
                         if context.settings.thinking_sound {
                             if let Some(tx)=actor.out.lock().unwrap().clone() {
