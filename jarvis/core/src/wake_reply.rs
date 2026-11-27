@@ -24,7 +24,7 @@ pub(super) const PHRASES: &[&str] = &[
     "Да, слушаю.",
     "Хм?",
 ];
-pub(super) const FOLLOW_ON_GAP: Duration = Duration::from_millis(70);
+pub(super) const FOLLOW_ON_GAP: Duration = Duration::from_millis(260);
 const MAX_REPLY: Duration = Duration::from_millis(1800);
 const CACHE_BUDGET: u64 = 2 << 20;
 const WARM_PRIORITY_PHRASES: &[&str] = &["Да?", "Слушаю.", "Я тут.", "Говори.", "На связи.", "М?"];
@@ -455,8 +455,16 @@ impl Engine {
         self.player.set_boost(sample.boost * 0.65);
         self.leds.set(Mode::Listening);
         if self.player.write(&sample.pcm).is_ok() {
+            // Прикрываем окно эха (включая 100 мс прогрев aplay), чтобы собственный отклик
+            // «Да?» / «Слушаю.» не попадал в Classic VAD и не путал распознавание команды.
+            self.st.lock().unwrap().echo.played_with_tail(
+                Instant::now(),
+                &sample.pcm,
+                sample.rate,
+                Duration::from_millis(260),
+            );
             log::info!("Отклик на активацию из кеша ({engine}) за {:.2} с", opening_at.elapsed().as_secs_f64());
-            self.player.finish(MAX_REPLY + Duration::from_millis(200));
+            self.player.finish(MAX_REPLY + Duration::from_millis(300));
         } else {
             self.player.stop(true);
         }

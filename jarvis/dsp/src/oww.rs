@@ -7,6 +7,45 @@
 
 use crate::{Bin, dot, gemm2, gemm4, gemv};
 
+const CUSTOM_HEAD_FRACS: [f32; 10] = [0.80, 0.72, 0.64, 0.54, 0.44, 0.34, 0.24, 0.16, 0.10, 0.05];
+const WAKE_COOLDOWN_FRAMES: u32 = 14; // 1.12 с (было 1.68 с)
+const RESET_COOLDOWN_FRAMES: u32 = 6; // 0.48 с после закрытия диалога (было 0.96 с)
+
+fn logit(p: f32) -> f32 {
+    let p = p.clamp(1e-5, 1.0 - 1e-5);
+    (p / (1.0 - p)).ln()
+}
+
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x.clamp(-50.0, 50.0)).exp())
+}
+
+/// Для локально обученных линейных моделей (h == 2), сохранённых со старой узкой линейной
+/// шкалой порогов (`0.80 - i * 0.065`), мягко расширяет чувствительность 5..10 ближе к
+/// границе шума валидации, никогда не опускаясь ниже максимума шума (`high`).
+fn effective_threshold(thresholds: &[f32; 10], hidden: usize, sens: usize) -> f32 {
+    let idx = sens.clamp(1, 10) - 1;
+    let stored = thresholds[idx];
+    if hidden != 2 || thresholds[0] <= thresholds[9] || thresholds[0] >= 0.999 || thresholds[9] <= 0.50 {
+        return stored;
+    }
+    let l0 = logit(thresholds[0]);
+    let l4 = logit(thresholds[4]);
+    let l9 = logit(thresholds[9]);
+    let span = l0 - l9;
+    if span <= 0.05 {
+        return stored;
+    }
+    // Старая формула имела строго линейный шаг (l0 - l4) / (l0 - l9) == 4/9 ≈ 0.4444.
+    let ratio = (l0 - l4) / span;
+    if !(0.42..=0.465).contains(&ratio) {
+        return stored;
+    }
+    let delta = span / 0.585;
+    let high = l0 - 0.80 * delta;
+    sigmoid(high + delta * CUSTOM_HEAD_FRACS[idx]).min(stored)
+}
+
 const STEP: usize = 1280; // 80 мс
 const CTX: usize = 480;
 const NFFT: usize = 512;
@@ -506,13 +545,13 @@ impl Oww {
             self.pending -= 1;
             if self.pending == 0 {
                 self.last_wake_prob = self.peak;
-                self.cooldown = 21;
+                self.cooldown = WAKE_COOLDOWN_FRAMES;
                 return true;
             }
             return false;
         }
         let s = (self.sensitivity)().clamp(1, 10) as usize;
-        if p >= self.thresholds[s - 1] {
+        if p >= effective_threshold(&self.thresholds, self.h, s) {
             // ждём 1 кадр (80 мс) на хвост/пик слова вместо 240 мс
             self.pending = 1;
             self.peak = p;
@@ -530,7 +569,7 @@ impl crate::Wake for Oww {
 
     fn reset(&mut self) {
         // сеть потоковая: сброс контекста давал ~2,5 с «глухоты»; подавляем лишь повторный оклик
-        self.cooldown = 12;
+        self.cooldown = RESET_COOLDOWN_FRAMES;
         self.pending = 0;
     }
 
@@ -655,7 +694,7 @@ impl NamedHead {
             self.pending -= 1;
             if self.pending == 0 {
                 self.last_wake_prob = self.peak;
-                self.cooldown = 21;
+                self.cooldown = WAKE_COOLDOWN_FRAMES;
                 return true;
             }
             return false;
@@ -668,7 +707,7 @@ impl NamedHead {
     }
 
     fn thresholds(&self, sens: usize) -> f32 {
-        self.weights.thresholds[sens.clamp(1, 10) - 1]
+        effective_threshold(&self.weights.thresholds, self.weights.h, sens)
     }
 }
 
@@ -771,7 +810,7 @@ impl crate::Wake for OwwMulti {
 
     fn reset(&mut self) {
         for head in &mut self.heads {
-            head.cooldown = 12;
+            head.cooldown = RESET_COOLDOWN_FRAMES;
             head.pending = 0;
         }
     }
@@ -874,11 +913,27 @@ mod tests {
         assert!(!oww.detect(thr));
         assert!(oww.detect(0.99));
         assert_eq!(oww.wake_prob(), 0.99);
-        for _ in 0..21 {
+        for _ in 0..WAKE_COOLDOWN_FRAMES {
             assert!(!oww.detect(0.99));
         }
         assert!(!oww.detect(0.99));
         assert!(oww.detect(0.99));
+    }
+
+    #[test]
+    fn custom_h2_threshold_recalibration_improves_sensitivity_above_noise_floor() {
+        // Реальная таблица порогов модели «Аянами» (high_noise ≈ 0.553)
+        let ayanami = [0.9093, 0.8942, 0.8770, 0.8574, 0.8354, 0.8106, 0.7831, 0.7528, 0.7198, 0.6842];
+        assert!((effective_threshold(&ayanami, 2, 1) - 0.9093).abs() < 0.002);
+        let t7 = effective_threshold(&ayanami, 2, 7);
+        assert!(t7 > 0.68 && t7 < 0.72, "unexpected ayanami sens=7 threshold: {t7}");
+        let t10 = effective_threshold(&ayanami, 2, 10);
+        assert!(t10 > 0.57 && t10 < 0.60, "must stay above noise floor 0.553: {t10}");
+        // Штатная модель h=96 не меняется
+        assert_eq!(effective_threshold(&ayanami, 96, 7), 0.7831);
+        // Уже перекалиброванная новая модель не сдвигается повторно
+        let already_new: [f32; 10] = std::array::from_fn(|i| sigmoid(0.213 + 2.615 * CUSTOM_HEAD_FRACS[i]));
+        assert_eq!(effective_threshold(&already_new, 2, 7), already_new[6]);
     }
 
     #[test]
@@ -902,7 +957,7 @@ mod tests {
         assert!(multi.heads[1].detect(0.98, 5));
         assert_eq!(multi.heads[1].last_wake_prob, 0.98);
         multi.reset();
-        assert_eq!(multi.heads[0].cooldown, 12);
-        assert_eq!(multi.heads[1].cooldown, 12);
+        assert_eq!(multi.heads[0].cooldown, RESET_COOLDOWN_FRAMES);
+        assert_eq!(multi.heads[1].cooldown, RESET_COOLDOWN_FRAMES);
     }
 }

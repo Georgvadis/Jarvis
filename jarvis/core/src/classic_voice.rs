@@ -72,6 +72,9 @@ impl Classic {
                 },
                 result=tasks.join_next(),if !tasks.is_empty()=>{
                     actor.dialog.working(-1);
+                    if tasks.is_empty() {
+                        context.has_spoken_turn.store(false, Ordering::SeqCst);
+                    }
                     if let Some(Ok(Err(error)))=result {
                         actor.dialog.finish_turn(&error);
                         if actor.last_failure.lock().unwrap().is_some() {
@@ -88,14 +91,27 @@ impl Classic {
                         actor.generation.fetch_add(1,Ordering::SeqCst);
                         actor.interrupted.store(true,Ordering::SeqCst);
                         context.has_spoken_turn.store(false,Ordering::SeqCst);
+                        context.pending_user_text.lock().unwrap().clear();
+                        *context.active_turn_pcm.lock().unwrap() = None;
                     }
                     if let Some(pcm)=vad.feed(&pcm){
+                        // Не допускаем двух параллельных turn() с одним generation: иначе их аудио и ответы
+                        // перемешиваются. Если предыдущий turn ещё не заговорил, сохраняем накопленный контекст для склейки.
+                        if !tasks.is_empty() {
+                            tasks.abort_all();
+                            if context.has_spoken_turn.swap(false, Ordering::SeqCst) {
+                                actor.interrupted.store(true, Ordering::SeqCst);
+                                context.pending_user_text.lock().unwrap().clear();
+                                *context.active_turn_pcm.lock().unwrap() = None;
+                            }
+                        }
+                        let generation = actor.generation.fetch_add(1, Ordering::SeqCst) + 1;
                         if context.settings.thinking_sound {
                             if let Some(tx)=actor.out.lock().unwrap().clone() {
                                 let _=tx.try_send(thinking_chime_for(&context.settings.sound_theme));
                             }
                         }
-                        let me=actor.clone();let context=context.clone();let generation=actor.generation.load(Ordering::SeqCst);
+                        let me=actor.clone();let context=context.clone();
                         actor.dialog.working(1);tasks.spawn(async move{me.turn(&context,pcm,generation).await});
                     }
                 },
@@ -146,7 +162,13 @@ impl Classic {
                     matches!(m.current(), crate::modes::SpecialMode::Tutor { bilingual: true, .. })
                 });
                 let stt_lang = if bilingual_tutor { "" } else { context.settings.language.as_str() };
-                let stt_mdl = if bilingual_tutor { "whisper" } else { context.profile.stt_model.as_str() };
+                let stt_mdl = if bilingual_tutor {
+                    "whisper"
+                } else if context.profile.stt_model.trim().is_empty() {
+                    "gigaam-v3"
+                } else {
+                    context.profile.stt_model.as_str()
+                };
                 match stt_local_whisper(&context.host, &wav_bytes, stt_lang, stt_mdl).await {
                     Ok(txt) => json!({"text": txt}),
                     Err(direct_err) => {
@@ -675,6 +697,7 @@ impl Classic {
         if !already_spoken {
             self.speak(context,&answer,generation,is_whisper).await?;
         }
+        context.has_spoken_turn.store(false, Ordering::SeqCst);
         self.dialog.finish_turn("");Ok(())
     }
     async fn synthesize_provider(&self,context:&Context,provider:&str,voice:&str,model:&str,text:&str,emotion:Option<&str>)->Result<Vec<i16>,String>{
@@ -791,7 +814,7 @@ impl Classic {
         t_tts0: std::time::Instant,
         recorded_timing: &AtomicBool,
     ) -> Result<bool, String> {
-        const PREBUFFER_SAMPLES: usize = 4800; // 200 мс анти-джиттер буфер при 24 кГц
+        const PREBUFFER_SAMPLES: usize = 8400; // 350 мс анти-джиттер буфер при 24 кГц
         let client = fish_http_client(context.proxy.as_deref())?;
         let payload = json!({
             "text": text,
@@ -820,7 +843,18 @@ impl Classic {
         let mut all_samples: Vec<i16> = if cache_eligible { Vec::with_capacity(24000 * 4) } else { Vec::new() };
         let mut started_stream = false;
 
-        while let Some(chunk) = resp.chunk().await.map_err(|e| format!("Fish Audio stream: {e}"))? {
+        loop {
+            let chunk = match resp.chunk().await {
+                Ok(Some(c)) => c,
+                Ok(None) => break,
+                Err(e) => {
+                    if started_stream {
+                        log::warn!("Fish Audio stream оборвался в середине ({e}) — завершаю фразу без повтора сначала");
+                        break;
+                    }
+                    return Err(format!("Fish Audio stream: {e}"));
+                }
+            };
             if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
                 return Ok(started_stream);
             }
@@ -1079,7 +1113,7 @@ impl Classic {
                 abort_all(&mut in_flight);
                 return Ok(spoken);
             }
-            while in_flight.len() < 2 {
+            while in_flight.len() < 3 {
                 let Some(chunk) = pending.pop_front() else { break };
                 let live_first = !live_attempted && in_flight.is_empty() && spoken == 0;
                 live_attempted = true;
@@ -1146,7 +1180,7 @@ impl Classic {
                         let played_ops = self.play_stream_ops(context, outcome.ops, generation).await?;
                         if outcome.streamed_any || played_ops {
                             spoken += 1;
-                            let pause = vec![0i16; 2400]; // 100 мс пауза между фразами
+                            let pause = vec![0i16; 3600]; // 150 мс пауза между фразами
                             let _ = self.send_pcm_samples(&pause, generation).await;
                         }
                     }
@@ -1200,7 +1234,7 @@ impl Classic {
                 if outcome.streamed_any || played_ops {
                     spoken += 1;
                     if !in_flight.is_empty() || !pending.is_empty() {
-                        let pause = vec![0i16; 2400]; // 100 мс пауза между фразами
+                        let pause = vec![0i16; 3600]; // 150 мс пауза между фразами
                         let _ = self.send_pcm_samples(&pause, generation).await;
                     }
                 }
@@ -1478,8 +1512,8 @@ impl Capture {
     }
 
     fn effective_silence_limit(&self) -> usize {
-        if self.voiced_samples < 16000 * 18 / 10 {
-            (self.silence_limit * 72 / 100).clamp(520 * 16, 800 * 16)
+        if self.voiced_samples < 16000 * 12 / 10 {
+            (self.silence_limit * 82 / 100).clamp(650 * 16, 900 * 16)
         } else {
             self.silence_limit
         }
@@ -1516,9 +1550,11 @@ impl Capture {
         if self.silence >= self.effective_silence_limit() || self.speech.len() >= 16000 * 45 {
             self.speaking = false;
             self.silence = 0;
+            let voiced_total = self.voiced_samples;
             self.voiced_samples = 0;
             let result = std::mem::take(&mut self.speech);
-            if result.len() >= 3200 {
+            // Требуем минимум 80 мс реальных речевых кадров, чтобы единичный щелчок не запускал thinking-chime и STT.
+            if result.len() >= 3200 && voiced_total >= 1280 {
                 return Some(result);
             }
         }
@@ -2205,8 +2241,8 @@ struct StreamChunkOutcome {
 /// Вырезает из потокового буфера первое законченное предложение или (для самого первого фрагмента)
 /// первую естественную фразу, чтобы TTS начал говорить максимально быстро.
 fn pop_ready_sentence(buf: &mut String, is_first: bool) -> Option<String> {
-    let min_sentence = if is_first { 6 } else { 25 };
-    let min_clause = if is_first { 22 } else { 180 };
+    let min_sentence = if is_first { 8 } else { 25 };
+    let min_clause = if is_first { 42 } else { 180 };
     let mut chars = buf.char_indices().peekable();
     let mut char_count = 0usize;
     let mut cut_at: Option<usize> = None;
@@ -2361,6 +2397,29 @@ fn wav(pcm:&[i16])->Vec<u8>{
         assert!(capture.is_loud(&soft_voice));
         assert!(capture.feed(&soft_voice).is_none());
         assert!(capture.speaking);
+    }
+    #[test]
+    fn capture_rejects_short_click_and_keeps_comfortable_pause_window() {
+        let mut capture = Capture::new(280, 1000);
+        // Для короткой фразы при vad_silence_ms=1000 даём 820 мс паузы вместо прежних 720 мс
+        assert_eq!(capture.effective_silence_limit(), 820 * 16);
+        let click: Vec<i16> = (0..320)
+            .map(|i| ((i as f32 * std::f32::consts::TAU * 250.0 / 16000.0).sin() * 900.0) as i16)
+            .collect();
+        // Единичный 20-мс щелчок (320 сэмплов < 1280) после тишины должен отбрасываться без запуска STT
+        assert!(capture.feed(&click).is_none());
+        assert!(capture.speaking);
+        assert!(capture.feed(&vec![0i16; 900 * 16]).is_none());
+        assert!(!capture.speaking);
+    }
+    #[test]
+    fn pop_ready_sentence_avoids_chopping_short_first_comma_clause() {
+        let mut buf = String::from("Да, конечно, сегодня вечером будет тепло. ");
+        // Не режет на короткой 25-символьной запятой — ждёт конца естественного предложения
+        assert_eq!(
+            pop_ready_sentence(&mut buf, true).as_deref(),
+            Some("Да, конечно, сегодня вечером будет тепло.")
+        );
     }
     #[test]
     fn bare_wake_phrase_and_filler_and_weather_detection() {

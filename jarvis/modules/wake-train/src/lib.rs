@@ -163,9 +163,9 @@ fn fit(positives: &[&[f32]], negatives: &[&[f32]], length: usize) -> (Vec<f32>, 
         .map(|(row, _, factor)| factor * dot(row, row))
         .sum::<f32>();
     let step = 3.0 / norm.max(1.0);
-    for _ in 0..160 {
+    for _ in 0..220 {
         for (d, w) in gradient.iter_mut().zip(&weights) {
-            *d = 0.4 * w;
+            *d = 0.25 * w;
         }
         let mut offset = 0.0;
         for (row, target, factor) in &rows {
@@ -178,7 +178,7 @@ fn fit(positives: &[&[f32]], negatives: &[&[f32]], length: usize) -> (Vec<f32>, 
         for (w, d) in weights.iter_mut().zip(&gradient) {
             *w -= step * d;
         }
-        bias -= offset * 0.25;
+        bias -= offset * 0.45;
     }
     for (w, variance) in weights.iter_mut().zip(spread) {
         *w /= (variance + 0.06).sqrt();
@@ -224,12 +224,12 @@ pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
         .iter()
         .enumerate()
         .map(|(i, clip)| {
-            Windows::of(
-                &mut extractor,
-                clip,
-                seq,
-                if i % 2 == 0 { 0.65 } else { 1.3 },
-            )
+            let gain = match i % 3 {
+                0 => 0.50,
+                1 => 0.78,
+                _ => 1.35,
+            };
+            Windows::of(&mut extractor, clip, seq, gain)
         })
         .collect();
     let p: Vec<_> = windows[..split]
@@ -268,8 +268,8 @@ pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
     if !low.is_finite() || !high.is_finite() || low - high < 0.08 {
         return Err("Фраза сливается с фоном на проверочных записях. Запишите её чётче или попробуйте более различимую фразу".into());
     }
-    let thresholds =
-        std::array::from_fn(|i| sigmoid(high + (low - high) * (0.80 - i as f32 * 0.065)));
+    const FRACS: [f32; 10] = [0.80, 0.72, 0.64, 0.54, 0.44, 0.34, 0.24, 0.16, 0.10, 0.05];
+    let thresholds = std::array::from_fn(|i| sigmoid(high + (low - high) * FRACS[i]));
     Ok(head(seq, &weights, bias, thresholds))
 }
 

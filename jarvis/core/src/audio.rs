@@ -190,7 +190,7 @@ impl Player {
         let (tx, rx) = sync_channel::<Vec<u8>>(2048);
         let queued = Arc::new(AtomicUsize::new(0));
         let q_pump = queued.clone();
-        let pump = thread::Builder::new().name("aplay-pump".into()).stack_size(128 * 1024).spawn(move || pump(stdin, rx, q_pump))?;
+        let pump = thread::Builder::new().name("aplay-pump".into()).stack_size(128 * 1024).spawn(move || pump(stdin, rx, q_pump, out))?;
         *self.cur.lock().unwrap() = Some(Playing { child, queue: Some(tx), queued, pump: Some(pump), lim: Limiter::new(rate), up, boost: 1.0, shaped: Vec::new(), up_buf: Vec::new() });
         Ok(())
     }
@@ -303,14 +303,59 @@ impl Player {
     }
 }
 
-fn pump(mut stdin: ChildStdin, rx: Receiver<Vec<u8>>, queued: Arc<AtomicUsize>) {
+fn pump(mut stdin: ChildStdin, rx: Receiver<Vec<u8>>, queued: Arc<AtomicUsize>, out_rate: usize) {
     use std::io::Write;
-    for b in rx {
-        let res = stdin.write_all(&b);
-        queued.fetch_sub(1, Ordering::Relaxed);
-        if let Err(e) = res {
-            log::warn!("динамик (aplay): ошибка записи ({e})");
-            return; // плеер умер — остаток выбрасываем (rx закроется вместе с потоком)
+    use std::sync::mpsc::RecvTimeoutError;
+    let rate = out_rate.max(8_000);
+    let bytes_per_sec = (rate * 2) as f64;
+    // 100 мс прогрева тишиной пробуждают ALSA dmix и усилитель колонки, чтобы не съедался первый слог.
+    let lead_in = vec![0u8; (rate / 10) * 2];
+    // 40 мс тишины во время сетевых пауз держат DMA-буфер ALSA живым без XRUN/underrun и без раздувания задержки.
+    let keepalive = vec![0u8; (rate / 25) * 2];
+    let keepalive_dur = Duration::from_millis(40);
+    let first = match rx.recv() {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let first_len = first.len();
+    let res = stdin.write_all(&lead_in).and_then(|_| stdin.write_all(&first));
+    queued.fetch_sub(1, Ordering::Relaxed);
+    if let Err(e) = res {
+        log::warn!("динамик (aplay): ошибка записи ({e})");
+        return;
+    }
+    let now = Instant::now();
+    let mut buffered_until = now + Duration::from_secs_f64((lead_in.len() + first_len) as f64 / bytes_per_sec);
+    loop {
+        let wait = buffered_until
+            .saturating_duration_since(Instant::now())
+            .saturating_sub(Duration::from_millis(60))
+            .clamp(Duration::from_millis(20), Duration::from_millis(80));
+        match rx.recv_timeout(wait) {
+            Ok(b) => {
+                let len = b.len();
+                let res = stdin.write_all(&b);
+                queued.fetch_sub(1, Ordering::Relaxed);
+                if let Err(e) = res {
+                    log::warn!("динамик (aplay): ошибка записи ({e})");
+                    return; // плеер умер — остаток выбрасываем (rx закроется вместе с потоком)
+                }
+                let now = Instant::now();
+                buffered_until = buffered_until.max(now) + Duration::from_secs_f64(len as f64 / bytes_per_sec);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                let now = Instant::now();
+                // Доливаем 40 мс тишины только когда в буфере ALSA остаётся меньше ~80 мс —
+                // буфер никогда не пересыхает (нет underrun), но и не копит лишнюю задержку >120 мс.
+                if buffered_until <= now + Duration::from_millis(80) {
+                    if let Err(e) = stdin.write_all(&keepalive) {
+                        log::warn!("динамик (aplay): ошибка записи ({e})");
+                        return;
+                    }
+                    buffered_until = buffered_until.max(now) + keepalive_dur;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
         }
     }
 }
