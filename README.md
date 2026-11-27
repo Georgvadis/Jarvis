@@ -1,293 +1,109 @@
 <p align="center">
-  <img src="docs/cover.svg" alt="YaJarvis — ваш голосовой помощник на Яндекс Станции" width="100%">
+  <img src="docs/cover.svg" alt="Jarvis — кастомная прошивка и веб-панель «Камин и Стекло» для Яндекс Станции Лайт 2" width="100%">
 </p>
 
-<h1 align="center">Джарвис на вашей Яндекс Станции</h1>
+<h1 align="center">Jarvis для Яндекс Станции Лайт 2</h1>
 
 <p align="center">
-  Живой разговор с AI, музыка с YouTube и управление умным домом прямо на колонке.<br>
-  Локальное слово активации, несколько ассистентов, бесплатные и платные нейросети, плагины на Lua и Rust — без своего сервера.
-</p>
-
-<p align="center">
-  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><img src="https://img.shields.io/github/v/release/Georgvadis/Jarvis?style=flat-square&amp;label=release&amp;color=f77b2c&amp;labelColor=202027" alt="Последний релиз"></a>
-  <a href="https://github.com/Georgvadis/Jarvis/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/Georgvadis/Jarvis/release.yml?style=flat-square&amp;label=build&amp;labelColor=202027" alt="Сборка релиза"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f77b2c?style=flat-square&amp;labelColor=202027" alt="Лицензия MIT"></a>
+  Независимая кастомная прошивка на Rust (<code>jarvisd</code>) и веб-панель <strong>«Камин и Стекло»</strong> на SvelteKit<br>
+  с быстрым голосовым пайплайном, гибридной музыкой, студией режимов и собственными OTA-релизами.
 </p>
 
 <p align="center">
-  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><strong>Скачать</strong></a> ·
-  <a href="#установка"><strong>Установка</strong></a> ·
-  <a href="docs/FAQ.md"><strong>FAQ и бесплатный старт</strong></a> ·
-  <a href="docs/PLUGINS.md"><strong>Вики по плагинам</strong></a> ·
-  <a href="#панель-управления"><strong>Панель</strong></a> ·
-  <a href="https://github.com/Georgvadis/Jarvis/issues"><strong>Обратная связь</strong></a>
+  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><img src="https://img.shields.io/github/v/release/Georgvadis/Jarvis?style=flat-square&amp;label=release&amp;color=f2994a&amp;labelColor=181310" alt="Последний релиз"></a>
+  <a href="https://github.com/Georgvadis/Jarvis/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/Georgvadis/Jarvis/release.yml?style=flat-square&amp;label=build&amp;labelColor=181310" alt="Сборка релиза"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-f2994a?style=flat-square&amp;labelColor=181310" alt="Лицензия MIT"></a>
 </p>
 
-![Главная панель YaJarvis: диалог, состояние колонки и музыкальный плеер](docs/screenshots/dashboard.png)
-
----
-
-## Что умеет YaJarvis
-
-YaJarvis работает на колонке рядом со штатной Алисой — на чистом Rust, без ПК или домашнего сервера 24/7.
-
 <p align="center">
-  <img src="docs/features.png" alt="Что умеет YaJarvis: локальное слово активации, 5 AI-провайдеров, YouTube и Алиса, умный дом, пулы ключей и VPN, веб-панель SvelteKit" width="100%">
+  <a href="https://github.com/Georgvadis/Jarvis/releases/latest"><strong>Релизы</strong></a> ·
+  <a href="#возможности"><strong>Возможности</strong></a> ·
+  <a href="#структура-репозитория"><strong>Архитектура</strong></a> ·
+  <a href="#сборка-и-ota-обновления"><strong>Сборка и OTA</strong></a> ·
+  <a href="#документация"><strong>Документация</strong></a>
 </p>
 
 ---
 
-## Проект бесплатный? Как пользоваться без оплаты
+## О проекте
 
-**Да, YaJarvis полностью бесплатен (лицензия MIT).** В проекте нет подписок автору, скрытых платежей и платного посредника — колонка общается напрямую с выбранным вами AI-сервисом по вашим ключам или через бесплатные/пользовательские плагины.
+Этот репозиторий — самостоятельная кастомная ветка развития прошивки **Jarvis** (`Georgvadis/Jarvis`) под **Яндекс Станцию Лайт 2 (`arm64`)**: ядро `jarvisd` и супервайзер `jarvis-supervisor` на Rust работают рядом со штатной Алисой, не мешая ей и не привязываясь к сторонним обновлениям.
 
-<p align="center">
-  <a href="docs/FAQ.md#1-проект-бесплатный-нужна-ли-подписка-на-ии">
-    <img src="docs/pricing.png" alt="Как пользоваться YaJarvis бесплатно: Google Gemini Live, ElevenLabs Free, OpenRouter :free и Ollama, работа без AI-ключей, ChatGPT Plus/Pro и OpenAI/Grok API" width="100%">
-  </a>
-</p>
-
-<p align="center">
-  <a href="docs/FAQ.md#google-gemini--бесплатно">Ключ Gemini</a> ·
-  <a href="docs/FAQ.md#elevenlabs--живой-разговор-синтез-и-распознавание">Пул ключей ElevenLabs</a> ·
-  <a href="docs/FAQ.md#как-пользоваться-нейросетями-полностью-бесплатно">OpenRouter :free и Ollama</a> ·
-  <a href="docs/FAQ.md#можно-ли-пользоваться-совсем-без-ai-ключей">Без AI-ключей</a> ·
-  <a href="docs/FAQ.md#chatgpt--нужен-только-plus-или-подойдёт-go-и-free">ChatGPT Plus vs Go/Free</a>
-</p>
+Актуальный релиз — **[v1.0.0](docs/releases/1.0.0.md)** (`Georgvadis/Jarvis`).
 
 ---
 
-## Частые вопросы (коротко)
+## Возможности
 
-<details>
-<summary><strong>Нужна ли какая-либо подписка на ИИ или можно пользоваться с бесплатной?</strong></summary>
+### 1. Голосовой пайплайн и быстрый отклик
+- **Локальная активация и чистый хэндофф (`engine.rs`, `wake_reply.rs`)**: детектор `openWakeWord`, передача только последних `200 мс` preroll для режима `Classic`, мгновенный звуковой отклик (`wake_ack_chime`) и фоновый автопрогрев локального кэша `wake-replies` после старта.
+- **Тихая речь с расстояния и склейка пауз (`classic_voice.rs`, `settings.rs`)**: чувствительные пороги VAD (`vad_threshold: 380`, `vad_silence_ms: 850`), адаптивный `Capture` с предзаписью (`9600` сэмплов), сохранение первой половины фраз при разбиении паузами (`active_turn_pcm` / `pending_user_text`) и ожидание вводных слов, фильтрация голого слова активации без обращения к LLM.
+- **Минимальная задержка STT → LLM → TTS**:
+  - прямой HTTP-вызов локального `/stt` из Rust (без Lua/Base64) с резервным фолбэком;
+  - выборочное подключение `web_search` / `googleSearch` (`should_use_web_search`) только там, где реально нужны свежие факты из сети;
+  - фоновый прогрев токена и HTTP/2-соединения (`codex.warm`) для `Classic` ChatGPT, параллельный запуск `tools.prepare()` и `auth.token`;
+  - раннее расщепление первой фразы (`pop_ready_sentence`), потоковый HTTP/2-синтез `fish-audio-tts` прямо в PCM и поддержка эмоций/звуковых эффектов (`[happy]`, `[whisper]`, `[sfx:...]`, многоголосие).
+- **Быстрые локальные команды и профили (`tools.rs`, `fastcmd.rs`, `session.rs`)**: мгновенные ответы без облака (время, дата, громкость, звуки сна, текущая погода) и голосовое переключение профилей ассистента («переключи профиль на Рюка», «включи ассистента Аянами») с русскими падежами, мгновенным обновлением LED-подсветки и мягким завершением диалога после подтверждения.
 
-Платная подписка **не обязательна**. Лучший бесплатный вариант — **Google Gemini Live** (бесплатные дневные лимиты без привязки карты + пул из ключей с разных аккаунтов Google). Также есть бесплатный тариф у **ElevenLabs** и бесплатные `:free` модели **OpenRouter** или локальная **Ollama** через Lua-плагин.
+### 2. Веб-панель «Камин и Стекло» (`/`) и Студия (`/studio`)
+- **Интерфейс Fireside Glass (`jarvisd/ui`)**: тёмная и светлая темы, 5 акцентов, PWA (`/sw.js`, оффлайн-экран ожидания перезагрузки), **Чат 2.0** с рендерингом Markdown, палитра команд `Ctrl+K` и мобильная навигация.
+- **Центр здоровья и мониторинг (`/charts`)**: живая телеметрия колонки и параллельная проверка компонентов стека (`GET /api/stack-health`).
+- **Студия (`/studio`)**:
+  - **Локальный NotebookLM и споры** — генерация двуголосых подкастов из YouTube, статей, PDF/EPUB/FB2/TXT или текста;
+  - **Читалка книг и ранобэ** — загрузка книг, закладки, главы, многоголосие и голосовой пересказ «на чём остановились»;
+  - **Голосовые игры** — «Угадай мелодию / Аниме-опенинг» (с отсчётом на LED-дисплее), «Нуарный детектив», «Ведущий Мафии / Бункера»;
+  - **Персональный AI-DJ** — тематические волны YouTube Music с радио-подводками;
+  - **Заметки (`CyberNotes`) и чеклисты** — голосовые заметки, списки покупок и дел (`lists.json`);
+  - **Расписание и таймеры** — обратные таймеры на LED-экране и постоянные рутины по дням недели (`schedules.json`).
 
-</details>
-
-<details>
-<summary><strong>Создал несколько ключей Gemini (или ElevenLabs), но лимит всё равно кончается — почему?</strong></summary>
-
-Бесплатная квота у **Google Gemini** и **ElevenLabs** действует **на весь аккаунт целиком (у Gemini — на аккаунт / проект), а не на каждый отдельный API-ключ**. Если создать 5–10 ключей в одном аккаунте Google, все они будут делить один и тот же общий лимит.
-
-Чтобы пул ключей реально увеличивал запас, добавляйте ключи с **разных аккаунтов**.
-
-</details>
-
-<details>
-<summary><strong>Для ChatGPT нужен только Plus? Подойдёт ли ChatGPT Go или Free?</strong></summary>
-
-Режим **«GPT-Live по подписке»** рассчитан на **ChatGPT Plus** и **Pro**. На **ChatGPT Free** и **ChatGPT Go** сам OpenAI обычно закрывает доступ к эндпоинтам Codex/бэкенда или жёстко ограничивает голосовой лимит — покупать **Go** специально ради Джарвиса не стоит. При исчерпании лимита подписки колонка умеет автоматически переключаться на ваш бесплатный ключ **Gemini**.
-
-</details>
-
-<details>
-<summary><strong>Где достать ключи? Автор проекта помогает с ключами или выдаёт их?</strong></summary>
-
-У каждого пользователя ключи личные — они хранятся только на колонке (`/data/opt/jarvisd/settings.json`), автор их не продаёт и не выдаёт. Никому не присылайте свои ключи в личные сообщения. Пошаговые инструкции по выпуску бесплатных ключей за 2 минуты — в **[FAQ](docs/FAQ.md#2-где-достать-ключи-и-как-подключить-сервисы)**.
-
-</details>
-
-<details>
-<summary><strong>Как полностью удалить YaJarvis с колонки?</strong></summary>
-
-1. **Через установщик `JarvisSetup`:** запустите его, выберите колонку и на экране проверки нажмите красную кнопку **«Удалить Джарвиса»**.
-2. **Вручную через ADB:** выполните `adb connect IP-КОЛОНКИ:5555` и `adb -s IP-КОЛОНКИ:5555 shell "sh /data/opt/jarvisd/jarvisd.sh uninstall"`.
-
-Колонка полностью удалит файлы Джарвиса и перезагрузится — системная прошивка и штатная Алиса останутся как были.
-
-</details>
-
-<details>
-<summary><strong>Забыл пароль от веб-панели — как сбросить?</strong></summary>
-
-На самой колонке нажмите поочерёдно кнопки **«громче», «тише» 8 раз подряд (`+ − + − + − + −`)** с интервалом не дольше 1,5 с. Громкость в итоге останется прежней, а пароль сбросится.
-
-</details>
-
-**[Открыть полный FAQ с пошаговыми инструкциями →](docs/FAQ.md)**
+### 3. Музыка, умный дом и интеграции
+- **Гибридная музыка без конфликтов (`music.rs`, `alice_music.rs`)**: YouTube Music (`play_music`, поиск официальных треков без миксов, очередь и лайки голосом) работает сервисом по умолчанию; Яндекс Музыка запускается тихо без голоса Алисы через `play_yandex_music` (по явному запросу «в Яндекс Музыке» / «Мою волну» или в резерве); усиленный и быстрый дакинг громкости на время речи.
+- **Фоновые звуки и радио (`ambient.rs`)**: офлайн-пресеты («Океан», «Дождь», «Камин», «Лес», белый шум) и пользовательские интернет-радиостанции с плавным приглушением.
+- **Жесты и LED (`buttons.rs`, `led.rs`)**: комбинация `+ − + − + − + −` сбрасывает пароль панели, а быстрый жест `− + + −` мгновенно останавливает все активности или запускает прослушивание.
+- **Умный дом и внешние агенты**: Home Assistant, Xiaomi Home, Smart Life (Tuya), Яндекс Умный дом, двусторонний **Telegram-бот** (`/ask`, `/timer`, `/scenario`, `/pc`, `/book`, `/podcast`, `/dj`), определение присутствия в домашнем Wi-Fi (`presence.rs`), интеграция с ПК-компаньоном (`look_at_screen`, `pc_control`), постоянная память диалога (`chatgpt-chat-archive.jsonl`) и песочница плагинов **Lua 5.4 / Rust SDK**.
 
 ---
 
-## Установка
+## Структура репозитория
 
-Понадобится Яндекс Станция с **root-доступом и ADB по сети** и компьютер в той же локальной сети. Получение root-доступа описано в [Yandex Station Extended](https://hackalice.me/). Отдельный сервер или постоянно включённый компьютер после установки **не нужен**.
+| Путь | Назначение |
+| :--- | :--- |
+| [`jarvis/core/`](jarvis/core) | Основной демон `jarvisd`: аудио-пайплайн, VAD, LLM/TTS, инструменты, Telegram-бот, веб-сервер |
+| [`jarvis/modules/`](jarvis/modules) | Встроенные Rust-модули (`chatgpt`, `cloud`, `homeassistant`, `smartlife`, `xiaomi`, `yandexhome`, `youtube`, `vpn`, `wake-train`) |
+| [`jarvis/station-runtime/`](jarvis/station-runtime) | `jarvis-supervisor` — безопасная выкатка обновлений, проверка целостности и автооткат |
+| [`jarvis/official-plugin/`](jarvis/official-plugin) | Сборка официальных Rust-плагинов под `arm64` / `armv7` |
+| [`jarvisd/ui/`](jarvisd/ui) | Веб-панель SvelteKit («Камин и Стекло») |
+| [`plugins/`](plugins) | Каталог и манифесты плагинов (`plugins/index.json`) + Lua-плагины |
+| [`station/`](station) | Скрипты запуска (`jarvisd.sh`, `S98jarvisd`) и нативные C-хуки (`vqe_tap.c`, `spotcmd.c`) |
+| [`docs/`](docs) | Документация, заметки к релизам (`docs/releases/`) и спецификации SDK |
 
-### Windows
+---
 
-Откройте **PowerShell** и выполните:
+## Сборка и OTA-обновления
 
-```powershell
-irm https://github.com/Georgvadis/Jarvis/releases/latest/download/install.ps1 | iex
-```
-
-### macOS и Linux
-
-Откройте **Терминал** и выполните:
-
+### Локальная сборка под `arm64`
 ```sh
-curl -fsSL https://github.com/Georgvadis/Jarvis/releases/latest/download/install.sh | sh
+VERSION=1.0.0 REPO=Georgvadis/Jarvis STATION_ARCHES=arm64 sh build.sh
 ```
+Артефакты собираются в `build/release/`: `jarvisd-arm64`, `station-arm64.zip`, пакеты официальных плагинов `plugin-*.zip`, `rust-builds.json` и `SHA256SUMS`. Подробности окружения — в [docs/BUILD.md](docs/BUILD.md).
 
-Для macOS и Linux добавьте `adb` (Android Platform Tools) в `PATH`; на Windows установщик при необходимости сам подтянет `adb`. После запуска откроется страница установщика в браузере:
-
-1. **Выберите колонку.** Установщик найдёт подключённые по ADB устройства или позволит ввести IP вручную, сам определит модель и архитектуру.
-2. **Задайте пароль панели и нажмите «Установить».**
-3. **Пройдите мастер в панели (`http://IP-КОЛОНКИ:8080`).** Подключите AI-сервис (например, бесплатный ключ Gemini или аккаунт ChatGPT), выберите нужные плагины и укажите свой город и часовой пояс во вкладке **«Колонка»**.
-
-<details>
-<summary><strong>Как выглядит установщик</strong></summary>
-
-Во время установки справа показаны возможности и скриншоты интерфейса, а слева — прогресс и подробный журнал.
-
-![Установщик YaJarvis со знакомством с возможностями проекта](docs/screenshots/installer.png)
-
-</details>
-
-<details>
-<summary><strong>Скачать установщик вручную</strong></summary>
-
-Вы можете просмотреть скрипт установки заранее или скачать готовый бинарник со страницы [последнего релиза](https://github.com/Georgvadis/Jarvis/releases/latest):
-
-| Система | Файл |
-| :--- | :--- |
-| Windows x64 | `JarvisSetup-windows-amd64.exe` |
-| macOS Apple Silicon | `JarvisSetup-darwin-arm64` |
-| macOS Intel | `JarvisSetup-darwin-amd64` |
-| Linux x64 | `JarvisSetup-linux-amd64` |
-| Linux ARM64 | `JarvisSetup-linux-arm64` |
-
-На macOS и Linux выдайте права на запуск: `chmod +x JarvisSetup-*`. Бинарники не подписаны сертификатом разработчика. Для восстановления или удаления Джарвиса просто запустите установщик повторно.
-
-</details>
-
----
-
-## Плагины и расширения
-
-В YaJarvis чёткое разделение между ядром и подключаемыми пакетами:
-
-- **Встроенные в ядро (`jarvisd`).** Микрофон, локальный детектор слова «Джарвис», звук, кнопки, подсветка, связь с Алисой, память, веб-панель и **5 голосовых/AI-провайдеров** (`ChatGPT`, `OpenAI`, `Gemini`, `Grok`, `ElevenLabs`) — ничего лишнего запускать не нужно.
-- **Официальные плагины (10 пакетов).** Устанавливаются прямо из мастера или в **«Подключения → Плагины»**:
-  - **Lua 5.4 (лёгкие, в песочнице):** `weather` (Погода Open-Meteo без ключей), `currency` (Курсы ЦБ РФ / НБ РБ), `dice` (Монетка и кубик), `yandexhome` (Яндекс Умный дом).
-  - **Rust (отдельные процессы):** `homeassistant`, `smartlife` (Tuya LAN + облако), `xiaomi` (Mi Home), `youtube` (музыка и аккаунт), `vpn` (VLESS / REALITY / Vision), `training` (смена фразы и дообучение слова активации).
-- **Плагины сообщества и свои разработки.** Джарвис сам находит открытые плагины на GitHub по теме `yajarvis-plugin` (и категоризирует по `yajarvis-<категория>`), а также умеет ставить любой `.zip`-архив с ПК.
-
-**[Открыть подробную Вики по плагинам →](docs/PLUGINS.md)** · **[Спецификация для AI-агентов (`PLUGIN-AGENT.md`) →](docs/PLUGIN-AGENT.md)** *(каталог, манифест `plugin.json`, Lua API, Rust SDK, шаблоны CI и публикация в каталог GitHub)*
-
----
-
-## Панель управления
-
-Скриншоты ниже показывают пример настроенной колонки. Чистая установка стартует пустой: **город не задан, часовой пояс UTC, личные аккаунты и ключи не подключены**.
-
-<details open>
-<summary><strong>Подключения — голосовые сервисы, умный дом, музыка и плагины</strong></summary>
-
-![Подключения голосовых сервисов, умного дома и музыки](docs/screenshots/connections.png)
-
-</details>
-
-<details>
-<summary><strong>Ассистенты — движок, голос, модель и характер</strong></summary>
-
-![Выбор голосового движка и настройка ассистента](docs/screenshots/assistant.png)
-
-</details>
-
-<details>
-<summary><strong>Графики — процессор, память, температура и Wi-Fi</strong></summary>
-
-![Графики состояния колонки и нагрузки YaJarvis](docs/screenshots/charts.png)
-
-</details>
-
----
-
-## Колонки и автоопределение
-
-Установщик сам считывает идентификаторы платы, процессор, ARM ABI штатной Алисы и проверяет доступное место на флешке. Выбирать файл под конкретную модель вручную не нужно.
-
-| Семейство | Определяемые модели |
-| :--- | :--- |
-| **Лайт** | Станция Лайт, Станция Лайт 2 |
-| **Мини** | Станция Мини, Мини 2, Мини 3, Мини 3 Про |
-| **Миди** | Станция Миди / Cucumber |
-| **Другие Станции** | Станция 2, Станция 3, Стрит |
-| **Android-модели** | Станция Макс и Станция первого поколения определяются; установка пока не поддерживается |
-
-Полный голосовой тракт **проверен на Станции Лайт первого поколения**. Для остальных моделей статус экспериментальный — работа микрофона и подсветки зависит от прошивки. Если на колонке нет нужных компонентов, установщик остановится с понятным объяснением. Яндекс Хаб не поддерживается.
-
-<details>
-<summary><strong>Почему Миди и Станция 2 определяются отдельно</strong></summary>
-
-Внутреннее имя `station-midi` / `yandexmidi` в прошивках Яндекса относится к Станции 2, а розничная Станция Миди имеет кодовое имя `Cucumber`. Автоопределение учитывает это различие (подробности в [каталоге устройств](https://hackalice.me/devices/)).
-
-</details>
-
----
-
-## Обновления
-
-В панели откройте **Безопасность → Обновления → Проверить → Обновить**.
-
-Новая версия скачивается из [GitHub Releases](https://github.com/Georgvadis/Jarvis/releases), подбирается под архитектуру колонки (`arm64` / `armv7`) и проверяется по **SHA-256** перед записью. При неудачном запуске `jarvis-supervisor` автоматически откатывает предыдущий рабочий бинарник. Автоматическая ночная установка (с 03:00 до 06:00 в простое) включается отдельно в настройках обновлений.
-
-Для ручного обновления файлом загрузите в панель `jarvisd-arm64` или `jarvisd-armv7`.
+### OTA из `Georgvadis/Jarvis`
+- В ядре по умолчанию прописан репозиторий **`Georgvadis/Jarvis`** (`DEFAULT_REPO`), проверка обновлений включена, а ночная автоматическая перезапись прошивки (`update_auto`) и телеметрия (`no_stats`) **выключены**.
+- Проверить и установить обновление можно вручную в панели (**Безопасность → Обновления**) либо загрузкой файла `jarvisd-arm64` с ПК. Перед запуском `jarvis-supervisor` проверяет **SHA-256** и при сбое откатывает предыдущий рабочий бинарник.
+- Публикация нового релиза в GitHub автоматизирована через [`.github/workflows/release.yml`](.github/workflows/release.yml): достаточно создать заметки в `docs/releases/<версия>.md` и запушить тег `v<версия>`.
+- **Сброс пароля панели**: нажмите на колонке кнопки громкости `+ − + − + − + −` (8 раз подряд с паузой не дольше 1,5 с).
 
 ---
 
 ## Документация
 
-| Раздел | О чём внутри |
-| :--- | :--- |
-| **[FAQ и бесплатный старт](docs/FAQ.md)** | Бесплатные способы (Gemini Live, пулы ключей, ElevenLabs, OpenRouter `:free`), ChatGPT Plus vs Go/Free, получение ключей, VPN, удаление, сброс пароля |
-| **[Вики по плагинам](docs/PLUGINS.md)** · **[Для AI-агентов](docs/PLUGIN-AGENT.md)** | Каталог 10 официальных плагинов, манифест `plugin.json`, категории, разрешения, Lua 5.4 API, Rust SDK, шаблоны GitHub Actions и публикация в каталог |
-| **[Справочник Lua API](docs/LUA.md)** | Компактная шпаргалка по методам `jarvis.*`, `chat`, `transcribe`, `speak` и лимитам песочницы |
-| **[Rust-пакеты и модули](docs/NATIVE-PLUGINS.md)** · **[Официальные пакеты](docs/RUST-MODULES.md)** | Создание бинарных плагинов на `jarvis-plugin-sdk` и встраивание модулей в ядро |
-| **[Дообучение слова «Джарвис»](docs/WAKEWORD.md)** · **[Исследование активации](docs/WAKEWORD-RESEARCH.md)** | Сбор записей, разметка и дообучение моделей активации `OWWH`/`OWH2` и `JKWS1` под свой голос |
-| **[Приватность и данные](docs/PRIVACY.md)** · **[Сборка из исходников](docs/BUILD.md)** | Как хранятся ключи, куда уходит трафик, как собрать прошивку локально |
+- [Сборка из исходников](docs/BUILD.md)
+- [Вики по плагинам](docs/PLUGINS.md) · [Гайд для AI-агентов (`PLUGIN-AGENT.md`)](docs/PLUGIN-AGENT.md)
+- [Справочник Lua API](docs/LUA.md) · [Нативные Rust-плагины](docs/NATIVE-PLUGINS.md) · [Встроенные модули](docs/RUST-MODULES.md)
+- [Дообучение слова активации](docs/WAKEWORD.md) · [Приватность и данные](docs/PRIVACY.md)
 
 ---
 
-## Поддержать проект и авторы
+## Основа и лицензия
 
-Если проект пригодился, поставьте **Star** вверху страницы. О багах и идеях пишите в [Issues](https://github.com/Georgvadis/Jarvis/issues) — прикладывайте модель колонки, версию прошивки и шаги воспроизведения (предварительно убрав из логов личные токены и ключи). Форк основан на оригинальном [YaJarvis](https://github.com/newfpv/YaJarvis).
-
-### Contributors и авторы проектов
-
-Участники и авторы открытых проектов, на которых держится и опирается YaJarvis:
-
-<table>
-<tr>
-<td align="center" width="110"><a href="https://github.com/i7d3v3l0p3r"><img src="https://github.com/i7d3v3l0p3r.png?size=96" width="48" alt="i7d3v3l0p3r"><br><sub><b>i7d3v3l0p3r</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/dimap"><img src="https://github.com/dimap.png?size=96" width="48" alt="dimap"><br><sub><b>dimap</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/Marker284"><img src="https://github.com/Marker284.png?size=96" width="48" alt="Marker284"><br><sub><b>Marker284</b></sub></a></td>
-</tr>
-<tr>
-<td align="center" width="110"><a href="https://github.com/rison1337"><img src="https://github.com/rison1337.png?size=96" width="48" alt="rison1337"><br><sub><b>rison1337</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/amirilivice"><img src="https://github.com/amirilivice.png?size=96" width="48" alt="amirilivice"><br><sub><b>amirilivice</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/tangenx"><img src="https://github.com/tangenx.png?size=96" width="48" alt="tangenx"><br><sub><b>tangenx</b></sub></a></td>
-</tr>
-<tr>
-<td align="center" width="110"><a href="https://github.com/Morvex885"><img src="https://github.com/Morvex885.png?size=96" width="48" alt="Morvex885"><br><sub><b>Morvex885</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/nyakokitsu"><img src="https://github.com/nyakokitsu.png?size=96" width="48" alt="nyakokitsu"><br><sub><b>nyakokitsu</b></sub></a></td>
-<td align="center" width="110"><a href="https://github.com/dscripka"><img src="https://github.com/dscripka.png?size=96" width="48" alt="dscripka"><br><sub><b>dscripka</b></sub></a></td>
-</tr>
-</table>
-
-Спасибо **[i7d3v3l0p3r](https://github.com/i7d3v3l0p3r)** за перенос веб-панели и установщика на SvelteKit, доработки плагина «Обучение слова», установщика и профиля Firefox для VLESS REALITY.
-
-**Дизайн YaJarvis вдохновлён [yapanel](https://github.com/dimap/yapanel-web) автора [dimap](https://github.com/dimap).** Тёмная тема, тёплый оранжевый акцент, карточки состояния и подача графиков стали визуальным ориентиром для нашей панели. Спасибо dimap за открытый проект.
-
-Спасибо **[Marker284 и сообществу Yandex Station Extended](https://github.com/Marker284/yandex-station-extended)** за исследования Станций; **[rison1337](https://github.com/rison1337/Alisa-ChatGPT-voice-assistant)** и **[amirilivice](https://github.com/amirilivice/quasard)** — за проекты, послужившие отправной точкой работы с голосовым ассистентом на колонке.
-
-Полный список авторов, использованных подходов и библиотек — в **[CREDITS.md](CREDITS.md)**. Уведомления об авторстве и лицензии сторонних компонентов сохранены в **[THIRD_PARTY.md](THIRD_PARTY.md)** и **[LICENSES](LICENSES)**.
-
----
-
-[MIT License](LICENSE). Сторонние компоненты сохраняют свои лицензии.
-
-YaJarvis — независимый проект сообщества, не официальный продукт производителей колонки и используемых AI-сервисов.
+Проект распространяется по лицензии **[MIT License](LICENSE)** и основан на открытом коде оригинального **[YaJarvis](https://github.com/newfpv/YaJarvis)**. Благодарности авторам и сторонним библиотекам сохранены в [CREDITS.md](CREDITS.md), [THIRD_PARTY.md](THIRD_PARTY.md) и [LICENSES](LICENSES).
