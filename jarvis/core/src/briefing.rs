@@ -250,9 +250,44 @@ pub async fn run_briefing(engine: Arc<Engine>, extra_hint: &str, speak: bool) ->
     let (raw, clean) = build_briefing_pair(&engine, extra_hint).await;
     engine.journal.note("брифинг", "Персональная сводка", &clean);
     if speak {
+        // Если настроено 2+ персонажа — делаем мини-радиошоу: второй персонаж добавляет короткую реплику в своём характере
+        let s = engine.store.get();
+        let active_p = s.active_profile();
+        let cohost = if s.profiles.len() > 1 {
+            s.profiles.iter().find(|p| p.id != active_p.id).cloned()
+        } else {
+            None
+        };
+        let cohost_line = if let Some(ref cp) = cohost {
+            let sys = format!(
+                "{}\nТы соведущий утреннего/дневного радиошоу на умной колонке. Твой напарник ({}) только что зачитал сводку. \
+                 Добавь короткий живой комментарий или пожелание в своём характере (1–2 предложения, без markdown).",
+                s.prompt_text(&cp.prompt),
+                active_p.name
+            );
+            crate::llm::ask_with_pool(
+                &engine.host,
+                &s,
+                cp,
+                &sys,
+                &format!("Сводка напарника:\n{clean}"),
+                &engine.tools,
+                Vec::new(),
+                Some(&engine.gemini_pool),
+            )
+            .await
+            .ok()
+            .map(|t| crate::sfx::strip_tags(&t).trim().to_string())
+            .filter(|t| !t.is_empty())
+        } else {
+            None
+        };
         let eng = engine.clone();
         tokio::task::spawn_blocking(move || {
             eng.say_text(&raw);
+            if let (Some(cp), Some(line)) = (cohost, cohost_line) {
+                let _ = eng.say_aloud_opts(&line, Duration::from_secs(25), Some(&cp), false);
+            }
         });
     }
     Ok(clean)

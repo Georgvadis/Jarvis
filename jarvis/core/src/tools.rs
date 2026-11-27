@@ -77,6 +77,8 @@ pub struct Tools {
     pub dj: Option<Arc<crate::dj::AiDj>>,
     /// Пользовательские сценарии.
     pub scenarios: Option<Arc<crate::scenarios::ScenarioStore>>,
+    /// Курсы и голосовой репетитор.
+    pub courses: Option<Arc<crate::courses::CourseStore>>,
     /// Определение присутствия по Wi-Fi.
     pub presence: Option<Arc<crate::presence::Presence>>,
     session_ctx: Arc<std::sync::Mutex<Option<VoiceSessionContext>>>,
@@ -100,6 +102,123 @@ fn as_str(v: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
+}
+
+fn extract_temp_celsius(s: &str) -> Option<i32> {
+    let bytes = s.as_bytes();
+    for i in 0..bytes.len() {
+        let ch = bytes[i];
+        if ch == b'+' || ch == b'-' || ch.is_ascii_digit() {
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i && (bytes[i].is_ascii_digit() || j > i + 1) {
+                let rest = &s[j..];
+                if rest.starts_with('°') || rest.starts_with(" °") || rest.starts_with(" град") {
+                    if let Ok(val) = s[i..j].parse::<i32>() {
+                        return Some(val);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_duo_advice_question(text: &str) -> Option<String> {
+    let low = text.trim().to_lowercase();
+    for prefix in ["спроси обоих", "совет обоих", "что думаете оба", "мнение обоих", "обсудите вдвоём", "обсудите вдвоем"] {
+        if let Some(pos) = low.find(prefix) {
+            let tail = text[pos + prefix.len()..].trim_start_matches([' ', ',', ':', '—', '-']).trim();
+            if !tail.is_empty() {
+                return Some(tail.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_diary_entry(text: &str) -> Option<(&'static str, String)> {
+    let low = text.trim().to_lowercase();
+    for (prefix, tag) in [
+        ("запиши мысль", "Мысль"),
+        ("итог дня", "Итог дня"),
+        ("в дневник", "Дневник"),
+        ("запиши в дневник", "Дневник"),
+    ] {
+        if let Some(pos) = low.find(prefix) {
+            let tail = text[pos + prefix.len()..].trim_start_matches([' ', ',', ':', '—', '-']).trim();
+            if tail.chars().count() >= 4 {
+                return Some((tag, tail.to_string()));
+            }
+        }
+    }
+    None
+}
+
+async fn run_duo_advice(engine: Arc<crate::engine::Engine>, question: String) -> String {
+    let s = engine.store.get();
+    let p1 = s.active_profile();
+    let p2 = s.profiles.iter().find(|p| p.id != p1.id).cloned();
+    let sys1 = format!(
+        "{}\nХозяин просит совет сразу у тебя и твоего напарника. Дай свой короткий, чёткий взгляд в 2–3 предложения, без markdown.",
+        s.prompt_text(&p1.prompt)
+    );
+    let ans1 = crate::llm::ask_with_pool(
+        &engine.host,
+        &s,
+        &p1,
+        &sys1,
+        &question,
+        &engine.tools,
+        Vec::new(),
+        Some(&engine.gemini_pool),
+    )
+    .await
+    .unwrap_or_else(|_| "Интересный вопрос — давай подумаем.".into());
+    let clean1 = crate::sfx::strip_tags(&ans1).trim().to_string();
+
+    if let Some(p2) = p2 {
+        let sys2 = format!(
+            "{}\nХозяин попросил совет у вас обоих. Напарник ({}) уже ответил. Теперь добавь свой взгляд в своём характере (2–3 коротких предложения, без markdown).",
+            s.prompt_text(&p2.prompt),
+            p1.name
+        );
+        let q2 = format!("Вопрос хозяина: {question}\nОтвет {}: {clean1}", p1.name);
+        if let Ok(ans2) = crate::llm::ask_with_pool(
+            &engine.host,
+            &s,
+            &p2,
+            &sys2,
+            &q2,
+            &engine.tools,
+            Vec::new(),
+            Some(&engine.gemini_pool),
+        )
+        .await
+        {
+            let clean2 = crate::sfx::strip_tags(&ans2).trim().to_string();
+            if !clean2.is_empty() {
+                let eng = engine.clone();
+                tokio::spawn(async move {
+                    // Ждём, пока первый персонаж договорит свой ответ, затем вступает второй
+                    for _ in 0..120 {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        if !eng.player.playing() {
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let _ = eng.say_aloud_opts(&clean2, Duration::from_secs(35), Some(&p2), false);
+                    })
+                    .await;
+                });
+            }
+        }
+    }
+    clean1
 }
 
 fn clean_profile_query(query: &str) -> String {
@@ -210,6 +329,7 @@ impl Tools {
             reader: None,
             dj: None,
             scenarios: None,
+            courses: None,
             presence: None,
             session_ctx: Arc::default(),
         }
@@ -566,6 +686,102 @@ impl Tools {
                     .await
                     .unwrap_or_else(|e| e),
             );
+        }
+        // 1) «Спроси обоих ...» / «Совет обоих ...» — совет двух персонажей
+        if let Some(question) = extract_duo_advice_question(text)
+            && let Some(eng) = self.engine()
+        {
+            return Some(run_duo_advice(eng, question).await);
+        }
+        // 2) Голосовой дневник / Quick Capture → CyberNotes («Запиши мысль: ...» / «Итог дня: ...»)
+        if let Some((tag, body)) = extract_diary_entry(text)
+            && self.store.with(|s| s.cybernotes_enabled)
+        {
+            let now = self.store.now();
+            let title = format!("{}-{:02}-{:02} {}", now.year(), now.month() as u8, now.day(), tag);
+            let content = format!("# {title}\n\n{}\n", body);
+            return Some(
+                match save_cybernote(&self.host, &title, &content, &["дневник".into(), tag.to_lowercase()], "Дневник").await {
+                    Ok(path) => format!("Записала в дневник CyberNotes: {path}."),
+                    Err(e) => format!("Не удалось записать в дневник: {e}"),
+                },
+            );
+        }
+        // 3) «Что сейчас играет?» и «Сохрани трек в Telegram»
+        if let Some(eng) = self.engine() {
+            let low = text.trim().to_lowercase();
+            if low.contains("что сейчас играет") || low.contains("какой трек играет") || low.contains("что за песня играет") {
+                let st = eng.music.state();
+                if st.playing {
+                    let title = st.cur["title"].as_str().or(st.cur["Title"].as_str()).unwrap_or("").trim();
+                    let artist = st.cur["artist"].as_str().or(st.cur["Artist"].as_str()).unwrap_or("").trim();
+                    if !title.is_empty() {
+                        return Some(if !artist.is_empty() {
+                            format!("Сейчас играет «{title}» — {artist}.")
+                        } else {
+                            format!("Сейчас играет «{title}».")
+                        });
+                    }
+                }
+                return Some("Сейчас музыка не играет.".into());
+            }
+            if (low.contains("сохрани трек") || low.contains("скинь трек") || low.contains("отправь трек"))
+                && (low.contains("телеграм") || low.contains("telegram") || low.contains("сохрани трек"))
+            {
+                let st = eng.music.state();
+                let title = st.cur["title"].as_str().or(st.cur["Title"].as_str()).unwrap_or("").trim();
+                let artist = st.cur["artist"].as_str().or(st.cur["Artist"].as_str()).unwrap_or("").trim();
+                let vid = st.cur["id"].as_str().or(st.cur["ID"].as_str()).unwrap_or("").trim();
+                if !title.is_empty() {
+                    let link = if !vid.is_empty() {
+                        format!("\nhttps://music.youtube.com/watch?v={vid}")
+                    } else {
+                        String::new()
+                    };
+                    let msg = if !artist.is_empty() {
+                        format!("🎵 {artist} — {title}{link}")
+                    } else {
+                        format!("🎵 {title}{link}")
+                    };
+                    crate::telegram_bot::notify_telegram(&eng.host, &eng.proxy, &msg).await;
+                    return Some(format!("Отправила трек «{title}» в Telegram."));
+                }
+                return Some("Сейчас не играет никакой трек, чтобы сохранить.".into());
+            }
+        }
+        // 4) Голосовой запуск урока или блица по карточкам
+        if let (Some(courses), Some(modes), Some(eng)) = (&self.courses, &self.modes, self.engine())
+            && let Some((course, idx, is_blitz)) = courses.match_voice_start(text)
+        {
+            if is_blitz {
+                let prompt = crate::courses::CourseStore::build_blitz_prompt(&course);
+                let greeting = modes.activate(
+                    crate::modes::SpecialMode::Tutor {
+                        course_id: course.id.clone(),
+                        lesson_idx: idx,
+                        title: format!("Блиц: {}", course.title),
+                        prompt,
+                        bilingual: course.bilingual,
+                    },
+                    self.ambient.as_deref(),
+                );
+                return Some(greeting);
+            } else if let Ok((c, i)) = courses.mark_lesson_started(&course.id, idx) {
+                let prompt = crate::courses::CourseStore::build_tutor_prompt(&c, i);
+                let title = c.lessons[i].title.clone();
+                let greeting = modes.activate(
+                    crate::modes::SpecialMode::Tutor {
+                        course_id: c.id.clone(),
+                        lesson_idx: i,
+                        title,
+                        prompt,
+                        bilingual: c.bilingual,
+                    },
+                    self.ambient.as_deref(),
+                );
+                let _ = eng;
+                return Some(greeting);
+            }
         }
         if !self.has_token() || !self.use_ch("yandex") {
             return None;
@@ -1900,7 +2116,14 @@ impl Tools {
                 (c, t)
             });
             return match crate::briefing::fetch_weather_fast(&city, &tz).await {
-                Ok(w) => w,
+                Ok(w) => {
+                    if let Some(leds) = &self.leds
+                        && let Some(temp_c) = extract_temp_celsius(&w)
+                    {
+                        leds.flash_clock_temp(temp_c, self.store.is_night());
+                    }
+                    w
+                }
                 Err(e) => e,
             };
         }

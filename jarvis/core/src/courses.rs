@@ -123,6 +123,87 @@ impl CourseStore {
         self.courses.lock().unwrap().iter().find(|c| c.id == id).cloned()
     }
 
+    pub fn find_by_id_or_name(&self, query: &str) -> Option<Course> {
+        let g = self.courses.lock().unwrap();
+        if g.is_empty() {
+            return None;
+        }
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return g.first().cloned();
+        }
+        if let Some(c) = g.iter().find(|c| c.id.eq_ignore_ascii_case(&q)) {
+            return Some(c.clone());
+        }
+        if let Some(c) = g.iter().find(|c| {
+            c.title.to_lowercase().contains(&q) || c.subject.to_lowercase().contains(&q)
+        }) {
+            return Some(c.clone());
+        }
+        g.first().cloned()
+    }
+
+    pub fn match_voice_start(&self, text: &str) -> Option<(Course, usize, bool)> {
+        let low = text.trim().to_lowercase();
+        let is_blitz = low.contains("блиц") && (low.contains("карточ") || low.contains("слов") || low.contains("экзамен") || low.contains("курс"));
+        let is_lesson = low.contains("продолжим урок")
+            || low.contains("начнём урок")
+            || low.contains("начнем урок")
+            || low.contains("запусти урок")
+            || low.contains("урок английск")
+            || low.contains("урок японск")
+            || low.contains("урок немецк")
+            || low.contains("вернёмся к") && low.contains("урок")
+            || low.contains("вернемся к") && low.contains("урок");
+        if !is_blitz && !is_lesson {
+            return None;
+        }
+        let g = self.courses.lock().unwrap();
+        if g.is_empty() {
+            return None;
+        }
+        // Ищем курс по ключевому слову из речи или берём первый активный
+        let course = g
+            .iter()
+            .find(|c| {
+                let subj = c.subject.to_lowercase();
+                let title = c.title.to_lowercase();
+                subj.split_whitespace().any(|w| w.chars().count() >= 4 && low.contains(w))
+                    || title.split_whitespace().any(|w| w.chars().count() >= 4 && low.contains(w))
+            })
+            .or_else(|| g.first())?
+            .clone();
+        // Если назвали конкретный номер урока (1..20)
+        let explicit_num = low
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|s| s.parse::<usize>().ok())
+            .find(|&n| (1..=20).contains(&n));
+        let idx = explicit_num
+            .map(|n| (n - 1).min(course.lessons.len().saturating_sub(1)))
+            .unwrap_or(course.current_lesson);
+        Some((course, idx, is_blitz))
+    }
+
+    pub fn build_blitz_prompt(course: &Course) -> String {
+        let list: Vec<String> = course
+            .cards
+            .iter()
+            .take(15)
+            .map(|c| format!("«{}» = {}", c.front, c.back))
+            .collect();
+        let cards_text = if list.is_empty() {
+            format!("Придумывай короткие проверочные вопросы по курсу «{}» ({})", course.title, course.level)
+        } else {
+            format!("Карточки для проверки (спрашивай по одной вразброс): {}", list.join("; "))
+        };
+        format!(
+            "Ты проводишь быстрый 2-минутный блиц-экзамен по курсу «{}» ({}).\n\
+             {}\n\
+             Правила: задавай по одному короткому вопросу, проверяй ответ ученика, веди счёт (например «3 из 5»), вставляй [sfx:fanfare] за верный ответ и [sfx:buzz] за ошибку, мягко подсказывай правильный вариант. Отвечай в 1–2 коротких предложения, без markdown.",
+            course.title, course.level, cards_text
+        )
+    }
+
     pub fn create(&self, mut course: Course) -> Result<Course, String> {
         if course.title.trim().is_empty() {
             return Err("Укажите название курса".into());

@@ -152,6 +152,20 @@
     }
   }
 
+  async function startBlitz(course) {
+    if (busy) return;
+    busy = true;
+    try {
+      await api("POST", `/api/courses/${encodeURIComponent(course.id)}/blitz`, {});
+      await refreshActivity();
+      toast("Блиц-экзамен запущен на колонке");
+    } catch (err) {
+      toast(err.message, true);
+    } finally {
+      busy = false;
+    }
+  }
+
   async function deleteCourse(course) {
     if (busy) return;
     busy = true;
@@ -319,6 +333,9 @@
           {:else}
             <button type="button" class="btn sm primary" disabled={busy} onclick={() => startLesson(selected, selected.current_lesson)}>
               {@html icon("play", "solid")} Продолжить (урок {selected.current_lesson + 1})
+            </button>
+            <button type="button" class="btn sm ghost" disabled={busy} onclick={() => startBlitz(selected)} title="Быстрая проверка карточек голосом">
+              {@html icon("bolt")} Блиц
             </button>
             <button type="button" class="btn sm ghost" disabled={busy} onclick={() => exportTelegram(selected)} title="Отправить конспект в Telegram">
               {@html icon("send")} Конспект

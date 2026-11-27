@@ -617,7 +617,45 @@ pub async fn courses_finish(
         let md = crate::courses::CourseStore::build_summary_markdown(&updated, Some(lesson_idx));
         crate::telegram_bot::notify_telegram(&app.plugins, &app.proxy, &md).await;
     }
+    if app.store.with(|s| s.cybernotes_enabled) {
+        let md = crate::courses::CourseStore::build_summary_markdown(&updated, Some(lesson_idx));
+        let title = format!("Урок {} — {}", lesson_idx + 1, updated.lessons[lesson_idx].title);
+        let folder = format!("Обучение/{}", updated.title);
+        let _ = crate::tools::save_cybernote(&app.plugins, &title, &md, &["обучение".into(), updated.subject.to_lowercase()], &folder).await;
+    }
     reply(StatusCode::OK, json!({"ok": true, "course": updated, "courses": app.courses.list_json()["courses"]}))
+}
+
+pub async fn courses_blitz(
+    State(app): State<App>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_id_segment(&id) {
+        return super::bad("Неверный ID курса");
+    }
+    let Some(course) = app.courses.get(&id) else {
+        return super::bad("Курс не найден");
+    };
+    app.engine.tools.stop_for(&app.engine, "modes");
+    let prompt = crate::courses::CourseStore::build_blitz_prompt(&course);
+    let greeting = app.modes.activate(
+        crate::modes::SpecialMode::Tutor {
+            course_id: course.id.clone(),
+            lesson_idx: course.current_lesson,
+            title: format!("Блиц: {}", course.title),
+            prompt,
+            bilingual: course.bilingual,
+        },
+        Some(&app.ambient),
+    );
+    let eng = app.engine.clone();
+    tokio::task::spawn_blocking(move || {
+        eng.say_text(&greeting);
+        if eng.mic.online() {
+            eng.trigger("блиц по карточкам", 1.0);
+        }
+    });
+    reply(StatusCode::OK, json!({"ok": true, "mode": app.modes.status()}))
 }
 
 pub async fn courses_card(

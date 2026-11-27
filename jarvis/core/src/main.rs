@@ -375,6 +375,7 @@ async fn run(f: Flags, store: settings::Store) {
     tools.reader = Some(reader.clone());
     tools.dj = Some(dj.clone());
     tools.scenarios = Some(scenarios.clone());
+    tools.courses = Some(courses.clone());
     tools.presence = Some(presence.clone());
     {
         let ec = engine_cell.clone();

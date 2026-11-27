@@ -221,6 +221,7 @@ pub fn router(app: App) -> Router {
         .route("/api/courses/generate", post(talk::courses_generate))
         .route("/api/courses/{id}", delete(talk::courses_delete))
         .route("/api/courses/{id}/start", post(talk::courses_start))
+        .route("/api/courses/{id}/blitz", post(talk::courses_blitz))
         .route("/api/courses/{id}/finish", post(talk::courses_finish))
         .route("/api/courses/{id}/card", post(talk::courses_card))
         .route("/api/courses/{id}/export", post(talk::courses_export))

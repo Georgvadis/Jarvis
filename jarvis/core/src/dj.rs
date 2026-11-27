@@ -381,10 +381,16 @@ impl AiDj {
                 tokio::time::sleep(Duration::from_millis(120)).await;
             }
 
-            // Короткая живая подводка радиоведущего перед треком
+            // Короткая живая подводка радиоведущего перед треком (каждый 3-й трек — второй персонаж в гостях!)
             let s = engine.store.get();
-            let p = s.active_profile();
-            let base = s.prompt_text(&p.prompt);
+            let active_p = s.active_profile();
+            let guest_p = if count % 3 == 0 && s.profiles.len() > 1 {
+                s.profiles.iter().find(|pr| pr.id != active_p.id).cloned()
+            } else {
+                None
+            };
+            let host_p = guest_p.clone().unwrap_or_else(|| active_p.clone());
+            let base = s.prompt_text(&host_p.prompt);
             let dj_sys = format!(
                 "{base}\nТы ночной радио-DJ на станции «{cur_station}» (вайб: {cur_mood}). \
                 Скажи короткую, тёплую подводку к следующему треку: «{query}». \
@@ -392,6 +398,8 @@ impl AiDj {
                 Иностранные имена артистов и названия треков пиши по-русски кириллицей так, как они звучат на слух, чтобы диктор произнёс каждое слово чисто. {}",
                 if count == 1 {
                     "Коротко поприветствуй слушателя и представь первый трек."
+                } else if guest_p.is_some() {
+                    "Ты на секунду заглянул в эфир к напарнику — в своём характере представь следующую композицию."
                 } else {
                     "Плавно представь следующую композицию."
                 }
@@ -399,7 +407,7 @@ impl AiDj {
             let intro = crate::llm::ask_with_pool(
                 &engine.host,
                 &s,
-                &p,
+                &host_p,
                 &dj_sys,
                 "Объяви трек.",
                 &engine.tools,
@@ -416,8 +424,9 @@ impl AiDj {
             engine.journal.note("AI-DJ", &query, &clean_intro);
             let e_say = engine.clone();
             let speak_str = clean_intro.clone();
+            let override_p = guest_p;
             let _ = tokio::task::spawn_blocking(move || {
-                let _ = e_say.say_aloud(&speak_str, Duration::from_secs(45));
+                let _ = e_say.say_aloud_opts(&speak_str, Duration::from_secs(45), override_p.as_ref(), false);
             })
             .await;
 

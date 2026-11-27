@@ -31,7 +31,9 @@
     { id: "briefing", label: "Сводка дня" },
     { id: "alice", label: "Умный дом / Алиса" },
     { id: "led", label: "Подсветка / ночник" },
+    { id: "sunrise", label: "Умный рассвет" },
     { id: "mode", label: "Режим / игра" },
+    { id: "course", label: "Запустить урок курса" },
     { id: "focus", label: "Фокус-таймер" },
     { id: "timer", label: "Таймер / напоминание" },
     { id: "wait", label: "Пауза (сек)" },
@@ -114,6 +116,14 @@
         { kind: "led", value: "#ff9900", number: 45 },
         { kind: "ambient", value: "rain", number: 60 },
         { kind: "pc", value: "lock_screen", number: null },
+      ],
+    },
+    {
+      label: "Рассвет",
+      icon: "sun",
+      phrase: "утренний рассвет",
+      steps: [
+        { kind: "sunrise", value: "", number: 10 },
       ],
     },
     {
@@ -242,6 +252,8 @@
     else if (kind === "timer") { next.number = 5; next.value = "Таймер"; }
     else if (kind === "wait") next.number = 30;
     else if (kind === "led") { next.value = "#ff9900"; next.number = 30; }
+    else if (kind === "sunrise") next.number = 10;
+    else if (kind === "course") next.value = "";
     else if (kind === "mode") next.value = "rpg";
     else if (kind === "pc") next.value = "media_play_pause";
     steps = steps.map((s, i) => (i === idx ? next : s));
@@ -469,6 +481,10 @@
                   {#if step.value !== "off"}
                     <input type="number" min="1" max="480" aria-label="Минуты подсветки" bind:value={step.number} disabled={busy} placeholder="Мин">
                   {/if}
+                {:else if step.kind === "sunrise"}
+                  <input type="number" min="1" max="30" aria-label="Минуты рассвета" bind:value={step.number} disabled={busy} placeholder="Мин рассвета (1..30)">
+                {:else if step.kind === "course"}
+                  <input type="text" maxlength="100" aria-label="Название курса" bind:value={step.value} disabled={busy} placeholder="Название курса (или пусто = активный)">
                 {:else if step.kind === "mode"}
                   <select aria-label="Режим" bind:value={step.value} disabled={busy}>
                     {#each MODE_PRESETS as m (m.id)}

@@ -12,7 +12,7 @@ use std::{
 
 const VALID_KINDS: &[&str] = &[
     "stop_all", "volume", "ambient", "dj", "music", "focus", "timer", "wait",
-    "say", "ai", "briefing", "alice", "telegram", "led", "mode", "pc",
+    "say", "ai", "briefing", "alice", "telegram", "led", "mode", "sunrise", "course", "pc",
 ];
 const VALID_ICONS: &[&str] = &[
     "flame", "sparkles", "sun", "moon", "briefcase", "coffee", "bolt", "music",
@@ -383,6 +383,60 @@ impl ScenarioStore {
                             }
                         }
                     }
+                    "sunrise" => {
+                        // Плавный «рассвет»: кольцо разгорается от глубокого янтарного к тёплому белому
+                        let mins = step.number.unwrap_or(10).clamp(1, 30) as u64;
+                        let stages: [(&str, i64); 5] = [
+                            ("#ff4500", 12),
+                            ("#ff6b1a", 28),
+                            ("#ff9933", 48),
+                            ("#ffc266", 68),
+                            ("#ffe6b3", 88),
+                        ];
+                        let step_dur = Duration::from_secs((mins * 60 / stages.len() as u64).max(8));
+                        if let Some(amb) = &engine.tools.ambient {
+                            let _ = amb.start("ocean");
+                            amb.set_volume(20);
+                        }
+                        for (i, (hex, bright)) in stages.iter().enumerate() {
+                            engine.leds.show(crate::led::Mode::Listening, hex, *bright, step_dur + Duration::from_secs(5));
+                            if let Some(amb) = &engine.tools.ambient {
+                                amb.set_volume((20 + i * 12) as i64);
+                            }
+                            tokio::time::sleep(step_dur).await;
+                        }
+                        let _ = crate::briefing::run_briefing(engine.clone(), "Доброе утро! Сделай тёплую утреннюю сводку.", true).await;
+                    }
+                    "course" => {
+                        if let (Some(courses), Some(modes)) = (&engine.tools.courses, &engine.tools.modes) {
+                            let q = step.value.trim().to_lowercase();
+                            let found = courses.find_by_id_or_name(&q);
+                            if let Some(c) = found
+                                && let Ok((course, idx)) = courses.mark_lesson_started(&c.id, c.current_lesson)
+                            {
+                                let prompt = crate::courses::CourseStore::build_tutor_prompt(&course, idx);
+                                let title = course.lessons[idx].title.clone();
+                                let greeting = modes.activate(
+                                    crate::modes::SpecialMode::Tutor {
+                                        course_id: course.id.clone(),
+                                        lesson_idx: idx,
+                                        title,
+                                        prompt,
+                                        bilingual: course.bilingual,
+                                    },
+                                    engine.tools.ambient.as_deref(),
+                                );
+                                let e = engine.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    e.say_text(&greeting);
+                                    if e.mic.online() {
+                                        e.trigger("урок по сценарию", 1.0);
+                                    }
+                                })
+                                .await;
+                            }
+                        }
+                    }
                     "focus" => {
                         if let Some(focus) = &engine.tools.focus {
                             let mins = step.number.unwrap_or(25).clamp(1, 99) as u64;
@@ -466,6 +520,7 @@ fn normalize_scenario(
             "timer" => Some(s.number.unwrap_or(5).clamp(1, 1440)),
             "wait" => Some(s.number.unwrap_or(10).clamp(1, 7200)),
             "led" => Some(s.number.unwrap_or(30).clamp(0, 480)),
+            "sunrise" => Some(s.number.unwrap_or(10).clamp(1, 30)),
             "ambient" => s.number.filter(|&n| n > 0).map(|n| n.clamp(1, 720)),
             "pc" if val == "sleep_timer" => Some(s.number.unwrap_or(30).clamp(1, 720)),
             _ => s.number,

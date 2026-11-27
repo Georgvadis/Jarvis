@@ -579,6 +579,39 @@ impl Leds {
         });
     }
 
+    /// Кратко показать температуру (`-05°` / ` 18°`) на 7-сегментном табло на 4 сек (с сегментом `degree`).
+    pub fn flash_clock_temp(self: &Arc<Self>, temp_c: i32, night: bool) {
+        const DIGIT: [u8; 10] = [
+            0b0111111, 0b0000110, 0b1011011, 0b1001111, 0b1100110,
+            0b1101101, 0b1111101, 0b0000111, 0b1111111, 0b1101111,
+        ];
+        const MINUS: u8 = 0b1000000;
+        const DEG_C: u8 = 0b0111001; // C
+        let t = temp_c.clamp(-99, 99);
+        let abs = t.unsigned_abs() as usize;
+        let masks = if t < 0 {
+            if abs >= 10 {
+                [MINUS, DIGIT[abs / 10], DIGIT[abs % 10], DEG_C]
+            } else {
+                [0, MINUS, DIGIT[abs], DEG_C]
+            }
+        } else if abs >= 10 {
+            [0, DIGIT[abs / 10], DIGIT[abs % 10], DEG_C]
+        } else {
+            [0, 0, DIGIT[abs], DEG_C]
+        };
+        let bright = if night { 0.16 } else { 0.50 };
+        let gen_id = self.clock_flash_gen.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
+        self.write_clock_masks_ext(Some(masks), false, true, bright);
+        let me = Arc::clone(self);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(4));
+            if me.clock_flash_gen.load(Ordering::SeqCst) == gen_id {
+                me.write_clock_masks(None, false, 0.45);
+            }
+        });
+    }
+
     /// Запускает фоновый отрисовщик собственных часов на 7-сегментном табло, когда включена
     /// настройка `own_clock` (позволяет отключить штатные часы Алисы и полностью убрать мерцание).
     pub fn start_own_clock(self: &Arc<Self>, store: crate::settings::Store) {
@@ -662,6 +695,10 @@ impl Leds {
     }
 
     fn write_clock_masks(&self, masks: Option<[u8; 4]>, colon: bool, brightness_ratio: f64) {
+        self.write_clock_masks_ext(masks, colon, false, brightness_ratio);
+    }
+
+    fn write_clock_masks_ext(&self, masks: Option<[u8; 4]>, colon: bool, degree: bool, brightness_ratio: f64) {
         let mut st = self.inner.st.lock().unwrap();
         if st.clock.is_empty() || st.mode != Mode::Off {
             return;
@@ -683,6 +720,8 @@ impl Leds {
                 (m[pos] >> bit) & 1 == 1
             } else if c.color == "dh" || c.color == "dl" || c.color == "dm" {
                 colon
+            } else if c.color == "degree" {
+                degree
             } else {
                 false
             };
