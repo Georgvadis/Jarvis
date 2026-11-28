@@ -9,9 +9,9 @@
   <div class="char-n"><h2 id="cn-mt">Неофициальный плагин</h2><span class="st warn">{warning.name}</span></div>
   <button class="ib" type="button" data-close aria-label="Закрыть" onclick={close}>{@html icon("x")}</button>
 </div>
-<p>Этот плагин написал не автор YaJarvis, и никто его не проверял. Он будет работать на вашей колонке и сможет ходить в интернет,
+<p>Этот плагин написал не автор Jarvis, и никто его не проверял. Он будет работать на вашей колонке и сможет ходить в интернет,
   а нативный плагин — вообще всё, что может программа на колонке.</p>
-<p class="muted">Автор YaJarvis не отвечает за сторонние плагины и их последствия. Ставьте только то, чему доверяете: лучше — с открытым кодом и от известного автора.</p>
+<p class="muted">Автор Jarvis не отвечает за сторонние плагины и их последствия. Ставьте только то, чему доверяете: лучше — с открытым кодом и от известного автора.</p>
 <label class="sw"><input type="checkbox" id="pl-warn-ok" bind:checked={remember}><span class="tr"></span>Больше не показывать</label>
 <div class="row cn-foot">
   <span class="spacer"></span><button class="btn ghost" type="button" data-close onclick={close}>Отмена</button>

@@ -512,7 +512,7 @@ async fn handle_message(
     let lower = text.trim().to_lowercase();
 
     if cmd == "/start" || cmd == "/help" {
-        return "Управление колонкой YaJarvis:\n\
+        return "Управление колонкой Jarvis:\n\
 • /menu — интерактивный пульт с кнопками управления\n\
 • Любой текст или /say <текст> — озвучить на колонке (/say! — даже ночью)\n\
 • Голосовое сообщение — проиграть интеркомом (подпись /ask — спросить Джарвиса)\n\
@@ -968,7 +968,7 @@ fn format_status_text(engine: &Engine, ambient: &Ambient, focus: &Focus) -> Stri
         .map(|v| format!("{v}/10"))
         .unwrap_or_else(|| "—".into());
     let mut lines = vec![
-        format!("🎛 YaJarvis ({})", crate::version()),
+        format!("🎛 Jarvis ({})", crate::version()),
         format!("Ассистент: {}", p.name),
         format!("Громкость: {vol_str} · Микрофон: {mic}"),
         format!("Режим: {mode_st}{}", if engine.store.is_night() { " (ночь)" } else { "" }),

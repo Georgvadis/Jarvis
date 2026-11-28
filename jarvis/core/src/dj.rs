@@ -250,7 +250,7 @@ impl AiDj {
             g.active = true;
             g.generation = g.generation.wrapping_add(1);
             g.mood = mood.clone();
-            g.station = "Ночной эфир YaJarvis".into();
+            g.station = "Ночной эфир Jarvis".into();
             g.queue.clear();
             g.played.clear();
             g.generation
@@ -323,7 +323,7 @@ impl AiDj {
             )
         } else {
             (
-                "YaJarvis Chill Mix".into(),
+                "Jarvis Chill Mix".into(),
                 vec![
                     "Nujabes Aruarian Dance".into(),
                     "Tycho Awake".into(),

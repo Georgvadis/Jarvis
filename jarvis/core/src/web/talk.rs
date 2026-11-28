@@ -1491,7 +1491,7 @@ pub async fn podcasts_telegram(
         Ok(b) => b,
         Err(e) => return super::bad(format!("Ошибка чтения MP3: {e}")),
     };
-    let title = meta["title"].as_str().unwrap_or("Подкаст YaJarvis");
+    let title = meta["title"].as_str().unwrap_or("Подкаст Jarvis");
     match crate::telegram_bot::send_audio_telegram(&app.plugins, &app.proxy, &bytes, &format!("podcast-{id}.mp3"), title).await {
         Ok(()) => ok(),
         Err(e) => super::bad(e),
