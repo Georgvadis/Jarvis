@@ -4,8 +4,9 @@
 use jarvis_dsp::audio::{Limiter, OUT_RATE, Upsampler, gain_pcm};
 use std::{
     collections::HashMap,
+    io::{BufRead, BufReader, Write},
     path::PathBuf,
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -135,11 +136,109 @@ impl Mic {
 /// ×6,5 с ограничителем даёт речь около −8 дБ — чуть громче Алисы.
 const PLAY_GAIN: f64 = 6.5;
 
-struct Playing {
+/// Поиск 32-битного armhf-помощника `alsasink` (прямой вывод в `libasound.so.2` без форка `aplay`).
+pub(crate) fn alsasink_path() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let p = dir.join("alsasink");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let p = PathBuf::from("/data/opt/jarvisd/alsasink");
+    p.is_file().then_some(p)
+}
+
+/// Постоянный дочерний процесс `alsasink` (1 процесс на всё время работы — ноль fork+exec на фразы).
+struct AlsaSink {
     child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl AlsaSink {
+    fn spawn(path: &std::path::Path) -> std::io::Result<Self> {
+        let mut child = Command::new(path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("alsasink stdin"))?;
+        let stdout = BufReader::new(child.stdout.take().ok_or_else(|| std::io::Error::other("alsasink stdout"))?);
+        Ok(Self { child, stdin, stdout })
+    }
+
+    fn cmd_reply(&mut self, op: u8, arg: u32) -> std::io::Result<String> {
+        let mut hdr = [0u8; 5];
+        hdr[0] = op;
+        hdr[1..5].copy_from_slice(&arg.to_le_bytes());
+        self.stdin.write_all(&hdr)?;
+        self.stdin.flush()?;
+        let mut line = String::new();
+        let n = self.stdout.read_line(&mut line)?;
+        if n == 0 {
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "alsasink eof"));
+        }
+        Ok(line.trim().to_string())
+    }
+
+    fn open(&mut self, rate: usize) -> std::io::Result<()> {
+        let reply = self.cmd_reply(b'O', rate as u32)?;
+        if reply == "OK" {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("alsasink open: {reply}")))
+        }
+    }
+
+    fn write_chunk(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let mut hdr = [0u8; 5];
+        hdr[0] = b'W';
+        hdr[1..5].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+        self.stdin.write_all(&hdr)?;
+        self.stdin.write_all(bytes)?;
+        self.stdin.flush()
+    }
+
+    fn close_pcm(&mut self, drain: bool) -> std::io::Result<()> {
+        let op = if drain { b'D' } else { b'X' };
+        let reply = self.cmd_reply(op, 0)?;
+        if reply == "OK" {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!("alsasink close: {reply}")))
+        }
+    }
+}
+
+impl Drop for AlsaSink {
+    fn drop(&mut self) {
+        let _ = self.stdin.write_all(&[b'Q', 0, 0, 0, 0]);
+        let _ = self.stdin.flush();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+enum PlaybackBackend {
+    Aplay {
+        child: Child,
+        pump: Option<thread::JoinHandle<()>>,
+    },
+    Alsa {
+        stop_now: Arc<std::sync::atomic::AtomicBool>,
+        pump: Option<thread::JoinHandle<Option<AlsaSink>>>,
+    },
+}
+
+struct Playing {
+    backend: PlaybackBackend,
     queue: Option<SyncSender<Vec<u8>>>,
     queued: Arc<AtomicUsize>,
-    pump: Option<thread::JoinHandle<()>>,
     lim: Limiter,
     up: Option<Upsampler>,
     boost: f64,
@@ -147,9 +246,11 @@ struct Playing {
     up_buf: Vec<i16>,
 }
 
-/// Плеер: один ответ = один процесс aplay. Стоп — SIGINT: aplay сам корректно отцепляется от dmix.
+/// Плеер: прямой вывод через постоянный `alsasink` (`libasound.so.2`, без форка `aplay`)
+/// с автоматическим откатом на `aplay`, если помощник недоступен.
 pub struct Player {
     cur: Mutex<Option<Playing>>,
+    idle_sink: Mutex<Option<AlsaSink>>,
     aplay: String,
     /// 0..100, читается на каждом куске.
     pub volume: Box<dyn Fn() -> i64 + Send + Sync>,
@@ -160,7 +261,7 @@ pub struct Player {
 impl Player {
     pub fn new(volume: Box<dyn Fn() -> i64 + Send + Sync>, trim: Box<dyn Fn() -> f64 + Send + Sync>) -> Arc<Player> {
         let aplay = if std::path::Path::new("/usr/bin/aplay").exists() { "/usr/bin/aplay" } else { "aplay" };
-        Arc::new(Player { cur: Mutex::default(), aplay: aplay.into(), volume, trim })
+        Arc::new(Player { cur: Mutex::default(), idle_sink: Mutex::default(), aplay: aplay.into(), volume, trim })
     }
 
     pub fn playing(&self) -> bool {
@@ -176,10 +277,63 @@ impl Player {
             .is_some_and(|p| p.queued.load(Ordering::Relaxed) > 0)
     }
 
+    fn take_or_spawn_sink(&self) -> Option<AlsaSink> {
+        if let Some(sink) = self.idle_sink.lock().unwrap().take() {
+            return Some(sink);
+        }
+        let path = alsasink_path()?;
+        match AlsaSink::spawn(&path) {
+            Ok(sink) => {
+                log::info!("динамик: запущен прямой ALSA-вывод (alsasink)");
+                Some(sink)
+            }
+            Err(e) => {
+                log::warn!("динамик: alsasink не запустился ({e}), использую aplay");
+                None
+            }
+        }
+    }
+
     /// Открыть плеер; rate — частота PCM (моно s16le).
     pub fn start(&self, rate: usize) -> std::io::Result<()> {
         self.stop(true);
-        let (up, out) = if rate > 0 && rate < OUT_RATE && OUT_RATE % rate == 0 { (Some(Upsampler::new(OUT_RATE / rate)), OUT_RATE) } else { (None, rate) };
+        let (up, out) = if rate > 0 && rate < OUT_RATE && OUT_RATE % rate == 0 {
+            (Some(Upsampler::new(OUT_RATE / rate)), OUT_RATE)
+        } else {
+            (None, rate)
+        };
+        if let Some(mut sink) = self.take_or_spawn_sink() {
+            let open_res = sink.open(out).or_else(|e| {
+                log::warn!("динамик (alsasink): переоткрытие после сбоя ({e})");
+                let path = alsasink_path().ok_or_else(|| std::io::Error::other("no alsasink"))?;
+                sink = AlsaSink::spawn(&path)?;
+                sink.open(out)
+            });
+            if open_res.is_ok() {
+                let (tx, rx) = sync_channel::<Vec<u8>>(2048);
+                let queued = Arc::new(AtomicUsize::new(0));
+                let q_pump = queued.clone();
+                let stop_now = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let stop_flag = stop_now.clone();
+                let pump = thread::Builder::new()
+                    .name("alsa-pump".into())
+                    .stack_size(128 * 1024)
+                    .spawn(move || pump_alsasink(sink, rx, q_pump, out, stop_flag))?;
+                *self.cur.lock().unwrap() = Some(Playing {
+                    backend: PlaybackBackend::Alsa { stop_now, pump: Some(pump) },
+                    queue: Some(tx),
+                    queued,
+                    lim: Limiter::new(rate),
+                    up,
+                    boost: 1.0,
+                    shaped: Vec::new(),
+                    up_buf: Vec::new(),
+                });
+                return Ok(());
+            }
+            log::warn!("динамик: alsasink недоступен, откат на aplay");
+        }
+
         let mut child = Command::new(&self.aplay)
             .args(["-q", "-D", "default", "-t", "raw", "-f", "S16_LE", "-r", &out.to_string(), "-c", "1"])
             .stdin(Stdio::piped())
@@ -190,8 +344,20 @@ impl Player {
         let (tx, rx) = sync_channel::<Vec<u8>>(2048);
         let queued = Arc::new(AtomicUsize::new(0));
         let q_pump = queued.clone();
-        let pump = thread::Builder::new().name("aplay-pump".into()).stack_size(128 * 1024).spawn(move || pump(stdin, rx, q_pump, out))?;
-        *self.cur.lock().unwrap() = Some(Playing { child, queue: Some(tx), queued, pump: Some(pump), lim: Limiter::new(rate), up, boost: 1.0, shaped: Vec::new(), up_buf: Vec::new() });
+        let pump = thread::Builder::new()
+            .name("aplay-pump".into())
+            .stack_size(128 * 1024)
+            .spawn(move || pump(stdin, rx, q_pump, out))?;
+        *self.cur.lock().unwrap() = Some(Playing {
+            backend: PlaybackBackend::Aplay { child, pump: Some(pump) },
+            queue: Some(tx),
+            queued,
+            lim: Limiter::new(rate),
+            up,
+            boost: 1.0,
+            shaped: Vec::new(),
+            up_buf: Vec::new(),
+        });
         Ok(())
     }
 
@@ -272,34 +438,174 @@ impl Player {
     /// Доиграть буфер до конца, но мгновенно прерваться, если пришёл «Стоп» или перебили.
     pub fn finish_cancelable(&self, timeout: Duration, abort: impl Fn() -> bool) {
         let Some(mut p) = self.cur.lock().unwrap().take() else { return };
-        p.queue.take(); // закрыть очередь: насос допишет и закроет stdin
+        p.queue.take(); // закрыть очередь: насос допишет и закроет поток
         let t0 = Instant::now();
-        if let Some(h) = p.pump.take() {
-            while !h.is_finished() && t0.elapsed() < timeout {
+        match &mut p.backend {
+            PlaybackBackend::Aplay { child, pump } => {
+                if let Some(h) = pump.take() {
+                    while !h.is_finished() && t0.elapsed() < timeout {
+                        if abort() {
+                            interrupt(child);
+                            wait_child(child, Duration::from_secs(2));
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
                 if abort() {
-                    interrupt(&p.child);
-                    wait_child(&mut p.child, Duration::from_secs(2));
+                    interrupt(child);
+                    wait_child(child, Duration::from_secs(2));
                     return;
                 }
-                thread::sleep(Duration::from_millis(20));
+                wait_child(child, timeout.saturating_sub(t0.elapsed()).max(Duration::from_millis(200)));
+            }
+            PlaybackBackend::Alsa { stop_now, pump } => {
+                if let Some(h) = pump.take() {
+                    while !h.is_finished() && t0.elapsed() < timeout {
+                        if abort() {
+                            stop_now.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(15));
+                    }
+                    if !h.is_finished() {
+                        stop_now.store(true, Ordering::SeqCst);
+                        let deadline = Instant::now() + Duration::from_millis(800);
+                        while !h.is_finished() && Instant::now() < deadline {
+                            thread::sleep(Duration::from_millis(15));
+                        }
+                    }
+                    if h.is_finished()
+                        && let Ok(Some(sink)) = h.join()
+                    {
+                        *self.idle_sink.lock().unwrap() = Some(sink);
+                    }
+                }
             }
         }
-        if abort() {
-            interrupt(&p.child);
-            wait_child(&mut p.child, Duration::from_secs(2));
-            return;
-        }
-        wait_child(&mut p.child, timeout.saturating_sub(t0.elapsed()).max(Duration::from_millis(200)));
     }
 
     /// Оборвать сразу (now) или дать доиграть буфер ALSA.
     pub fn stop(&self, now: bool) {
         let Some(mut p) = self.cur.lock().unwrap().take() else { return };
         p.queue.take();
-        if now {
-            interrupt(&p.child);
+        match &mut p.backend {
+            PlaybackBackend::Aplay { child, .. } => {
+                if now {
+                    interrupt(child);
+                }
+                wait_child(child, Duration::from_secs(2));
+            }
+            PlaybackBackend::Alsa { stop_now, pump } => {
+                if now {
+                    stop_now.store(true, Ordering::SeqCst);
+                }
+                if let Some(h) = pump.take() {
+                    let deadline = Instant::now() + Duration::from_secs(2);
+                    while !h.is_finished() && Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(15));
+                    }
+                    if h.is_finished()
+                        && let Ok(Some(sink)) = h.join()
+                    {
+                        *self.idle_sink.lock().unwrap() = Some(sink);
+                    }
+                }
+            }
         }
-        wait_child(&mut p.child, Duration::from_secs(2));
+    }
+}
+
+fn pump_alsasink(
+    mut sink: AlsaSink,
+    rx: Receiver<Vec<u8>>,
+    queued: Arc<AtomicUsize>,
+    out_rate: usize,
+    stop_now: Arc<std::sync::atomic::AtomicBool>,
+) -> Option<AlsaSink> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let rate = out_rate.max(8_000);
+    let bytes_per_sec = (rate * 2) as f64;
+    let chunk_max = ((rate / 25) * 2).max(1600); // ~40 мс чанки, чтобы stop_now срабатывал мгновенно
+    let lead_in = vec![0u8; (rate / 12) * 2]; // ~83 мс тишины на прогрев dmix и усилителя
+    let keepalive = vec![0u8; (rate / 25) * 2];
+    let keepalive_dur = Duration::from_millis(40);
+
+    let write_sliced = |sink: &mut AlsaSink, data: &[u8], stop: &std::sync::atomic::AtomicBool| -> Result<bool, std::io::Error> {
+        for part in data.chunks(chunk_max) {
+            if stop.load(Ordering::SeqCst) {
+                return Ok(true);
+            }
+            sink.write_chunk(part)?;
+        }
+        Ok(false)
+    };
+
+    let first = match rx.recv() {
+        Ok(b) => b,
+        Err(_) => {
+            return sink.close_pcm(false).ok().map(|()| sink);
+        }
+    };
+    queued.fetch_sub(1, Ordering::Relaxed);
+    if stop_now.load(Ordering::SeqCst) {
+        return sink.close_pcm(false).ok().map(|()| sink);
+    }
+    let first_len = first.len();
+    match write_sliced(&mut sink, &lead_in, &stop_now).and_then(|aborted| {
+        if aborted { Ok(true) } else { write_sliced(&mut sink, &first, &stop_now) }
+    }) {
+        Ok(true) => return sink.close_pcm(false).ok().map(|()| sink),
+        Ok(false) => {}
+        Err(e) => {
+            log::warn!("динамик (alsasink): ошибка записи ({e})");
+            return None;
+        }
+    }
+
+    let now = Instant::now();
+    let mut buffered_until = now + Duration::from_secs_f64((lead_in.len() + first_len) as f64 / bytes_per_sec);
+    loop {
+        if stop_now.load(Ordering::SeqCst) {
+            return sink.close_pcm(false).ok().map(|()| sink);
+        }
+        let wait = buffered_until
+            .saturating_duration_since(Instant::now())
+            .saturating_sub(Duration::from_millis(55))
+            .clamp(Duration::from_millis(15), Duration::from_millis(60));
+        match rx.recv_timeout(wait) {
+            Ok(b) => {
+                queued.fetch_sub(1, Ordering::Relaxed);
+                let len = b.len();
+                match write_sliced(&mut sink, &b, &stop_now) {
+                    Ok(true) => return sink.close_pcm(false).ok().map(|()| sink),
+                    Ok(false) => {}
+                    Err(e) => {
+                        log::warn!("динамик (alsasink): ошибка записи ({e})");
+                        return None;
+                    }
+                }
+                let now = Instant::now();
+                buffered_until = buffered_until.max(now) + Duration::from_secs_f64(len as f64 / bytes_per_sec);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if stop_now.load(Ordering::SeqCst) {
+                    return sink.close_pcm(false).ok().map(|()| sink);
+                }
+                let now = Instant::now();
+                if buffered_until <= now + Duration::from_millis(80) {
+                    if let Err(e) = sink.write_chunk(&keepalive) {
+                        log::warn!("динамик (alsasink): ошибка keepalive ({e})");
+                        return None;
+                    }
+                    buffered_until = buffered_until.max(now) + keepalive_dur;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                let drain = !stop_now.load(Ordering::SeqCst);
+                return sink.close_pcm(drain).ok().map(|()| sink);
+            }
+        }
     }
 }
 

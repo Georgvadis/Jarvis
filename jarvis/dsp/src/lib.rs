@@ -21,6 +21,11 @@ pub trait Wake: Send {
     fn wake_tag(&self) -> Option<&str> {
         None
     }
+    /// Пограничное срабатывание чуть ниже порога (для 2-й ступени верификации на LAN-сервере):
+    /// возвращает `(optional_profile_tag, prob)` не чаще одного раза за cooldown.
+    fn take_borderline(&mut self) -> Option<(Option<String>, f32)> {
+        None
+    }
 }
 
 /// Классический радикс-2 FFT на месте (как в Go: те же операции в том же порядке).

@@ -225,6 +225,8 @@ pub struct Oww {
     pending: u32,
     peak: f32,
     pub last_wake_prob: f32,
+    borderline_cooldown: u32,
+    borderline: Option<f32>,
     fft: crate::Rfft,
     frame_buf: Vec<f32>,
     power: Vec<f32>,
@@ -398,6 +400,8 @@ impl Oww {
             pending: 0,
             peak: 0.0,
             last_wake_prob: 0.0,
+            borderline_cooldown: 0,
+            borderline: None,
             fft: crate::Rfft::new(NFFT),
             frame_buf: vec![0.0; NFFT],
             power: vec![0.0; BINS],
@@ -536,6 +540,9 @@ impl Oww {
 
     fn detect(&mut self, p: f32) -> bool {
         self.last_prob = p;
+        if self.borderline_cooldown > 0 {
+            self.borderline_cooldown -= 1;
+        }
         if self.cooldown > 0 {
             self.cooldown -= 1;
             return false;
@@ -546,15 +553,21 @@ impl Oww {
             if self.pending == 0 {
                 self.last_wake_prob = self.peak;
                 self.cooldown = WAKE_COOLDOWN_FRAMES;
+                self.borderline = None;
                 return true;
             }
             return false;
         }
         let s = (self.sensitivity)().clamp(1, 10) as usize;
-        if p >= effective_threshold(&self.thresholds, self.h, s) {
+        let thr = effective_threshold(&self.thresholds, self.h, s);
+        if p >= thr {
             // ждём 1 кадр (80 мс) на хвост/пик слова вместо 240 мс
             self.pending = 1;
             self.peak = p;
+            self.borderline = None;
+        } else if self.borderline_cooldown == 0 && p >= (thr - 0.14).max(0.32) {
+            self.borderline = Some(p);
+            self.borderline_cooldown = 18; // ~1.44 с
         }
         false
     }
@@ -571,6 +584,8 @@ impl crate::Wake for Oww {
         // сеть потоковая: сброс контекста давал ~2,5 с «глухоты»; подавляем лишь повторный оклик
         self.cooldown = RESET_COOLDOWN_FRAMES;
         self.pending = 0;
+        self.borderline = None;
+        self.borderline_cooldown = 14;
     }
 
     fn last_prob(&self) -> f32 {
@@ -579,6 +594,10 @@ impl crate::Wake for Oww {
 
     fn wake_prob(&self) -> f32 {
         self.last_wake_prob
+    }
+
+    fn take_borderline(&mut self) -> Option<(Option<String>, f32)> {
+        self.borderline.take().map(|p| (None, p))
     }
 }
 
@@ -721,6 +740,8 @@ pub struct OwwMulti {
     last_prob: f32,
     last_wake_prob: f32,
     last_hit_tag: Option<String>,
+    borderline_cooldown: u32,
+    borderline: Option<(Option<String>, f32)>,
 }
 
 impl OwwMulti {
@@ -757,6 +778,8 @@ impl OwwMulti {
             last_prob: 0.0,
             last_wake_prob: 0.0,
             last_hit_tag: None,
+            borderline_cooldown: 0,
+            borderline: None,
         })
     }
 
@@ -767,18 +790,28 @@ impl OwwMulti {
             self.ring.rotate_left(1);
             self.ring.last_mut().unwrap().copy_from_slice(e);
         }
+        if self.borderline_cooldown > 0 {
+            self.borderline_cooldown -= 1;
+        }
         let sens = (self.sensitivity)().clamp(1, 10) as usize;
         let mut max_p = 0.0f32;
         let mut best_hit: Option<(String, f32)> = None;
+        let mut best_border: Option<(String, f32)> = None;
         for head in &mut self.heads {
             let Some(p) = head.weights.score(&self.ring) else {
                 continue;
             };
             max_p = max_p.max(p);
+            let thr = head.thresholds(sens);
+            let can_border = head.cooldown == 0 && head.pending == 0;
             if head.detect(p, sens) {
                 let wp = head.last_wake_prob;
                 if best_hit.as_ref().is_none_or(|(_, prev)| wp > *prev) {
                     best_hit = Some((head.tag.clone(), wp));
+                }
+            } else if can_border && p < thr && p >= (thr - 0.14).max(0.32) {
+                if best_border.as_ref().is_none_or(|(_, prev)| p > *prev) {
+                    best_border = Some((head.tag.clone(), p));
                 }
             }
         }
@@ -786,8 +819,16 @@ impl OwwMulti {
         if let Some((tag, wp)) = best_hit {
             self.last_wake_prob = wp;
             self.last_hit_tag = Some(tag);
+            self.borderline = None;
             true
         } else {
+            if self.borderline_cooldown == 0
+                && let Some((tag, bp)) = best_border
+            {
+                let tag_opt = (!tag.is_empty()).then_some(tag);
+                self.borderline = Some((tag_opt, bp));
+                self.borderline_cooldown = 18;
+            }
             false
         }
     }
@@ -813,6 +854,8 @@ impl crate::Wake for OwwMulti {
             head.cooldown = RESET_COOLDOWN_FRAMES;
             head.pending = 0;
         }
+        self.borderline = None;
+        self.borderline_cooldown = 14;
     }
 
     fn last_prob(&self) -> f32 {
@@ -825,6 +868,10 @@ impl crate::Wake for OwwMulti {
 
     fn wake_tag(&self) -> Option<&str> {
         self.last_hit_tag.as_deref()
+    }
+
+    fn take_borderline(&mut self) -> Option<(Option<String>, f32)> {
+        self.borderline.take()
     }
 }
 

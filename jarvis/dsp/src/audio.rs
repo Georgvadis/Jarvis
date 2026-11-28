@@ -197,6 +197,106 @@ impl Limiter {
     }
 }
 
+/// Передискретизация моно PCM16 через полифазный / оконный sinc-FIR (окно Блэкмана):
+/// без «металлического» алиасинга линейной интерполяции на 16↔24 кГц и 48→24 кГц.
+pub fn resample_pcm_fir(samples: &[i16], from_rate: usize, to_rate: usize) -> Vec<i16> {
+    if from_rate == to_rate || from_rate == 0 || to_rate == 0 || samples.is_empty() {
+        return samples.to_vec();
+    }
+    let out_len = (samples.len() as u64 * to_rate as u64 / from_rate as u64) as usize;
+    if out_len == 0 {
+        return Vec::new();
+    }
+    fn gcd(mut a: usize, mut b: usize) -> usize {
+        while b != 0 {
+            let t = a % b;
+            a = b;
+            b = t;
+        }
+        a.max(1)
+    }
+
+    let g = gcd(from_rate, to_rate);
+    let up = to_rate / g;
+    let down = from_rate / g;
+    let cutoff = 0.45 * (to_rate as f64 / from_rate as f64).min(1.0);
+    let half_taps: isize = if down > up {
+        ((10.0 * down as f64 / up as f64).ceil() as isize).clamp(10, 32)
+    } else {
+        10
+    };
+    let radius = half_taps as f64;
+    let pi = std::f64::consts::PI;
+    let blackman_sinc = |x: f64| -> f64 {
+        let ax = x.abs();
+        if ax >= radius {
+            return 0.0;
+        }
+        let s = if ax < 1e-9 {
+            2.0 * cutoff
+        } else {
+            (2.0 * pi * cutoff * x).sin() / (pi * x)
+        };
+        let u = (x + radius) / (2.0 * radius);
+        let w = 0.42 - 0.5 * (2.0 * pi * u).cos() + 0.08 * (4.0 * pi * u).cos();
+        s * w
+    };
+
+    let n = samples.len() as isize;
+    let mut out = Vec::with_capacity(out_len);
+
+    // Для популярных рациональных отношений (16→24: 3/2, 48→24: 1/2, 24→16: 2/3, 44.1→24 и т.п.)
+    // предвычисляем таблицу фазовых ядер, чтобы не вызывать sin/cos на каждом сэмпле.
+    if up <= 32 {
+        let k_len = (2 * half_taps + 1) as usize;
+        let mut kernels: Vec<Vec<f32>> = Vec::with_capacity(up);
+        for p in 0..up {
+            let frac = p as f64 / up as f64;
+            let mut k = vec![0.0f64; k_len];
+            let mut sum = 0.0f64;
+            for (idx, m) in (-half_taps..=half_taps).enumerate() {
+                let v = blackman_sinc(m as f64 - frac);
+                k[idx] = v;
+                sum += v;
+            }
+            let inv = if sum.abs() > 1e-9 { 1.0 / sum } else { 1.0 };
+            kernels.push(k.into_iter().map(|v| (v * inv) as f32).collect());
+        }
+        for i in 0..out_len {
+            let num = i as u64 * down as u64;
+            let center = (num / up as u64) as isize;
+            let phase = (num % up as u64) as usize;
+            let kernel = &kernels[phase];
+            let mut acc = 0.0f32;
+            for (idx, &w) in kernel.iter().enumerate() {
+                let s_idx = (center + idx as isize - half_taps).clamp(0, n - 1) as usize;
+                acc += w * f32::from(samples[s_idx]);
+            }
+            out.push(acc.round().clamp(-32767.0, 32767.0) as i16);
+        }
+        return out;
+    }
+
+    // Произвольное отношение частот (например 22050→24000): оконный sinc на лету
+    let ratio = from_rate as f64 / to_rate as f64;
+    for i in 0..out_len {
+        let pos = i as f64 * ratio;
+        let center = pos.floor() as isize;
+        let frac = pos - center as f64;
+        let mut acc = 0.0f64;
+        let mut sum = 0.0f64;
+        for m in -half_taps..=half_taps {
+            let w = blackman_sinc(m as f64 - frac);
+            let s_idx = (center + m).clamp(0, n - 1) as usize;
+            acc += w * f64::from(samples[s_idx]);
+            sum += w;
+        }
+        let val = if sum.abs() > 1e-9 { acc / sum } else { acc };
+        out.push(val.round().clamp(-32767.0, 32767.0) as i16);
+    }
+    out
+}
+
 /// WAV моно s16le.
 pub fn wav(pcm: &[i16], rate: u32) -> Vec<u8> {
     let mut b = Vec::with_capacity(44 + 2 * pcm.len());
@@ -253,5 +353,26 @@ mod tests {
         let max_abs = steady.iter().map(|v| v.unsigned_abs()).max().unwrap();
         assert!(max_abs <= 29100, "unexpected clipping peak: {max_abs}");
         assert!(max_abs >= 27000, "limiter over-attenuated signal: {max_abs}");
+    }
+
+    #[test]
+    fn resample_pcm_fir_keeps_dc_length_and_suppresses_aliasing() {
+        let dc16 = vec![2000i16; 1600];
+        let r24 = resample_pcm_fir(&dc16, 16000, 24000);
+        assert_eq!(r24.len(), 2400);
+        assert!(r24[60..2340].iter().all(|&v| (v - 2000).abs() <= 2));
+
+        let dc48 = vec![-1500i16; 4800];
+        let r48_24 = resample_pcm_fir(&dc48, 48000, 24000);
+        assert_eq!(r48_24.len(), 2400);
+        assert!(r48_24[60..2340].iter().all(|&v| (v + 1500).abs() <= 2));
+
+        // Анти-алиасинг: тон 18 кГц при 48 кГц выше Найквиста 24 кГц (12 кГц) должен подавляться > 30 дБ
+        let hi: Vec<i16> = (0..4800)
+            .map(|i| ((i as f64 * std::f64::consts::TAU * 18000.0 / 48000.0).sin() * 20000.0) as i16)
+            .collect();
+        let down = resample_pcm_fir(&hi, 48000, 24000);
+        let peak_alias = down[100..2300].iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+        assert!(peak_alias < 400, "FIR failed to suppress out-of-band alias: peak={peak_alias}");
     }
 }

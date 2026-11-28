@@ -32,8 +32,8 @@ export async function reload(signal) {
   speaker.set(state);
 }
 
-export async function readJournal(signal) {
-  const data = await api("GET", "/api/journal", undefined, { signal });
+export function applyJournal(data) {
+  if (!data || !S) return false;
   if (data.version && S.version && data.version !== S.version) {
     location.reload();
     return false;
@@ -48,6 +48,11 @@ export async function readJournal(signal) {
   S.sys = data.sys || {};
   speaker.set(S);
   return true;
+}
+
+export async function readJournal(signal) {
+  const data = await api("GET", "/api/journal", undefined, { signal });
+  return applyJournal(data);
 }
 
 // Что сейчас делает колонка: вид кольца, заголовок и пояснение.

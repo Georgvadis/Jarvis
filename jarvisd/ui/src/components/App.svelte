@@ -6,9 +6,9 @@
   import { api, dirty, setDirty, toast } from "#helpers/core.js";
   import { legacyHashPath } from "#helpers/paths.js";
   import { setPanel } from "#state/panelContext.js";
-  import { S, access, readJournal, readOrb, readSidebar, reload, routeRequests, showGate, speaker } from "#state/panelState.js";
+  import { S, access, applyJournal, readJournal, readOrb, readSidebar, reload, routeRequests, showGate, speaker } from "#state/panelState.js";
   import { musicData, refreshVolume } from "#state/player.js";
-  import { resetActivityPolling, startActivityPolling } from "#state/activity.js";
+  import { applyActivity, resetActivityPolling, setActivitySseActive, startActivityPolling } from "#state/activity.js";
   import { initTheme } from "#state/theme.js";
   import { closeWizard, wizardRequest, wizOpen } from "#state/wizard.js";
 
@@ -26,6 +26,9 @@
   let session;
   let pollTimer;
   let pollBusy = false;
+  let eventSource = null;
+  let sseHealthy = false;
+  let sseRetryTimer = null;
 
   setPanel({ poll, onPoll });
 
@@ -72,7 +75,11 @@
     const legacyPath = location.pathname === "/" ? legacyHashPath(location.hash) : "";
     if (legacyPath) void goto(legacyPath, { replaceState: true });
     const onVis = () => {
-      if (!document.hidden && session) {
+      if (!session) return;
+      if (document.hidden) {
+        closeEventStream();
+      } else {
+        openEventStream();
         clearTimeout(pollTimer);
         void poll();
       }
@@ -90,6 +97,7 @@
       session = new AbortController();
       orb = readOrb();
       if (!S.settings.onboarded) wizOpen(0);
+      openEventStream();
       void poll();
       startActivityPolling();
     });
@@ -140,7 +148,63 @@
     if (!lifetime.signal.aborted) showGate(false);
   }
 
+  function closeEventStream() {
+    clearTimeout(sseRetryTimer);
+    sseRetryTimer = null;
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    sseHealthy = false;
+    setActivitySseActive(false);
+  }
+
+  function openEventStream() {
+    if (!session || document.hidden || typeof EventSource === "undefined") return;
+    if (eventSource) return;
+    try {
+      const es = new EventSource("/api/events");
+      eventSource = es;
+      es.onopen = () => {
+        if (eventSource !== es) return;
+        sseHealthy = true;
+        setActivitySseActive(true);
+      };
+      es.addEventListener("journal", (ev) => {
+        if (!session || eventSource !== es) return;
+        try {
+          const data = JSON.parse(ev.data);
+          if (!applyJournal(data)) return;
+          orb = readOrb();
+          refreshVolume();
+          void pageRefresh?.();
+        } catch { /* ignore malformed event */ }
+      });
+      es.addEventListener("activity", (ev) => {
+        if (!session || eventSource !== es) return;
+        try {
+          applyActivity(JSON.parse(ev.data));
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("music", () => {
+        if (!session || eventSource !== es) return;
+        void musicData();
+      });
+      es.onerror = () => {
+        if (eventSource !== es) return;
+        closeEventStream();
+        if (session && !document.hidden) {
+          schedulePoll(1200);
+          sseRetryTimer = setTimeout(() => openEventStream(), 6000);
+        }
+      };
+    } catch {
+      closeEventStream();
+    }
+  }
+
   function stopPolling() {
+    closeEventStream();
     session?.abort();
     session = undefined;
     pollBusy = false;
@@ -164,6 +228,12 @@
     if (!session || pollBusy) return;
     if (document.hidden) {
       schedulePoll(5000);
+      return;
+    }
+    if (sseHealthy) {
+      // Пока SSE активен, фоново синхронизируем только прогресс плеера (редко)
+      void musicData();
+      schedulePoll(12000);
       return;
     }
     pollBusy = true;

@@ -196,22 +196,130 @@ pub async fn stop(State(app): State<App>) -> Response {
     ok()
 }
 
+pub async fn activity_payload(app: &App) -> serde_json::Value {
+    json!({
+        "focus": app.focus.status(),
+        "modes": app.modes.status(),
+        "games": app.games.status(),
+        "dj": app.dj.status(),
+        "reader": app.reader.status(),
+        "ambient": app.ambient.status(),
+        "debate_active": crate::debate::is_active(),
+        "presence": app.presence.status(&app.store),
+        "timers": app.scheduler.active_timers_json(),
+        "custom_scenarios": app.scenarios.custom_summary_json(),
+    })
+}
+
 pub async fn activity(State(app): State<App>) -> Response {
-    reply(
-        StatusCode::OK,
-        json!({
-            "focus": app.focus.status(),
-            "modes": app.modes.status(),
-            "games": app.games.status(),
-            "dj": app.dj.status(),
-            "reader": app.reader.status(),
-            "ambient": app.ambient.status(),
-            "debate_active": crate::debate::is_active(),
-            "presence": app.presence.status(&app.store),
-            "timers": app.scheduler.active_timers_json(),
-            "custom_scenarios": app.scenarios.custom_summary_json(),
-        }),
-    )
+    reply(StatusCode::OK, activity_payload(&app).await)
+}
+
+/// Поток Server-Sent Events (`/api/events`): мгновенно пушит изменения состояния разговора,
+/// журнала, активностей и музыки без постоянного 2–4 с опроса панели.
+pub async fn events(
+    State(app): State<App>,
+) -> axum::response::sse::Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use std::time::{Duration, Instant};
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(32);
+    tokio::spawn(async move {
+        let mut last_journal_sig = String::new();
+        let mut last_activity_sig = String::new();
+        let mut last_music_sig = String::new();
+        let mut last_sys_push = Instant::now() - Duration::from_secs(60);
+        let mut last_vol_read = Instant::now() - Duration::from_secs(60);
+        let mut cached_vol: i64 = -1;
+
+        loop {
+            if tx.is_closed() {
+                break;
+            }
+            if last_vol_read.elapsed() >= Duration::from_secs(3) {
+                cached_vol = tokio::task::spawn_blocking(super::vol).await.unwrap_or(cached_vol);
+                last_vol_read = Instant::now();
+            }
+            let e = &app.engine;
+            let talking = e.talking();
+            let phase = if talking { e.leds.phase().name() } else { "" };
+            let mic = e.mic.online();
+            let items = e.journal.items(50);
+            let items_sig = items
+                .last()
+                .map(|it| format!("{}:{}:{}:{}:{}:{}", items.len(), it.id, it.ts, it.text.len(), it.answer.len(), it.error.len()))
+                .unwrap_or_else(|| "0".into());
+            let j_sig = format!("{mic}|{talking}|{phase}|{cached_vol}|{items_sig}");
+            let need_sys = last_sys_push.elapsed() >= Duration::from_secs(6);
+            if j_sig != last_journal_sig || need_sys {
+                last_journal_sig = j_sig;
+                last_sys_push = Instant::now();
+                let sys = app.telemetry.live_system().await;
+                let payload = json!({
+                    "items": items,
+                    "mic": mic,
+                    "mic_why": e.mic.why(),
+                    "talking": talking,
+                    "phase": phase,
+                    "sys": sys,
+                    "volume": cached_vol,
+                    "version": crate::version(),
+                });
+                if tx.send(Event::default().event("journal").data(payload.to_string())).await.is_err() {
+                    break;
+                }
+            }
+
+            let act_val = activity_payload(&app).await;
+            // Стабильная подпись без секундных тиков (их клиент считает локально)
+            let act_sig = format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}",
+                act_val["focus"]["running"],
+                act_val["modes"]["mode"],
+                act_val["games"]["active_game"],
+                act_val["dj"]["active"],
+                act_val["dj"]["current_title"],
+                act_val["reader"]["running"],
+                act_val["ambient"]["active"],
+                act_val["timers"].as_array().map_or(0, Vec::len),
+            );
+            if act_sig != last_activity_sig {
+                last_activity_sig = act_sig;
+                if tx.send(Event::default().event("activity").data(act_val.to_string())).await.is_err() {
+                    break;
+                }
+            }
+
+            let ms = app.engine.music.state();
+            let cur_id = ms.cur["ID"].as_str().or_else(|| ms.cur["id"].as_str()).unwrap_or("");
+            let cur_title = ms.cur["Title"].as_str().or_else(|| ms.cur["title"].as_str()).unwrap_or("");
+            let m_sig = format!("{}|{}|{}|{}", ms.playing, ms.paused, cur_id, cur_title);
+            if m_sig != last_music_sig {
+                last_music_sig = m_sig;
+                let m_payload = json!({
+                    "playing": ms.playing,
+                    "paused": ms.paused,
+                    "id": cur_id,
+                    "title": cur_title,
+                });
+                if tx.send(Event::default().event("music").data(m_payload.to_string())).await.is_err() {
+                    break;
+                }
+            }
+
+            let step = if talking { Duration::from_millis(250) } else { Duration::from_millis(600) };
+            tokio::time::sleep(step).await;
+        }
+    });
+
+    let stream = futures_util::stream::poll_fn(move |cx| {
+        match rx.poll_recv(cx) {
+            std::task::Poll::Ready(Some(ev)) => std::task::Poll::Ready(Some(Ok(ev))),
+            std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping"))
 }
 
 pub async fn scenario_run(State(app): State<App>, axum::Json(value): axum::Json<serde_json::Value>) -> Response {

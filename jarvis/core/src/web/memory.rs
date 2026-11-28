@@ -74,7 +74,12 @@ pub async fn month(State(app): State<App>, b: Bytes) -> Response {
 pub async fn archive(State(app): State<App>, Query(q): Query<HashMap<String, String>>) -> Response {
     let Some(m) = mem(&app) else { return reply(StatusCode::OK, json!({"turns": []})) };
     let num = |k: &str| q.get(k).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
-    let (turns, more) = m.archive_page(&clip(q.get("q").map_or("", String::as_str), 200), num("before"), num("limit").max(0) as usize);
+    let q_str = clip(q.get("q").map_or("", String::as_str), 200);
+    let before = num("before");
+    let limit = num("limit").max(0) as usize;
+    let (turns, more) = tokio::task::spawn_blocking(move || m.archive_page(&q_str, before, limit))
+        .await
+        .unwrap_or_default();
     reply(StatusCode::OK, json!({"turns": turns, "more": more}))
 }
 
@@ -88,7 +93,10 @@ pub async fn forget(State(app): State<App>, b: Bytes) -> Response {
     if req.n.is_empty() || req.n.len() > 500 {
         return bad("какие реплики удалить?");
     }
-    let n = m.delete_turns(&req.n);
+    let ids = req.n;
+    let n = tokio::task::spawn_blocking(move || m.delete_turns(&ids))
+        .await
+        .unwrap_or(0);
     log::info!("память: из архива удалено реплик в панели: {n}");
     reply(StatusCode::OK, json!({"ok": true, "deleted": n}))
 }

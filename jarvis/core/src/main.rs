@@ -26,6 +26,7 @@ mod speakervol;
 mod cmdspot;
 mod counter;
 mod memory;
+mod msgpack;
 mod music;
 mod engine;
 mod fastcmd;

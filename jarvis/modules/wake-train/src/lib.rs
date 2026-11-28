@@ -86,18 +86,60 @@ impl Windows {
     }
 }
 
-/// Two ReLU units implement the linear discriminant using the regular OWWH format.
-/// The always-on detector only keeps a short feature history and two weight vectors.
-fn head(seq: usize, weights: &[f32], bias: f32, thresholds: [f32; 10]) -> Vec<u8> {
+const MLP_HIDDEN: usize = 16;
+
+struct MlpHead {
+    h: usize,
+    inp: usize,
+    w1: Vec<f32>, // [h][inp]
+    b1: Vec<f32>, // [h]
+    w2: Vec<f32>, // [h][h] (identity passthrough keeps ReLU activations clean & fast)
+    b2: Vec<f32>, // [h]
+    w3: Vec<f32>, // [h]
+    b3: f32,
+}
+
+impl MlpHead {
+    fn score(&self, x: &[f32]) -> f32 {
+        let mut acc = self.b3;
+        for j in 0..self.h {
+            let wj = &self.w1[j * self.inp..(j + 1) * self.inp];
+            let a = (self.b1[j] + dot(x, wj)).max(0.0);
+            acc += a * self.w3[j];
+        }
+        acc
+    }
+
+    fn to_owwh(&self, seq: usize, thresholds: [f32; 10]) -> Vec<u8> {
+        let mut bytes = b"OWWH".to_vec();
+        for value in [seq as u32, EMB as u32, self.h as u32] {
+            bytes.extend(value.to_le_bytes());
+        }
+        for value in thresholds
+            .into_iter()
+            .chain(self.w1.iter().copied())
+            .chain(self.b1.iter().copied())
+            .chain(self.w2.iter().copied())
+            .chain(self.b2.iter().copied())
+            .chain(self.w3.iter().copied())
+            .chain(std::iter::once(self.b3))
+        {
+            bytes.extend(value.to_le_bytes());
+        }
+        bytes
+    }
+}
+
+/// Blank 2-unit OWWH header used only to initialize the feature extractor.
+fn blank_head(seq: usize, length: usize) -> Vec<u8> {
     let mut bytes = b"OWWH".to_vec();
     for value in [seq as u32, EMB as u32, 2] {
         bytes.extend(value.to_le_bytes());
     }
-    for value in thresholds
+    for value in [0.5f32; 10]
         .into_iter()
-        .chain(weights.iter().copied())
-        .chain(weights.iter().map(|w| -*w))
-        .chain([bias, -bias, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0])
+        .chain(std::iter::repeat_n(0.0, length * 2))
+        .chain([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, -1.0, 0.0])
     {
         bytes.extend(value.to_le_bytes());
     }
@@ -109,13 +151,16 @@ fn sigmoid(logit: f32) -> f32 {
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(&a, &b)| a * b).sum()
+    jarvis_dsp::dot(a, b)
 }
 
-fn fit(positives: &[&[f32]], negatives: &[&[f32]], length: usize) -> (Vec<f32>, f32) {
+/// Trains a regularized 2-layer ReLU MLP (h=16) in the standard OWWH format:
+/// units 0..2 are warm-started with the optimal L2 linear discriminant (guaranteeing >= linear quality),
+/// while units 2..16 learn nonlinear acoustic prototypes with hard-negative emphasis and L2 decay.
+fn fit_mlp(positives: &[&[f32]], negatives: &[&[f32]], length: usize) -> MlpHead {
     let classes = [positives, negatives];
-    let mut mean = vec![0.0; length];
-    let mut spread = vec![0.0; length];
+    let mut mean = vec![0.0f32; length];
+    let mut spread = vec![0.0f32; length];
     for group in classes {
         let factor = 0.5 / group.len() as f32;
         for row in group {
@@ -132,59 +177,168 @@ fn fit(positives: &[&[f32]], negatives: &[&[f32]], length: usize) -> (Vec<f32>, 
             }
         }
     }
-    // Class balancing keeps the many negative windows from drowning out the utterances.
-    let rows: Vec<_> = classes
+    let inv_std: Vec<f32> = spread.iter().map(|&s| 1.0 / (s + 0.06).sqrt()).collect();
+    let rows: Vec<(Vec<f32>, f32, f32)> = classes
         .into_iter()
         .enumerate()
         .flat_map(|(class, group)| {
             let mean = &mean;
-            let spread = &spread;
+            let inv_std = &inv_std;
             group.iter().map(move |row| {
-                let normalized: Vec<_> = row
+                let normalized: Vec<f32> = row
                     .iter()
                     .zip(mean)
-                    .zip(spread)
-                    .map(|((&v, &m), &s)| (v - m) / (s + 0.06).sqrt())
+                    .zip(inv_std)
+                    .map(|((&v, &m), &is)| (v - m) * is)
                     .collect();
-                (
-                    normalized,
-                    (class == 0) as u8 as f32,
-                    0.5 / group.len() as f32,
-                )
+                (normalized, (class == 0) as u8 as f32, 0.5 / group.len() as f32)
             })
         })
         .collect();
-    let mut weights = vec![0.0; length];
-    let mut gradient = vec![0.0; length];
-    let mut bias = 0.0;
-    // Normalize the step by typical squared feature-vector length.
-    let norm = rows
-        .iter()
-        .map(|(row, _, factor)| factor * dot(row, row))
-        .sum::<f32>();
+
+    // Stage 1: strong L2-regularized linear discriminant (warm start for units 0 & 1)
+    let mut lin_w = vec![0.0f32; length];
+    let mut lin_g = vec![0.0f32; length];
+    let mut lin_b = 0.0f32;
+    let norm = rows.iter().map(|(r, _, f)| f * dot(r, r)).sum::<f32>();
     let step = 3.0 / norm.max(1.0);
-    for _ in 0..220 {
-        for (d, w) in gradient.iter_mut().zip(&weights) {
+    for _ in 0..160 {
+        for (d, w) in lin_g.iter_mut().zip(&lin_w) {
             *d = 0.25 * w;
         }
-        let mut offset = 0.0;
+        let mut offset = 0.0f32;
         for (row, target, factor) in &rows {
-            let error = (sigmoid(dot(&weights, row) + bias) - target) * factor;
+            let error = (sigmoid(dot(&lin_w, row) + lin_b) - target) * factor;
             offset += error;
-            for (d, v) in gradient.iter_mut().zip(row) {
+            for (d, &v) in lin_g.iter_mut().zip(row) {
                 *d += error * v;
             }
         }
-        for (w, d) in weights.iter_mut().zip(&gradient) {
+        for (w, &d) in lin_w.iter_mut().zip(&lin_g) {
             *w -= step * d;
         }
-        bias -= offset * 0.45;
+        lin_b -= offset * 0.45;
     }
-    for (w, variance) in weights.iter_mut().zip(spread) {
-        *w /= (variance + 0.06).sqrt();
+
+    // Stage 2: h=16 ReLU MLP initialized around the linear backbone + diverse positive prototypes
+    let h = MLP_HIDDEN;
+    let mut w1 = vec![0.0f32; h * length];
+    let mut b1 = vec![0.0f32; h];
+    let mut w3 = vec![0.0f32; h];
+    let mut b3 = 0.0f32;
+
+    // Units 0 and 1 faithfully represent `lin_w · x + lin_b` via ReLU(z) - ReLU(-z)
+    w1[0..length].copy_from_slice(&lin_w);
+    b1[0] = lin_b;
+    w3[0] = 0.85;
+    for k in 0..length {
+        w1[length + k] = -lin_w[k];
     }
-    bias -= dot(&weights, &mean);
-    (weights, bias)
+    b1[1] = -lin_b;
+    w3[1] = -0.85;
+
+    // Remaining nonlinear units: deterministic small perturbations of positive/hard-negative prototypes
+    let pos_rows: Vec<&[f32]> = rows.iter().filter(|(_, y, _)| *y > 0.5).map(|(r, _, _)| r.as_slice()).collect();
+    let mut seed: u32 = 0x51A7_C0DE;
+    let mut next_rand = || -> f32 {
+        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        ((seed >> 16) as f32 / 32768.0) - 1.0
+    };
+    let proto_scale = 0.25 / (length as f32).sqrt();
+    for j in 2..h {
+        let base = pos_rows[(j - 2) % pos_rows.len().max(1)];
+        let dst = &mut w1[j * length..(j + 1) * length];
+        for (k, d) in dst.iter_mut().enumerate() {
+            let sign = if j % 2 == 0 { 1.0 } else { -1.0 };
+            *d = sign * base[k] * proto_scale + next_rand() * (proto_scale * 0.35);
+        }
+        b1[j] = 0.05;
+        w3[j] = if j % 2 == 0 { 0.12 } else { -0.12 };
+    }
+
+    let mut gw1 = vec![0.0f32; h * length];
+    let mut gb1 = vec![0.0f32; h];
+    let mut gw3 = vec![0.0f32; h];
+    let mut act = vec![0.0f32; h];
+    let lr_w1 = (1.6 / norm.max(1.0)).min(0.06);
+    let lr_w3 = 0.18f32;
+    let l2 = 0.08f32;
+
+    for iter in 0..90 {
+        gw1.fill(0.0);
+        gb1.fill(0.0);
+        gw3.fill(0.0);
+        let mut gb3 = 0.0f32;
+        let hard_boost = if iter >= 35 { 1.8f32 } else { 1.0f32 };
+
+        for (row, target, factor) in &rows {
+            let mut logit = b3;
+            for j in 0..h {
+                let pre = b1[j] + dot(row, &w1[j * length..(j + 1) * length]);
+                let a = pre.max(0.0);
+                act[j] = a;
+                logit += a * w3[j];
+            }
+            let p = sigmoid(logit);
+            // Emphasize false-positive hard negatives and low-scoring positives
+            let sample_w = if *target < 0.5 && p > 0.35 {
+                *factor * hard_boost
+            } else if *target > 0.5 && p < 0.65 {
+                *factor * 1.4
+            } else {
+                *factor
+            };
+            let err = (p - target) * sample_w;
+            gb3 += err;
+            for j in 0..h {
+                gw3[j] += err * act[j];
+                if act[j] > 0.0 {
+                    let dj = err * w3[j];
+                    gb1[j] += dj;
+                    let g_slice = &mut gw1[j * length..(j + 1) * length];
+                    for (g, &x) in g_slice.iter_mut().zip(row) {
+                        *g += dj * x;
+                    }
+                }
+            }
+        }
+
+        let decay = 1.0 - (iter as f32 / 140.0);
+        for j in 0..h {
+            w3[j] -= (lr_w3 * decay) * (gw3[j] + l2 * 0.5 * w3[j]);
+            b1[j] -= (lr_w3 * decay * 0.5) * gb1[j];
+            let w_slice = &mut w1[j * length..(j + 1) * length];
+            let g_slice = &gw1[j * length..(j + 1) * length];
+            for (w, &g) in w_slice.iter_mut().zip(g_slice) {
+                *w -= (lr_w1 * decay) * (g + l2 * *w);
+            }
+        }
+        b3 -= (lr_w3 * decay) * gb3;
+    }
+
+    // Fold input normalization `(x - mean) * inv_std` into raw-space `w1` & `b1`
+    for j in 0..h {
+        let w_slice = &mut w1[j * length..(j + 1) * length];
+        for (w, &is) in w_slice.iter_mut().zip(&inv_std) {
+            *w *= is;
+        }
+        b1[j] -= dot(w_slice, &mean);
+    }
+
+    let mut w2 = vec![0.0f32; h * h];
+    for j in 0..h {
+        w2[j * h + j] = 1.0;
+    }
+    MlpHead {
+        h,
+        inp: length,
+        w1,
+        b1,
+        w2,
+        b2: vec![0.0f32; h],
+        w3,
+        b3,
+    }
 }
 
 pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -212,7 +366,7 @@ pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
         .unwrap_or(16)
         .max(16);
     let length = seq * EMB;
-    let blank = head(seq, &vec![0.0; length], 0.0, [0.5; 10]);
+    let blank = blank_head(seq, length);
     let mut extractor = Oww::load(features, &blank, Box::new(|| 5))?;
     let windows: Vec<_> = clips
         .iter()
@@ -251,8 +405,8 @@ pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
     if p.len() < split || n.is_empty() {
         return Err("Мало чистых записей для обучения".into());
     }
-    let (weights, bias) = fit(&p, &n, length);
-    let score = |row: &[f32]| dot(&weights, row) + bias;
+    let mlp = fit_mlp(&p, &n, length);
+    let score = |row: &[f32]| mlp.score(row);
     let low = windows[split..POSITIVES]
         .iter()
         .zip(&speech[split..])
@@ -270,7 +424,7 @@ pub fn train(features: &[u8], bytes: &[u8]) -> Result<Vec<u8>, String> {
     }
     const FRACS: [f32; 10] = [0.80, 0.72, 0.64, 0.54, 0.44, 0.34, 0.24, 0.16, 0.10, 0.05];
     let thresholds = std::array::from_fn(|i| sigmoid(high + (low - high) * FRACS[i]));
-    Ok(head(seq, &weights, bias, thresholds))
+    Ok(mlp.to_owwh(seq, thresholds))
 }
 
 #[cfg(test)]

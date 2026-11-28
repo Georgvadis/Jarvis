@@ -20,6 +20,26 @@ let pollTimer = null;
 let tickTimer = null;
 let inflight = false;
 let subscribers = 0;
+let sseActive = false;
+
+export function setActivitySseActive(active) {
+  sseActive = Boolean(active);
+}
+
+export function applyActivity(data) {
+  if (!data || typeof data !== "object") return;
+  activity.update((prev) => ({
+    ...prev,
+    ...data,
+    timers: Array.isArray(data.timers) ? data.timers : [],
+    custom_scenarios: Array.isArray(data.custom_scenarios) ? data.custom_scenarios : prev.custom_scenarios,
+    ambient: {
+      ...prev.ambient,
+      ...(data.ambient || {}),
+      presets: data.ambient?.presets?.length ? data.ambient.presets : prev.ambient.presets,
+    },
+  }));
+}
 
 export function fmtClock(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
@@ -36,17 +56,7 @@ export async function refreshActivity() {
   inflight = true;
   try {
     const data = await api("GET", "/api/activity");
-    activity.update((prev) => ({
-      ...prev,
-      ...data,
-      timers: Array.isArray(data.timers) ? data.timers : [],
-      custom_scenarios: Array.isArray(data.custom_scenarios) ? data.custom_scenarios : prev.custom_scenarios,
-      ambient: {
-        ...prev.ambient,
-        ...(data.ambient || {}),
-        presets: data.ambient?.presets?.length ? data.ambient.presets : prev.ambient.presets,
-      },
-    }));
+    applyActivity(data);
   } catch { /* ignore background errors */ } finally {
     inflight = false;
   }
@@ -57,7 +67,7 @@ export function startActivityPolling() {
   if (pollTimer) return;
   void refreshActivity();
   pollTimer = setInterval(() => {
-    if (!document.hidden) void refreshActivity();
+    if (!document.hidden && !sseActive) void refreshActivity();
   }, 4000);
   tickTimer = setInterval(() => {
     activity.update((cur) => {

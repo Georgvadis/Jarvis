@@ -305,6 +305,134 @@ fn local_ollama_schemas(defs: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+static LOCAL_FAST_HEALTH: std::sync::LazyLock<std::sync::Mutex<Option<(std::time::Instant, bool, String)>>> =
+    std::sync::LazyLock::new(std::sync::Mutex::default);
+
+/// Подходит ли реплика для сверхбыстрого локального роутера (Ollama на домашнем GPU):
+/// только короткие повседневные фразы/команды, не требующие веб-поиска, творческих историй или глубокого анализа.
+pub fn is_fast_local_eligible(text: &str) -> bool {
+    let trimmed = text.trim();
+    let chars = trimmed.chars().count();
+    if chars < 2 || chars > 96 {
+        return false;
+    }
+    if crate::chatgpt::should_use_web_search(trimmed) {
+        return false;
+    }
+    let low = trimmed.to_lowercase().replace('ё', "е");
+    const CLOUD_ONLY: &[&str] = &[
+        "расскаж", "сказк", "истор", "объясн", "подробн", "напиш", "код", "програм",
+        "перевед", "сочин", "стих", "посовет", "сравн", "почему", "как устроен",
+        "рецепт", "подкаст", "урок", "курс", "заметк", "экран", "скрин", "новост",
+        "погод", "курс ", "доллар", "биткоин", "сколько стоит", "найди", "поищи",
+        "загугл", "вспомни", "забудь", "запомни", "включи", "поставь", "выключи",
+        "музык", "трек", "песн", "плейлист", "радио", "камин", "таймер", "будильник",
+        "свет", "ламп", "пылесос", "кондиц",
+    ];
+    if CLOUD_ONLY.iter().any(|kw| low.contains(kw)) {
+        return false;
+    }
+    true
+}
+
+async fn fast_local_model_if_healthy(host: &Host, configured_model: &str) -> Option<String> {
+    if let Ok(guard) = LOCAL_FAST_HEALTH.lock()
+        && let Some((ts, ok, ref mdl)) = *guard
+        && ts.elapsed() < Duration::from_secs(30)
+    {
+        return ok.then(|| mdl.clone());
+    }
+    let srv = crate::tools::local_voice_url(host);
+    let resp = crate::net::direct()
+        .get(format!("{srv}/llm/models"))
+        .timeout(Duration::from_millis(1200))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        if let Ok(mut guard) = LOCAL_FAST_HEALTH.lock() {
+            *guard = Some((std::time::Instant::now(), false, String::new()));
+        }
+        return None;
+    }
+    let data: Value = resp.json().await.ok()?;
+    let online = data["online"].as_bool().unwrap_or(false);
+    let models: Vec<String> = data["models"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if !online || models.is_empty() {
+        if let Ok(mut guard) = LOCAL_FAST_HEALTH.lock() {
+            *guard = Some((std::time::Instant::now(), false, String::new()));
+        }
+        return None;
+    }
+    // Для быстрого роутера предпочитаем лёгкую модель (2b–4b), если установлена, иначе выбранную пользователем
+    let chosen = models
+        .iter()
+        .find(|m| m.contains("2b") || m.contains("3b") || m.contains("4b") || m.contains("mini"))
+        .cloned()
+        .or_else(|| {
+            let pref = configured_model.trim();
+            if !pref.is_empty() && models.iter().any(|m| m == pref) {
+                Some(pref.to_string())
+            } else {
+                models.first().cloned()
+            }
+        })
+        .unwrap_or_default();
+    let ok = !chosen.is_empty();
+    if let Ok(mut guard) = LOCAL_FAST_HEALTH.lock() {
+        *guard = Some((std::time::Instant::now(), ok, chosen.clone()));
+    }
+    ok.then_some(chosen)
+}
+
+/// Попытка быстрого ответа через локальную Ollama (таймаут 4.5 с, без инструментов) для короткого smalltalk;
+/// при недоступности, задержке или неуверенности мгновенно возвращает None → основной облачный LLM.
+pub async fn try_fast_local_reply(
+    host: &Host,
+    s: &Settings,
+    instructions: &str,
+    history: &[Turn],
+    text: &str,
+) -> Option<AskReply> {
+    if !s.local_llm_fallback || !is_fast_local_eligible(text) {
+        return None;
+    }
+    let model = fast_local_model_if_healthy(host, &s.local_llm_model).await?;
+    let srv = crate::tools::local_voice_url(host);
+    // Компактный системный промпт: сохраняем характер персонажа, не перегружая малую модель
+    let compact_sys: String = instructions.chars().take(1400).collect();
+    let mut messages = Vec::with_capacity(history.len().min(4) + 2);
+    messages.push(json!({"role": "system", "content": compact_sys}));
+    for turn in history.iter().rev().take(4).rev() {
+        messages.push(json!({"role": turn.role, "content": turn.content}));
+    }
+    messages.push(json!({"role": "user", "content": text}));
+
+    let resp = crate::net::direct()
+        .post(format!("{srv}/llm/chat"))
+        .json(&json!({"model": model, "messages": messages, "tools": []}))
+        .timeout(Duration::from_millis(4500))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let data: Value = resp.json().await.ok()?;
+    let answer = data["text"].as_str().unwrap_or_default().trim();
+    if answer.is_empty() || answer.chars().count() > 600 {
+        return None;
+    }
+    log::info!("быстрый локальный роутер ({model}): ответил без облака");
+    Some(AskReply {
+        text: answer.to_string(),
+        close_dialog: false,
+    })
+}
+
 pub async fn ask_local_ollama(
     host: &Host,
     _s: &Settings,
@@ -685,6 +813,18 @@ fn decode(id:&str,response:&Value)->Result<(String,Vec<Call>),String>{
         assert_eq!(out.len(), 2);
         assert_eq!(out[0]["function"]["name"], "play_music");
         assert_eq!(out[1]["function"]["name"], "save_note");
+    }
+
+    #[test]
+    fn fast_local_router_routes_short_chitchat_and_keeps_complex_or_tools_in_cloud() {
+        assert!(is_fast_local_eligible("Привет, как дела?"));
+        assert!(is_fast_local_eligible("Спасибо, ты молодец"));
+        assert!(is_fast_local_eligible("Сколько будет 17 плюс 25?"));
+        assert!(!is_fast_local_eligible("Какой сегодня курс доллара?"));
+        assert!(!is_fast_local_eligible("Расскажи длинную сказку на ночь"));
+        assert!(!is_fast_local_eligible("Включи свет на кухне"));
+        assert!(!is_fast_local_eligible("Поставь музыку для работы"));
+        assert!(!is_fast_local_eligible("Запомни, что я люблю зелёный чай"));
     }
 
     #[cfg(feature = "lua")]

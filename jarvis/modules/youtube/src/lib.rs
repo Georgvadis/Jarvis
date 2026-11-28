@@ -70,6 +70,7 @@ struct State {
     track: Track,
     pos: f64,
     stream: Option<Stream>,
+    prefetched: Option<(String, Track, Stream)>,
     queue: VecDeque<Track>,
     related: VecDeque<Track>,
     prev_stack: VecDeque<Track>,
@@ -397,6 +398,7 @@ impl Youtube {
             }
             if !pause {
                 state.proposal = None;
+                state.prefetched = None;
                 state.error.clear();
             }
             (active, state.generation, state.task.take(), save_bytes)
@@ -513,6 +515,103 @@ impl Youtube {
         (!needs_title(&out) || !out.author.is_empty()).then_some(out)
     }
 
+    async fn resolve_via_lan_ytdlp(&self, track: &Track) -> Result<(Track, Stream), String> {
+        let base = std::env::var("JARVIS_VOICE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "http://192.168.1.3:8768".to_string());
+        let url = format!("{}/youtube/resolve?id={}", base.trim_end_matches('/'), track.id);
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(12))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = client.get(&url).send().await.map_err(|e| format!("LAN yt-dlp: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("LAN yt-dlp HTTP {}", resp.status().as_u16()));
+        }
+        let v: Value = resp.json().await.map_err(|e| format!("LAN yt-dlp JSON: {e}"))?;
+        let raw_url = v["url"].as_str().unwrap_or("").trim();
+        let parsed = reqwest::Url::parse(raw_url).map_err(|e| format!("LAN yt-dlp URL: {e}"))?;
+        let info = Track {
+            id: track.id.clone(),
+            title: v["title"].as_str().unwrap_or("").trim().to_string(),
+            author: v["artist"].as_str().unwrap_or("").trim().to_string(),
+        };
+        let stream = Stream {
+            url: parsed,
+            agent: remote::WEB_AGENT,
+            client: "LAN_YTDLP",
+            length: 0,
+            duration: v["duration"].as_f64().unwrap_or(0.0),
+            ready: Instant::now(),
+            itag: v["itag"].as_u64().unwrap_or(251),
+            bitrate: v["bitrate"].as_u64().unwrap_or(128_000),
+        };
+        log::info!("YouTube: поток {} получен через LAN yt-dlp (itag={})", track.id, stream.itag);
+        Ok((info, stream))
+    }
+
+    fn take_prefetched(&self, track_id: &str) -> Option<(Track, Stream)> {
+        let mut st = self.state.lock().unwrap();
+        if let Some((ref id, _, ref stream)) = st.prefetched {
+            if id == track_id && stream.ready.elapsed() < Duration::from_secs(1500) {
+                let (_, tr, s) = st.prefetched.take().unwrap();
+                return Some((tr, s));
+            }
+            if stream.ready.elapsed() >= Duration::from_secs(1500) {
+                st.prefetched = None;
+            }
+        }
+        None
+    }
+
+    fn prefetch_next_bg(self: &Arc<Self>, generation: u64, radio: bool) {
+        let next_track = {
+            let st = self.state.lock().unwrap();
+            if st.generation != generation || !st.playing() {
+                return;
+            }
+            let cand = st
+                .queue
+                .front()
+                .cloned()
+                .or_else(|| if radio && !st.personal { st.related.front().cloned() } else { None });
+            let Some(cand) = cand else { return };
+            if st
+                .prefetched
+                .as_ref()
+                .is_some_and(|(id, _, s)| id == &cand.id && s.ready.elapsed() < Duration::from_secs(1200))
+            {
+                return;
+            }
+            cand
+        };
+        let service = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            {
+                let st = service.state.lock().unwrap();
+                if st.generation != generation || !st.playing() {
+                    return;
+                }
+            }
+            match service.resolve(next_track.clone(), false).await {
+                Ok((resolved_track, stream)) => {
+                    let mut st = service.state.lock().unwrap();
+                    if st.generation == generation && st.playing() {
+                        log::debug!("YouTube: предзагружен следующий трек «{}» ({})", resolved_track.title, resolved_track.id);
+                        st.prefetched = Some((next_track.id, resolved_track, stream));
+                    }
+                }
+                Err(e) => {
+                    log::debug!("YouTube: фоновая предзагрузка {} не удалась: {e}", next_track.id);
+                }
+            }
+        });
+    }
+
     async fn resolve(&self, track: Track, prefer_tv: bool) -> Result<(Track, Stream), String> {
         // When signed in, resolve directly with account OAuth on TVHTML5 to avoid wasting 1-2s
         // on visitorData fetch + anonymous LOGIN_REQUIRED bot-check rejections on VPN/VPS IPs.
@@ -545,6 +644,13 @@ impl Youtube {
                     }
                 }
             }
+        };
+        let resolved = match resolved {
+            Ok(v) => Ok(v),
+            Err(primary_err) => match self.resolve_via_lan_ytdlp(&track).await {
+                Ok(lan) => Ok(lan),
+                Err(_) => Err(primary_err),
+            },
         };
         let (mut info, stream) = resolved?;
         if needs_title(&info) && !needs_title(&track) {
@@ -641,6 +747,9 @@ impl Youtube {
             let reused_stream = stream.is_some();
             let resolved = if let Some(ready) = stream.take() {
                 Ok((track.clone(), ready))
+            } else if !force_tv && let Some(pre) = self.take_prefetched(&track.id) {
+                log::info!("YouTube: мгновенный старт предзагруженного трека «{}»", pre.0.title);
+                Ok(pre)
             } else {
                 self.resolve(track.clone(), force_tv).await
             };
@@ -756,14 +865,24 @@ impl Youtube {
                                 let Ok(items) = service.related_for(&seed, music_mode).await else {
                                     return;
                                 };
-                                let mut state = service.state.lock().unwrap();
-                                if state.generation == generation
-                                    && state.track.id == seed
-                                    && state.playing()
-                                {
-                                    state.related = items.into();
+                                let populated = {
+                                    let mut state = service.state.lock().unwrap();
+                                    if state.generation == generation
+                                        && state.track.id == seed
+                                        && state.playing()
+                                    {
+                                        state.related = items.into();
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                };
+                                if populated {
+                                    service.prefetch_next_bg(generation, radio);
                                 }
                             });
+                        } else {
+                            self.prefetch_next_bg(generation, radio);
                         }
                         if let Some(notify) = notify.take() {
                             let _ = notify.send(Ok(track.clone()));

@@ -710,6 +710,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "earshot"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e25fc3bc3dc392046ff3341d3501200d669860a6c0904d3a55c663a8294f405"
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1286,6 +1292,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bcrypt",
+ "earshot",
  "flate2",
  "futures-util",
  "getrandom 0.3.4",
@@ -1307,6 +1314,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "zip",
 ]
 

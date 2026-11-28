@@ -153,8 +153,65 @@ pub fn parse_volume_line(b: &str) -> (Option<f64>, String) {
     (Some((v * 20.0).round() / 2.0), stamp) // 0.55 → 5.5
 }
 
-/// Регулятор Master в процентах.
+struct MixerProc {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl Drop for MixerProc {
+    fn drop(&mut self) {
+        use std::io::Write;
+        let _ = self.stdin.write_all(&[b'Q', 0, 0, 0, 0]);
+        let _ = self.stdin.flush();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+static MIXER_HELPER: LazyLock<Mutex<Option<MixerProc>>> = LazyLock::new(Mutex::default);
+
+fn master_percent_alsasink() -> Option<i64> {
+    use std::io::{BufRead, Write};
+    use std::process::Stdio;
+    let mut guard = MIXER_HELPER.lock().ok()?;
+    for _ in 0..2 {
+        if guard.is_none() {
+            let path = crate::audio::alsasink_path()?;
+            let mut child = Command::new(path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let stdin = child.stdin.take()?;
+            let stdout = std::io::BufReader::new(child.stdout.take()?);
+            *guard = Some(MixerProc { child, stdin, stdout });
+        }
+        if let Some(m) = guard.as_mut() {
+            let mut line = String::new();
+            let ok = m.stdin.write_all(&[b'V', 0, 0, 0, 0]).is_ok()
+                && m.stdin.flush().is_ok()
+                && m.stdout.read_line(&mut line).ok().is_some_and(|n| n > 0);
+            if ok {
+                if let Some(rest) = line.trim().strip_prefix("VOL ")
+                    && let Ok(v) = rest.trim().parse::<i64>()
+                {
+                    return (v >= 0).then_some(v);
+                }
+                return None;
+            }
+            *guard = None;
+        }
+    }
+    None
+}
+
+/// Регулятор Master в процентах (через постоянный `alsasink` без fork `amixer`, с откатом на `amixer`).
 fn master_percent() -> Option<i64> {
+    if let Some(p) = master_percent_alsasink() {
+        return Some(p);
+    }
     // -c 0 — сразу карта колонки: без него amixer разбирает весь конфиг ALSA и во время музыки думает 2+ с
     let out = Command::new("amixer").args(["-c", "0", "sget", "Master"]).output().ok().filter(|o| o.status.success());
     let out = out.or_else(|| Command::new("amixer").args(["sget", "Master"]).output().ok())?;

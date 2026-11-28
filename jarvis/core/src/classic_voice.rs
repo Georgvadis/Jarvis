@@ -61,10 +61,12 @@ impl Classic {
         let actor=me.clone();let context=Arc::new(Context{host,tools,settings,profile,instructions,phrase,history:Arc::new(Mutex::new(initial_history)),gemini_pool,proxy,pending_user_text:Arc::new(Mutex::default()),active_turn_pcm:Arc::new(Mutex::default()),has_spoken_turn:Arc::new(AtomicBool::new(false))});
         rt.spawn(async move {
             let mut vad=Capture::new(context.settings.vad_threshold, context.settings.vad_silence_ms);let mut tasks=tokio::task::JoinSet::new();
+            let mut ws_stt: Option<WsSttHandle> = None;
             loop {tokio::select! {
                 biased;
                 _=actor.stop.notified()=>break,
                 Some(text)=messages.recv()=>{
+                    ws_stt = None;
                     tasks.abort_all();let generation=actor.generation.fetch_add(1,Ordering::SeqCst)+1;
                     let me=actor.clone();let context=context.clone();
                     actor.dialog.working(1);
@@ -83,10 +85,12 @@ impl Classic {
                     }
                 },
                 Some(pcm)=input.recv()=>{
-                    let starting=!vad.speaking && vad.is_loud(&pcm);
+                    let was_speaking = vad.speaking;
+                    let starting=!was_speaking && vad.is_loud(&pcm);
                     if starting && context.has_spoken_turn.load(Ordering::SeqCst) {
                         // Перебиваем сразу только когда ассистент уже говорит вслух;
                         // пока идёт поиск музыки или ответ LLM, случайный шорох не должен убивать задачу.
+                        ws_stt = None;
                         tasks.abort_all();
                         actor.generation.fetch_add(1,Ordering::SeqCst);
                         actor.interrupted.store(true,Ordering::SeqCst);
@@ -94,7 +98,12 @@ impl Classic {
                         context.pending_user_text.lock().unwrap().clear();
                         *context.active_turn_pcm.lock().unwrap() = None;
                     }
-                    if let Some(pcm)=vad.feed(&pcm){
+                    if let Some(utt_pcm)=vad.feed(&pcm){
+                        let ws_rx = ws_stt.take().map(|h| {
+                            let _ = h.tx.try_send(pcm.clone());
+                            drop(h.tx);
+                            h.rx
+                        });
                         // Не допускаем двух параллельных turn() с одним generation: иначе их аудио и ответы
                         // перемешиваются. Если предыдущий turn ещё не заговорил, сохраняем накопленный контекст для склейки.
                         if !tasks.is_empty() {
@@ -112,10 +121,23 @@ impl Classic {
                             }
                         }
                         let me=actor.clone();let context=context.clone();
-                        actor.dialog.working(1);tasks.spawn(async move{me.turn(&context,pcm,generation).await});
+                        actor.dialog.working(1);tasks.spawn(async move{me.turn(&context,utt_pcm,generation,ws_rx).await});
+                    } else if !was_speaking && vad.speaking {
+                        // Речь только началась — сразу открываем потоковый WebSocket STT и шлём preroll+первый кадр
+                        if context.profile.effective_stt_engine() == "local-rvc-voice" {
+                            ws_stt = Some(spawn_ws_stt(&context, &vad.speech));
+                        }
+                    } else if was_speaking && vad.speaking {
+                        if let Some(ref h) = ws_stt {
+                            let _ = h.tx.try_send(pcm);
+                        }
+                    } else if was_speaking && !vad.speaking {
+                        // Короткий щелчок отброшен VAD — закрываем поток WS
+                        ws_stt = None;
                     }
                 },
             }}
+            drop(ws_stt);
             tasks.shutdown().await;actor.out.lock().unwrap().take();
         });me
     }
@@ -123,9 +145,16 @@ impl Classic {
         let vpn_blocked = context.proxy.as_ref().is_some_and(|p| matches!(p.route(provider), crate::vpn::Route::Blocked(_)));
         *self.last_failure.lock().unwrap() = Some(crate::voice_error::classify(provider, stage, err, None, vpn_blocked));
     }
-    async fn turn(self: &Arc<Self>,context:&Arc<Context>,pcm:Vec<i16>,generation:u64)->Result<(),String>{
-        let pcm = {
+    async fn turn(
+        self: &Arc<Self>,
+        context: &Arc<Context>,
+        pcm: Vec<i16>,
+        generation: u64,
+        ws_stt_rx: Option<tokio::sync::oneshot::Receiver<Result<String, String>>>,
+    ) -> Result<(), String> {
+        let (pcm, had_prev_pcm) = {
             let mut slot = context.active_turn_pcm.lock().unwrap();
+            let had_prev = slot.is_some();
             let merged = if let Some(prev) = slot.take() {
                 if prev.len() + pcm.len() <= 16000 * 45 {
                     let mut m = prev;
@@ -139,16 +168,16 @@ impl Classic {
                 pcm
             };
             *slot = Some(merged.clone());
-            merged
+            (merged, had_prev)
         };
         let utt_peak = crate::engine::peak(&pcm);
         let whisper_ceiling = (context.settings.vad_threshold.clamp(100, 3000) as f64) * 2.3;
         let is_whisper = context.settings.whisper_mode && utt_peak > 0.0 && utt_peak < whisper_ceiling;
         let stt=context.profile.effective_stt_engine();
-        let wav_bytes = wav(&pcm);
         let t_stt0 = std::time::Instant::now();
         let response=match stt {
             "openai"|"elevenlabs"=>{
+                let wav_bytes = wav(&pcm);
                 let wav_b64=B64.encode(&wav_bytes);
                 let key=if stt=="openai"{&context.settings.openai_key}else{&context.settings.elevenlabs_key};
                 let model=if context.profile.stt_model.is_empty(){if stt=="openai"{"gpt-4o-mini-transcribe"}else{"scribe_v2"}}else{&context.profile.stt_model};
@@ -169,19 +198,37 @@ impl Classic {
                 } else {
                     context.profile.stt_model.as_str()
                 };
-                match stt_local_whisper(&context.host, &wav_bytes, stt_lang, stt_mdl).await {
-                    Ok(txt) => json!({"text": txt}),
-                    Err(direct_err) => {
-                        log::warn!("Local Whisper direct STT failed ({direct_err}), falling back to plugin_stt");
-                        let wav_b64 = B64.encode(&wav_bytes);
-                        match context.host.plugin_stt("local-rvc-voice", json!({"audio_b64":wav_b64,"format":"wav","rate":16000,"model":stt_mdl,"language":stt_lang})).await {
-                            Ok(v) => v,
-                            Err(e) => { self.record_failure(context, "local-rvc-voice", crate::voice_error::Stage::Connect, &e); return Err(e); }
+                let ws_hit = if !had_prev_pcm && let Some(rx) = ws_stt_rx {
+                    match tokio::time::timeout(Duration::from_secs(4), rx).await {
+                        Ok(Ok(Ok(txt))) => Some(txt),
+                        Ok(Ok(Err(e))) => {
+                            log::debug!("WS STT fallback to HTTP ({e})");
+                            None
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                if let Some(txt) = ws_hit {
+                    json!({"text": txt})
+                } else {
+                    let wav_bytes = wav(&pcm);
+                    match stt_local_whisper(&context.host, &wav_bytes, stt_lang, stt_mdl).await {
+                        Ok(txt) => json!({"text": txt}),
+                        Err(direct_err) => {
+                            log::warn!("Local Whisper direct STT failed ({direct_err}), falling back to plugin_stt");
+                            let wav_b64 = B64.encode(&wav_bytes);
+                            match context.host.plugin_stt("local-rvc-voice", json!({"audio_b64":wav_b64,"format":"wav","rate":16000,"model":stt_mdl,"language":stt_lang})).await {
+                                Ok(v) => v,
+                                Err(e) => { self.record_failure(context, "local-rvc-voice", crate::voice_error::Stage::Connect, &e); return Err(e); }
+                            }
                         }
                     }
                 }
             },
             id=>{
+                let wav_bytes = wav(&pcm);
                 let wav_b64=B64.encode(&wav_bytes);
                 match context.host.plugin_stt(id,json!({"audio_b64":wav_b64,"format":"wav","rate":16000,"model":context.profile.stt_model,"language":context.settings.language})).await {
                     Ok(v) => v,
@@ -624,7 +671,19 @@ impl Classic {
                 whisper_hint,
             );
             let t_llm0 = std::time::Instant::now();
-            let streamed_reply = if let Some(auth) = prefetched_auth {
+            // Быстрый локальный роутер (Ollama на домашнем GPU): для короткого повседневного smalltalk
+            // отвечает за ~0.5 с без облака; при отказе/таймауте мгновенно идёт в основной облачный LLM.
+            let fast_local_reply = if active_mode == SpecialMode::Normal
+                && !is_bedtime
+                && llm_provider != "ollama"
+            {
+                crate::llm::try_fast_local_reply(&context.host, &context.settings, &context.instructions, &history, text).await
+            } else {
+                None
+            };
+            let streamed_reply = if let Some(r) = fast_local_reply {
+                Some(r)
+            } else if let Some(auth) = prefetched_auth {
                 let (delta_tx, delta_rx) = mpsc::unbounded_channel::<String>();
                 let me_s = self.clone();
                 let ctx_s = context.clone();
@@ -705,6 +764,12 @@ impl Classic {
             && let Some((api_key, ref_id, fish_model)) = fish_audio_params(context, voice, model)
         {
             return synth_fish_tts_direct(context.proxy.as_deref(), &api_key, &ref_id, &fish_model, text).await;
+        }
+        if provider == "local-rvc-voice" {
+            match synth_local_qwen_direct(&context.host, voice, emotion, text).await {
+                Ok(pcm) => return Ok(pcm),
+                Err(e) => log::debug!("Local Qwen direct 24kHz TTS fallback to plugin_tts ({e})"),
+            }
         }
         let result=match provider {
             "openai"=>{
@@ -918,6 +983,112 @@ impl Classic {
         Ok(started_stream)
     }
 
+    async fn stream_local_qwen_live(
+        &self,
+        context: &Context,
+        voice: &str,
+        emotion: Option<&str>,
+        text: &str,
+        generation: u64,
+        led_color: Option<&'static str>,
+        t_tts0: std::time::Instant,
+        recorded_timing: &AtomicBool,
+    ) -> Result<bool, String> {
+        const PREBUFFER_SAMPLES: usize = 4800; // 200 мс буфер при 24 кГц в локальной сети
+        let srv = crate::tools::local_voice_url(&context.host);
+        let mut payload = json!({
+            "text": text,
+            "sample_rate": 24000,
+        });
+        if !voice.trim().is_empty() && voice != "default" {
+            payload["voice"] = json!(voice.trim());
+        }
+        if let Some(emo) = emotion.filter(|e| !e.trim().is_empty()) {
+            payload["emotion"] = json!(emo.trim());
+        }
+        let mut resp = crate::net::direct()
+            .post(format!("{srv}/speak/stream"))
+            .json(&payload)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| format!("Local Qwen stream: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Local Qwen stream HTTP {}", resp.status().as_u16()));
+        }
+        let src_rate = resp
+            .headers()
+            .get("x-sample-rate")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&r| matches!(r, 16000 | 24000 | 48000))
+            .unwrap_or(24000);
+        let mut carry: Option<u8> = None;
+        let mut buf: Vec<i16> = Vec::with_capacity(6400);
+        let mut started_stream = false;
+        loop {
+            let chunk = match resp.chunk().await {
+                Ok(Some(c)) => c,
+                Ok(None) => break,
+                Err(e) => {
+                    if started_stream {
+                        break;
+                    }
+                    return Err(format!("Local Qwen stream: {e}"));
+                }
+            };
+            if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                return Ok(started_stream);
+            }
+            let bytes = chunk.as_ref();
+            let mut idx = 0usize;
+            if let Some(prev) = carry.take() {
+                if let Some(&b1) = bytes.first() {
+                    buf.push(i16::from_le_bytes([prev, b1]));
+                    idx = 1;
+                } else {
+                    carry = Some(prev);
+                }
+            }
+            let rest = &bytes[idx..];
+            for pair in rest.chunks_exact(2) {
+                buf.push(i16::from_le_bytes([pair[0], pair[1]]));
+            }
+            if rest.len() % 2 == 1 {
+                carry = rest.last().copied();
+            }
+            let threshold = if started_stream { 1200 } else { PREBUFFER_SAMPLES };
+            if buf.len() >= threshold {
+                if !started_stream {
+                    started_stream = true;
+                    if !recorded_timing.swap(true, Ordering::SeqCst) {
+                        self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
+                    }
+                    if let Some(c) = led_color && let Some(leds) = &context.tools.leds {
+                        leds.set_temp_color(crate::led::Mode::Speaking, c);
+                    }
+                }
+                let out = resample_pcm(&buf, src_rate, 24000);
+                self.send_pcm_samples_ctx(Some(context), &out, generation).await?;
+                buf.clear();
+            }
+        }
+        if !buf.is_empty() {
+            if !started_stream {
+                started_stream = true;
+                if !recorded_timing.swap(true, Ordering::SeqCst) {
+                    self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
+                }
+                if let Some(c) = led_color && let Some(leds) = &context.tools.leds {
+                    leds.set_temp_color(crate::led::Mode::Speaking, c);
+                }
+            }
+            let out = resample_pcm(&buf, src_rate, 24000);
+            self.send_pcm_samples_ctx(Some(context), &out, generation).await?;
+        }
+        Ok(started_stream)
+    }
+
     async fn try_live_first_fish(
         &self,
         context: &Context,
@@ -930,11 +1101,17 @@ impl Classic {
         t_tts0: std::time::Instant,
         recorded_timing: &AtomicBool,
     ) -> Result<bool, String> {
-        if emo_ref.is_some()
-            || (speed - 1.0).abs() > 0.02
-            || (mul - 1.0).abs() > 0.02
-            || context.profile.effective_tts_engine() != "fish-audio-tts"
-        {
+        if (speed - 1.0).abs() > 0.02 || (mul - 1.0).abs() > 0.02 {
+            return Ok(false);
+        }
+        let provider = context.profile.effective_tts_engine();
+        if provider == "local-rvc-voice" {
+            let voice = effective_tts_voice(&context.profile);
+            return self
+                .stream_local_qwen_live(context, voice, emo_ref, sentence, generation, led_color, t_tts0, recorded_timing)
+                .await;
+        }
+        if emo_ref.is_some() || provider != "fish-audio-tts" {
             return Ok(false);
         }
         let voice = effective_tts_voice(&context.profile);
@@ -1078,8 +1255,194 @@ impl Classic {
         Ok(played_pcm)
     }
 
+    /// Один постоянный WebSocket Fish Audio Live (`wss://api.fish.audio/v1/tts/live`, MessagePack) на весь ответ LLM:
+    /// нулевой overhead на новые HTTP-запросы, сохранение единой интонации и минимальный TTFA.
+    /// Если подключение не удалось до отправки первого звука — возвращает `Err((rx, err))` для бесшовного отката на HTTP/2.
+    async fn try_fish_ws_stream(
+        self: &Arc<Self>,
+        context: &Arc<Context>,
+        rx: mpsc::UnboundedReceiver<String>,
+        generation: u64,
+        whisper: bool,
+    ) -> Result<usize, (mpsc::UnboundedReceiver<String>, String)> {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, http::HeaderValue};
+
+        if whisper
+            || context.settings.expressive_mode
+            || (context.profile.tts_speed - 1.0).abs() > 0.02
+            || context.profile.effective_tts_engine() != "fish-audio-tts"
+        {
+            return Err((rx, "ws disabled for mode".into()));
+        }
+        // Через SOCKS5 VPN используем HTTP/2 reqwest (tokio-tungstenite ходит напрямую по TLS)
+        if context.proxy.as_ref().is_some_and(|p| !matches!(p.route("plugins"), crate::vpn::Route::Direct)) {
+            return Err((rx, "proxy active".into()));
+        }
+        let voice = effective_tts_voice(&context.profile);
+        let Some((api_key, ref_id, fish_model)) = fish_audio_params(context, voice, &context.profile.tts_model) else {
+            return Err((rx, "no fish params".into()));
+        };
+
+        let mut req = match "wss://api.fish.audio/v1/tts/live".into_client_request() {
+            Ok(r) => r,
+            Err(e) => return Err((rx, e.to_string())),
+        };
+        let Ok(auth_val) = HeaderValue::from_str(&format!("Bearer {api_key}")) else {
+            return Err((rx, "bad auth header".into()));
+        };
+        let Ok(mdl_val) = HeaderValue::from_str(&fish_model) else {
+            return Err((rx, "bad model header".into()));
+        };
+        req.headers_mut().insert("Authorization", auth_val);
+        req.headers_mut().insert("model", mdl_val);
+
+        let t_tts0 = std::time::Instant::now();
+        let ws = match tokio::time::timeout(
+            Duration::from_secs(4),
+            tokio_tungstenite::connect_async(req),
+        )
+        .await
+        {
+            Ok(Ok((ws, _))) => ws,
+            Ok(Err(e)) => return Err((rx, format!("Fish WS connect: {e}"))),
+            Err(_) => return Err((rx, "Fish WS connect timeout".into())),
+        };
+
+        let (mut ws_tx, mut ws_rx) = ws.split();
+        if let Err(e) = ws_tx
+            .send(Message::Binary(crate::msgpack::encode_fish_start(&ref_id, 24000).into()))
+            .await
+        {
+            return Err((rx, format!("Fish WS start: {e}")));
+        }
+
+        let me = self.clone();
+        let ctx = context.clone();
+        let mut rx = rx;
+        let sent_any_text = Arc::new(AtomicBool::new(false));
+        let sent_any_w = sent_any_text.clone();
+        let writer = tokio::spawn(async move {
+            let mut buf = String::new();
+            let mut full = String::new();
+            let mut sent_first = false;
+            while let Some(delta) = rx.recv().await {
+                if me.closed.load(Ordering::SeqCst) || me.generation.load(Ordering::SeqCst) != generation {
+                    break;
+                }
+                buf.push_str(&delta);
+                full.push_str(&delta);
+                while let Some(chunk) = pop_ready_sentence(&mut buf, !sent_first) {
+                    let shown = strip_web_citations(&crate::sfx::strip_tags(&full));
+                    if !shown.is_empty() {
+                        me.dialog.set_bot(&shown);
+                    }
+                    let clean = clean_for_tts(&crate::sfx::strip_tags(&chunk));
+                    if clean.chars().any(char::is_alphanumeric) {
+                        let text_msg = if sent_first { format!(" {clean}") } else { clean };
+                        if ws_tx.send(Message::Binary(crate::msgpack::encode_fish_text(&text_msg).into())).await.is_err() {
+                            return;
+                        }
+                        if ws_tx.send(Message::Binary(crate::msgpack::encode_fish_flush().into())).await.is_err() {
+                            return;
+                        }
+                        sent_first = true;
+                        sent_any_w.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+            let shown = strip_web_citations(&crate::sfx::strip_tags(&full));
+            if !shown.is_empty() {
+                me.dialog.set_bot(&shown);
+            }
+            let rest = clean_for_tts(&crate::sfx::strip_tags(buf.trim()));
+            if rest.chars().any(char::is_alphanumeric) {
+                let text_msg = if sent_first { format!(" {rest}") } else { rest };
+                let _ = ws_tx.send(Message::Binary(crate::msgpack::encode_fish_text(&text_msg).into())).await;
+                let _ = ws_tx.send(Message::Binary(crate::msgpack::encode_fish_flush().into())).await;
+                sent_any_w.store(true, Ordering::SeqCst);
+            }
+            let _ = ws_tx.send(Message::Binary(crate::msgpack::encode_fish_stop().into())).await;
+            let _ = ctx;
+        });
+
+        const PREBUFFER_SAMPLES: usize = 8400; // 350 мс анти-джиттер при 24 кГц
+        let mut carry: Option<u8> = None;
+        let mut pcm_buf: Vec<i16> = Vec::with_capacity(8400);
+        let mut started_audio = false;
+        let mut recorded_timing = false;
+
+        while let Some(msg) = ws_rx.next().await {
+            if self.closed.load(Ordering::SeqCst) || self.generation.load(Ordering::SeqCst) != generation {
+                break;
+            }
+            match msg {
+                Ok(Message::Binary(data)) => match crate::msgpack::decode_fish_event(&data) {
+                    Some(crate::msgpack::FishWsEvent::Audio(bytes)) => {
+                        let mut idx = 0usize;
+                        if let Some(prev) = carry.take() {
+                            if let Some(&b1) = bytes.first() {
+                                pcm_buf.push(i16::from_le_bytes([prev, b1]));
+                                idx = 1;
+                            } else {
+                                carry = Some(prev);
+                            }
+                        }
+                        let rest = &bytes[idx..];
+                        for pair in rest.chunks_exact(2) {
+                            pcm_buf.push(i16::from_le_bytes([pair[0], pair[1]]));
+                        }
+                        if rest.len() % 2 == 1 {
+                            carry = rest.last().copied();
+                        }
+                        let need = if started_audio { 1200 } else { PREBUFFER_SAMPLES };
+                        if pcm_buf.len() >= need {
+                            started_audio = true;
+                            if !recorded_timing {
+                                recorded_timing = true;
+                                self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
+                            }
+                            if self.send_pcm_samples_ctx(Some(context), &pcm_buf, generation).await.is_err() {
+                                break;
+                            }
+                            pcm_buf.clear();
+                        }
+                    }
+                    Some(crate::msgpack::FishWsEvent::Finish) => break,
+                    _ => {}
+                },
+                Ok(Message::Close(_)) => break,
+                Err(e) => {
+                    log::warn!("Fish WS read error: {e}");
+                    break;
+                }
+                _ => {}
+            }
+        }
+        writer.abort();
+        if !pcm_buf.is_empty() && !self.closed.load(Ordering::SeqCst) && self.generation.load(Ordering::SeqCst) == generation {
+            started_audio = true;
+            if !recorded_timing {
+                self.dialog.set_timings(None, None, Some(t_tts0.elapsed().as_millis() as u64));
+            }
+            let _ = self.send_pcm_samples_ctx(Some(context), &pcm_buf, generation).await;
+        }
+        if started_audio {
+            let tail = vec![0i16; 5760]; // 240 мс хвост тишины для ALSA
+            let _ = self.send_pcm_samples(&tail, generation).await;
+            Ok(1)
+        } else {
+            // Соединение открылось, но аудио не пришло (напр. сервер отклонил WS) —
+            // вернём 0, чтобы `turn()` проговорил готовый ответ через обычный `self.speak()`.
+            if sent_any_text.load(Ordering::SeqCst) {
+                log::warn!("Fish WS завершился без аудио — перехожу на стандартную озвучку");
+            }
+            Ok(0)
+        }
+    }
+
     /// Потоковая озвучка по мере прихода предложений от LLM с конвейерным предсинтезом (до 2 фраз в параллель):
-    /// первая фраза стримится из сети напрямую в динамик, а пока она звучит — следующие уже предсинтезируются.
+    /// при Fish Audio напрямую открывает единый WebSocket Live, иначе первая фраза стримится по HTTP/2.
     async fn speak_stream_deltas(
         self: &Arc<Self>,
         context: &Arc<Context>,
@@ -1087,6 +1450,15 @@ impl Classic {
         generation: u64,
         whisper: bool,
     ) -> Result<usize, String> {
+        match self.try_fish_ws_stream(context, rx, generation, whisper).await {
+            Ok(spoken) => return Ok(spoken),
+            Err((returned_rx, reason)) => {
+                if !matches!(reason.as_str(), "ws disabled for mode" | "proxy active" | "no fish params") {
+                    log::debug!("Fish WS fallback to HTTP/2 ({reason})");
+                }
+                rx = returned_rx;
+            }
+        }
         let mut buf = String::new();
         let mut full = String::new();
         let mut pending: std::collections::VecDeque<String> = std::collections::VecDeque::new();
@@ -1451,6 +1823,10 @@ struct Capture {
     threshold: u16,
     silence_limit: usize,
     noise_avg: f32,
+    vad: Box<earshot::Detector>,
+    vad_buf: Vec<i16>,
+    neural_prob: f32,
+    neural_quiet_samples: usize,
 }
 
 impl Capture {
@@ -1466,7 +1842,29 @@ impl Capture {
             threshold: th,
             silence_limit: lim,
             noise_avg: 35.0,
+            vad: earshot::Detector::default_boxed(),
+            vad_buf: Vec::with_capacity(earshot::FRAME_SIZE * 2),
+            neural_prob: 0.0,
+            neural_quiet_samples: 0,
         }
+    }
+
+    fn eval_neural(&mut self, pcm: &[i16]) -> f32 {
+        self.vad_buf.extend_from_slice(pcm);
+        let mut max_p = 0.0f32;
+        let mut ran = false;
+        while self.vad_buf.len() >= earshot::FRAME_SIZE {
+            let p = self.vad.predict(&self.vad_buf[..earshot::FRAME_SIZE]).as_f32();
+            max_p = max_p.max(p);
+            ran = true;
+            self.vad_buf.drain(..earshot::FRAME_SIZE);
+        }
+        if ran {
+            self.neural_prob = max_p;
+        } else {
+            self.neural_prob *= 0.85;
+        }
+        self.neural_prob
     }
 
     fn frame_metrics(pcm: &[i16]) -> (u16, f32, usize) {
@@ -1507,17 +1905,50 @@ impl Capture {
             || (avg > hold_avg && voiced_cnt >= (len / 12).max(3))
     }
 
+    fn is_neural_onset(&self, pcm: &[i16], neural: f32) -> bool {
+        if neural >= 0.55 {
+            let (peak, avg, len) = Self::frame_metrics(pcm);
+            let soft_avg = (self.noise_avg * 1.5).max(26.0);
+            len > 0 && (f32::from(peak) > soft_avg * 2.2 || avg > soft_avg)
+        } else if neural >= 0.18 {
+            self.is_loud(pcm)
+        } else {
+            // Если нейросеть видит не речь (фон/стук), требуем более явный сигнал
+            let (peak, avg, len) = Self::frame_metrics(pcm);
+            len > 0 && self.is_loud(pcm) && (f32::from(peak) > self.noise_avg * 6.0 || avg > self.noise_avg * 3.5)
+        }
+    }
+
+    fn is_neural_continuing(&self, pcm: &[i16], neural: f32) -> bool {
+        if neural >= 0.45 {
+            let (_, avg, len) = Self::frame_metrics(pcm);
+            len > 0 && avg > (self.noise_avg * 1.25).max(18.0)
+        } else if neural >= 0.15 {
+            self.is_continuing(pcm)
+        } else {
+            let (peak, _, len) = Self::frame_metrics(pcm);
+            len > 0 && self.is_continuing(pcm) && f32::from(peak) > (self.threshold as f32 * 0.85).max(self.noise_avg * 4.5)
+        }
+    }
+
     fn effective_silence_limit(&self) -> usize {
-        if self.voiced_samples < 16000 * 12 / 10 {
+        let base = if self.voiced_samples < 16000 * 12 / 10 {
             (self.silence_limit * 82 / 100).clamp(650 * 16, 900 * 16)
         } else {
             self.silence_limit
+        };
+        // Когда earshot уверенно подтвердил полную тишину без голоса (>= 580 мс), не тянем лишние ~200 мс
+        if self.neural_quiet_samples >= 580 * 16 && self.voiced_samples >= 4800 {
+            (base * 82 / 100).clamp(580 * 16, base)
+        } else {
+            base
         }
     }
 
     fn feed(&mut self, pcm: &[i16]) -> Option<Vec<i16>> {
+        let neural = self.eval_neural(pcm);
         if !self.speaking {
-            let voiced = self.is_loud(pcm);
+            let voiced = self.is_neural_onset(pcm, neural);
             if !voiced {
                 let (_, avg, len) = Self::frame_metrics(pcm);
                 if len > 0 && avg < self.noise_avg * 2.5 + 15.0 {
@@ -1533,19 +1964,27 @@ impl Capture {
             self.speaking = true;
             self.voiced_samples = 0;
             self.silence = 0;
+            self.neural_quiet_samples = 0;
             self.speech = std::mem::take(&mut self.preroll);
         }
-        let voiced = self.is_continuing(pcm);
+        let voiced = self.is_neural_continuing(pcm, neural);
         self.speech.extend(pcm);
         if voiced {
             self.silence = 0;
+            self.neural_quiet_samples = 0;
             self.voiced_samples += pcm.len();
         } else {
             self.silence += pcm.len();
+            if neural < 0.15 {
+                self.neural_quiet_samples += pcm.len();
+            } else {
+                self.neural_quiet_samples = 0;
+            }
         }
         if self.silence >= self.effective_silence_limit() || self.speech.len() >= 16000 * 45 {
             self.speaking = false;
             self.silence = 0;
+            self.neural_quiet_samples = 0;
             let voiced_total = self.voiced_samples;
             self.voiced_samples = 0;
             let result = std::mem::take(&mut self.speech);
@@ -1661,6 +2100,148 @@ async fn synth_fish_tts_direct(
     }
     let even = bytes.len() & !1;
     Ok(bytes[..even].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect())
+}
+
+struct WsSttHandle {
+    tx: mpsc::Sender<Vec<i16>>,
+    rx: tokio::sync::oneshot::Receiver<Result<String, String>>,
+}
+
+fn spawn_ws_stt(context: &Context, initial_pcm: &[i16]) -> WsSttHandle {
+    let (tx, mut pcm_rx) = mpsc::channel::<Vec<i16>>(256);
+    let (res_tx, res_rx) = tokio::sync::oneshot::channel();
+    let bilingual_tutor = context.tools.modes.as_ref().is_some_and(|m| {
+        matches!(m.current(), crate::modes::SpecialMode::Tutor { bilingual: true, .. })
+    });
+    let stt_lang = if bilingual_tutor {
+        "ru".to_string()
+    } else if context.settings.language.trim().is_empty() || context.settings.language.trim() == "auto" {
+        "ru".to_string()
+    } else {
+        context.settings.language.trim().to_string()
+    };
+    let stt_mdl = if bilingual_tutor {
+        "whisper".to_string()
+    } else if context.profile.stt_model.trim().is_empty() {
+        "gigaam-v3".to_string()
+    } else {
+        context.profile.stt_model.trim().to_string()
+    };
+    let base = crate::tools::local_voice_url(&context.host);
+    let ws_base = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        format!("ws://{base}")
+    };
+    let url = format!("{}/ws/stt?model={stt_mdl}&lang={stt_lang}&rate=16000", ws_base.trim_end_matches('/'));
+    let init = initial_pcm.to_vec();
+
+    tokio::spawn(async move {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let res = async {
+            let (mut ws, _) = tokio::time::timeout(
+                Duration::from_millis(1200),
+                tokio_tungstenite::connect_async(&url),
+            )
+            .await
+            .map_err(|_| "ws stt connect timeout".to_string())?
+            .map_err(|e| format!("ws stt connect: {e}"))?;
+
+            let to_bytes = |pcm: &[i16]| -> Vec<u8> {
+                let mut b = Vec::with_capacity(pcm.len() * 2);
+                for &s in pcm {
+                    b.extend_from_slice(&s.to_le_bytes());
+                }
+                b
+            };
+            if !init.is_empty() {
+                ws.send(Message::Binary(to_bytes(&init).into()))
+                    .await
+                    .map_err(|e| format!("ws stt send init: {e}"))?;
+            }
+            while let Some(chunk) = pcm_rx.recv().await {
+                if !chunk.is_empty() {
+                    ws.send(Message::Binary(to_bytes(&chunk).into()))
+                        .await
+                        .map_err(|e| format!("ws stt send: {e}"))?;
+                }
+            }
+            ws.send(Message::Text("end".into()))
+                .await
+                .map_err(|e| format!("ws stt end: {e}"))?;
+            while let Some(msg) = tokio::time::timeout(Duration::from_secs(6), ws.next())
+                .await
+                .map_err(|_| "ws stt reply timeout".to_string())?
+            {
+                match msg.map_err(|e| format!("ws stt recv: {e}"))? {
+                    Message::Text(txt) => {
+                        let v: serde_json::Value =
+                            serde_json::from_str(txt.as_str()).map_err(|e| format!("ws stt json: {e}"))?;
+                        if v["ok"].as_bool() == Some(false) {
+                            return Err(v["error"].as_str().unwrap_or("ws stt error").to_string());
+                        }
+                        if let Some(t) = v["text"].as_str() {
+                            return Ok(t.trim().to_string());
+                        }
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+            Err("ws stt closed without transcript".into())
+        }
+        .await;
+        let _ = res_tx.send(res);
+    });
+
+    WsSttHandle { tx, rx: res_rx }
+}
+
+async fn synth_local_qwen_direct(
+    host: &Host,
+    voice: &str,
+    emotion: Option<&str>,
+    text: &str,
+) -> Result<Vec<i16>, String> {
+    let srv = crate::tools::local_voice_url(host);
+    let mut payload = json!({
+        "text": text,
+        "sample_rate": 24000,
+    });
+    if !voice.trim().is_empty() && voice != "default" {
+        payload["voice"] = json!(voice.trim());
+    }
+    if let Some(emo) = emotion.filter(|e| !e.trim().is_empty()) {
+        payload["emotion"] = json!(emo.trim());
+    }
+    let resp = crate::net::direct()
+        .post(format!("{srv}/speak"))
+        .json(&payload)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("Local Qwen TTS: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Local Qwen TTS HTTP {}", resp.status().as_u16()));
+    }
+    let src_rate = resp
+        .headers()
+        .get("x-sample-rate")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&r| matches!(r, 16000 | 24000 | 48000))
+        .unwrap_or(24000);
+    let bytes = resp.bytes().await.map_err(|e| format!("Local Qwen body: {e}"))?;
+    if bytes.is_empty() {
+        return Err("Local Qwen вернул пустое аудио".into());
+    }
+    let even = bytes.len() & !1;
+    let samples: Vec<i16> = bytes[..even].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+    Ok(resample_pcm(&samples, src_rate, 24000))
 }
 
 async fn stt_local_whisper(host: &Host, wav_bytes: &[u8], lang: &str, model: &str) -> Result<String, String> {
@@ -2397,16 +2978,7 @@ fn split_sentences(text: &str) -> Vec<String> {
     out
 }
 fn resample_pcm(samples:&[i16],from_rate:usize,to_rate:usize)->Vec<i16>{
-    if from_rate==to_rate || samples.is_empty(){return samples.to_vec();}
-    let out_len=(samples.len() as u64 * to_rate as u64 / from_rate as u64) as usize;
-    (0..out_len).map(|i|{
-        let pos=i as u64 * from_rate as u64;
-        let left=(pos / to_rate as u64) as usize;
-        let frac=(pos % to_rate as u64) as f32 / to_rate as f32;
-        let a=f32::from(samples[left]);
-        let b=f32::from(*samples.get(left+1).unwrap_or(&samples[left]));
-        (a+(b-a)*frac).round().clamp(-32768.0,32767.0) as i16
-    }).collect()
+    jarvis_dsp::audio::resample_pcm_fir(samples, from_rate, to_rate)
 }
 fn wav(pcm:&[i16])->Vec<u8>{
     let size=(pcm.len()*2) as u32;let mut out=Vec::with_capacity(size as usize+44);out.extend(b"RIFF");out.extend((size+36).to_le_bytes());out.extend(b"WAVEfmt ");out.extend(16u32.to_le_bytes());out.extend(1u16.to_le_bytes());out.extend(1u16.to_le_bytes());out.extend(16000u32.to_le_bytes());out.extend(32000u32.to_le_bytes());out.extend(2u16.to_le_bytes());out.extend(16u16.to_le_bytes());out.extend(b"data");out.extend(size.to_le_bytes());out.extend(pcm.iter().flat_map(|p|p.to_le_bytes()));out
@@ -2471,10 +3043,10 @@ fn wav(pcm:&[i16])->Vec<u8>{
     }
     #[test]fn resamples_16k_24k_and_48k_to_24k(){
         let s16:Vec<i16>=(0..1600).map(|i|(i*10) as i16).collect();
-        let r16=resample_pcm(&s16,16000,24000);assert_eq!(r16.len(),2400);assert_eq!(r16[0],0);
+        let r16=resample_pcm(&s16,16000,24000);assert_eq!(r16.len(),2400);assert!(r16[0].abs()<=20);assert!((r16[150]-1000).abs()<=2);
         let s24=vec![123i16;2400];assert_eq!(resample_pcm(&s24,24000,24000),s24);
         let s48:Vec<i16>=(0..4800).map(|i|(i*5) as i16).collect();
-        let r48=resample_pcm(&s48,48000,24000);assert_eq!(r48.len(),2400);assert_eq!(r48[10],100);
+        let r48=resample_pcm(&s48,48000,24000);assert_eq!(r48.len(),2400);assert!((r48[10]-100).abs()<=2);
     }
     #[test]
     fn strips_web_citations_and_prevents_stream_gibberish() {
@@ -2544,9 +3116,9 @@ fn wav(pcm:&[i16])->Vec<u8>{
                 return chunk;
             }
         };
-        sess.turn(&ctx,vec![0;3200],0).await.unwrap();
+        sess.turn(&ctx,vec![0;3200],0,None).await.unwrap();
         let pcm1=recv_speech();assert_eq!(pcm1.len(),3);
-        sess.turn(&ctx,vec![0;3200],0).await.unwrap();
+        sess.turn(&ctx,vec![0;3200],0,None).await.unwrap();
         let pcm2=recv_speech();assert_eq!(pcm2.len(),3);
         let items=journal.items(10);assert!(items.iter().any(|t|t.answer=="ответ 2"));
         sess.close();host.stop_all().await;std::fs::remove_dir_all(dir).unwrap();

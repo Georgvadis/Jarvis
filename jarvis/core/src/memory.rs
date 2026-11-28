@@ -98,12 +98,46 @@ struct Saved {
 /// Текстовая модель без инструментов: (instructions, text) → ответ.
 pub type Summarizer = Arc<dyn Fn(String, String) -> BoxFut<Result<String, String>> + Send + Sync>;
 
+#[derive(Clone, Copy)]
+struct ArchiveEntry {
+    ts: i64,
+    size: usize,
+    offset: u64,
+    len: u32,
+}
+
+#[derive(Default)]
+struct ArchiveIndex {
+    entries: Vec<ArchiveEntry>,
+    postings: HashMap<String, Vec<u32>>,
+}
+
+impl ArchiveIndex {
+    fn push(&mut self, t: &ChatTurn, offset: u64, len: u32) {
+        let idx = self.entries.len() as u32;
+        self.entries.push(ArchiveEntry { ts: t.ts, size: t.size(), offset, len });
+        let combined = format!("{} {}", t.user, t.bot).to_lowercase().replace('ё', "е");
+        let mut seen = HashSet::new();
+        for w in words(&combined) {
+            let chars: Vec<char> = w.chars().collect();
+            if chars.len() < 3 {
+                continue;
+            }
+            let pref: String = chars[..chars.len().min(3)].iter().collect();
+            if seen.insert(pref.clone()) {
+                self.postings.entry(pref).or_default().push(idx);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct St {
     d: Saved,
     recent: Vec<ChatTurn>,
     archive_len: usize,
     archive_first_ts: Option<i64>,
+    archive_index: Option<ArchiveIndex>,
     chat_turns: usize,
     compacting: bool,
     running: bool,
@@ -727,6 +761,7 @@ impl Memory {
             st.archive_first_ts = first_ts;
             st.chat_turns = chat_turns;
             st.recent = recent_q.into_iter().collect();
+            st.archive_index = None;
         } else {
             let _ = std::fs::remove_file(&tmp);
             return 0;
@@ -739,10 +774,14 @@ impl Memory {
         o.append(true).create(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        let mut written_span: Option<(u64, u32)> = None;
         if let Ok(mut f) = o.open(self.archive_path()) {
+            let off = f.metadata().map(|m| m.len()).unwrap_or(0);
             let mut line = serde_json::to_vec(t).unwrap_or_default();
             line.push(b'\n');
-            let _ = f.write_all(&line);
+            if f.write_all(&line).is_ok() {
+                written_span = Some((off, line.len() as u32));
+            }
         }
         st.archive_len += 1;
         if st.archive_first_ts.is_none() {
@@ -752,6 +791,13 @@ impl Memory {
             st.chat_turns += 1;
         }
         st.push_recent(t.clone());
+        if let Some(index) = st.archive_index.as_mut() {
+            if let Some((off, len)) = written_span {
+                index.push(t, off, len);
+            } else {
+                st.archive_index = None;
+            }
+        }
         if st.archive_len > ARCHIVE_HARD {
             // сжимать в летопись нечем (нет модели) — старое выкидываем, раз в несколько тысяч реплик
             let drop = st.archive_len - ARCHIVE_MAX;
@@ -1248,18 +1294,58 @@ impl Memory {
 
     // ---- «вспомни»
 
+    fn ensure_archive_index(&self, st: &mut St) {
+        if st.archive_index.is_some() {
+            return;
+        }
+        let mut index = ArchiveIndex::default();
+        if let Ok(file) = std::fs::File::open(self.archive_path()) {
+            let mut rd = std::io::BufReader::with_capacity(8192, file);
+            let mut line = Vec::with_capacity(512);
+            let mut offset = 0u64;
+            loop {
+                line.clear();
+                match rd.read_until(b'\n', &mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if let Ok(t) = serde_json::from_slice::<ChatTurn>(&line)
+                            && (!t.user.is_empty() || !t.bot.is_empty())
+                        {
+                            index.push(&t, offset, n as u32);
+                        }
+                        offset += n as u64;
+                    }
+                }
+            }
+        }
+        st.archive_index = Some(index);
+    }
+
+    fn read_turn_at(&self, file: &mut std::fs::File, entry: ArchiveEntry) -> Option<ChatTurn> {
+        use std::io::{Read as _, Seek as _, SeekFrom};
+        let len = usize::try_from(entry.len).ok()?;
+        if len == 0 || len > 512 * 1024 {
+            return None;
+        }
+        file.seek(SeekFrom::Start(entry.offset)).ok()?;
+        let mut buf = vec![0u8; len];
+        file.read_exact(&mut buf).ok()?;
+        serde_json::from_slice::<ChatTurn>(&buf).ok()
+    }
+
     /// Найти в архиве реплики по словам и/или за день, а в летописи — месяцы по словам или по дню.
     pub fn search(&self, query: &str, date: &str) -> String {
         if !self.enabled() {
             return "Память выключена в настройках: прошлых разговоров ты не помнишь. Так и скажи.".into();
         }
         let now = self.now();
-        let st = self.st.lock().unwrap();
+        let mut st = self.st.lock().unwrap();
         if st.archive_len == 0 && st.d.chronicle.is_empty() {
             return "Архив разговоров пуст — вспоминать нечего. Не выдумывай: скажи, что не помнишь.".into();
         }
+        self.ensure_archive_index(&mut st);
         let day = recall_day(date, query, &now);
-        let in_day = |t: &ChatTurn| day.is_none_or(|d| at(t.ts, &now).date() == d);
+        let in_day_ts = |ts: i64| day.is_none_or(|d| at(ts, &now).date() == d);
         let since = match (st.d.chronicle.first(), st.archive_first_ts) {
             (Some(m), _) => format!("летописи за {}", month_label(&m.month)),
             (None, Some(ts)) => day_label(at(ts, &now).date(), &now, true),
@@ -1268,11 +1354,11 @@ impl Memory {
         let terms = recall_terms(query);
 
         // летопись: месяцы по словам; за день старше архива — его месяц
-        let mut chron: Vec<&ChronMonth> = vec![];
+        let mut chron: Vec<ChronMonth> = vec![];
         if !terms.is_empty() {
             let mut ms: Vec<(&ChronMonth, usize)> = st.d.chronicle.iter().map(|m| (m, score_text(&m.text, &terms))).filter(|x| x.1 > 0).collect();
             ms.sort_by(|a, b| b.1.cmp(&a.1));
-            chron.extend(ms.iter().take(2).map(|x| x.0));
+            chron.extend(ms.iter().take(2).map(|x| x.0.clone()));
         }
         if let Some(d) = day {
             let day_start = d.to_zoned(now.time_zone().clone()).map(|z| z.timestamp().as_second()).unwrap_or(0);
@@ -1280,41 +1366,61 @@ impl Memory {
                 let key = d.strftime("%Y-%m").to_string();
                 for m in &st.d.chronicle {
                     if m.month == key && !chron.iter().any(|c| c.month == m.month) {
-                        chron.push(m);
+                        chron.push(m.clone());
                     }
                 }
             }
         }
 
+        let index = st.archive_index.as_ref().unwrap();
         let mut hits: Vec<(usize, usize)> = vec![];
         let mut day_meta: Vec<(usize, usize)> = vec![];
-        let mut prev_meta: Option<(bool, usize)> = None;
         let mut sizes: HashMap<usize, usize> = HashMap::new();
-        let mut idx = 0usize;
-        stream_archive(&self.archive_path(), |t| {
-            let i = idx;
-            idx += 1;
-            let cur_ok = in_day(&t);
-            let cur_sz = t.size();
-            if cur_ok {
-                if let Some((_, ps)) = prev_meta.filter(|(ok, _)| *ok) {
-                    sizes.insert(i - 1, ps);
+
+        if day.is_some() {
+            for (i, e) in index.entries.iter().enumerate() {
+                if in_day_ts(e.ts) {
+                    sizes.insert(i, e.size);
+                    day_meta.push((i, e.size));
                 }
-                sizes.insert(i, cur_sz);
-                day_meta.push((i, cur_sz));
-                if !terms.is_empty() {
-                    let s = score(&t, &terms);
-                    if s > 0 {
-                        hits.push((i, s));
+            }
+        }
+        if !terms.is_empty() {
+            let mut cand_counts: HashMap<u32, usize> = HashMap::new();
+            for term in &terms {
+                let pref: String = term.chars().take(3).collect();
+                if let Some(list) = index.postings.get(&pref) {
+                    for &idx in list {
+                        *cand_counts.entry(idx).or_insert(0) += 1;
                     }
                 }
             }
-            if let Some(prev_hit) = hits.last() && prev_hit.0 + 1 == i && cur_ok {
-                sizes.insert(i, cur_sz);
+            let mut candidates: Vec<(usize, usize)> = cand_counts
+                .into_iter()
+                .map(|(i, c)| (i as usize, c))
+                .filter(|(i, _)| index.entries.get(*i).is_some_and(|e| in_day_ts(e.ts)))
+                .collect();
+            candidates.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+            // Проверяем точные корни (score) только у кандидатов из индекса (O(k) вместо скана всего файла)
+            if let Ok(mut file) = std::fs::File::open(self.archive_path()) {
+                for (i, _) in candidates.into_iter().take(256) {
+                    let entry = index.entries[i];
+                    if let Some(t) = self.read_turn_at(&mut file, entry) {
+                        let s = score(&t, &terms);
+                        if s > 0 {
+                            hits.push((i, s));
+                            for j in i.saturating_sub(1)..=(i + 1).min(index.entries.len().saturating_sub(1)) {
+                                let ne = index.entries[j];
+                                if in_day_ts(ne.ts) {
+                                    sizes.insert(j, ne.size);
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            prev_meta = Some((cur_ok, cur_sz));
-            true
-        });
+        }
+
         if chron.is_empty() {
             if let Some(d) = day
                 && day_meta.is_empty()
@@ -1363,14 +1469,15 @@ impl Memory {
                 keep.insert(j);
             }
             let mut turns = Vec::with_capacity(keep.len());
-            let mut cur_i = 0usize;
-            stream_archive(&self.archive_path(), |t| {
-                if keep.contains(&cur_i) {
-                    turns.push(t);
+            if let Ok(mut file) = std::fs::File::open(self.archive_path()) {
+                for &j in &keep {
+                    if let Some(&entry) = index.entries.get(j)
+                        && let Some(t) = self.read_turn_at(&mut file, entry)
+                    {
+                        turns.push(t);
+                    }
                 }
-                cur_i += 1;
-                cur_i <= *keep.last().unwrap_or(&0)
-            });
+            }
             let mut s = format!(
                 "Из архива разговоров (время — у хозяина; «Человек» — хозяин, «Джарвис» — ты; в скобках — что ты сделал):\n{}",
                 transcript(&turns, &now, true)
@@ -1400,6 +1507,7 @@ impl Memory {
         let mut st = self.st.lock().unwrap();
         st.reset();
         st.epoch += 1;
+        st.archive_index = None;
         st.d.profile.clear();
         st.d.chronicle.clear();
         st.d.summary_at = 0;

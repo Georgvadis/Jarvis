@@ -212,6 +212,7 @@ pub fn router(app: App) -> Router {
         .route("/api/backup", get(backup::download))
         .route("/api/backup/restore", post(backup::restore).layer(DefaultBodyLimit::max(jarvis_station::backup::MAX_ZIP + 1)))
         .route("/api/stop", post(talk::stop))
+        .route("/api/events", get(talk::events))
         .route("/api/activity", get(talk::activity))
         .route("/api/scenario", post(talk::scenario_run))
         .route("/api/scenarios", get(talk::scenarios_list).post(talk::scenarios_create))

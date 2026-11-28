@@ -306,6 +306,7 @@ pub struct Engine {
     cmds: std::sync::OnceLock<crate::cmdspot::CmdSpotter>,
     last_error_notice: Mutex<Option<(String, Instant)>>,
     error_speaking: AtomicBool,
+    wake_verify_busy: Arc<AtomicBool>,
     initial_audio: Mutex<InitialAudioDiag>,
     pub mic_peak: std::sync::atomic::AtomicU16,
 }
@@ -330,17 +331,42 @@ pub fn loud_at(pcm: &[i16], threshold: i64) -> bool {
 struct InputActivity {
     background: f32,
     sustained: u32,
+    vad: Box<earshot::Detector>,
+    vad_buf: Vec<i16>,
+    neural_prob: f32,
 }
 
 impl Default for InputActivity {
     fn default() -> Self {
-        Self { background: 24.0, sustained: 0 }
+        Self {
+            background: 24.0,
+            sustained: 0,
+            vad: earshot::Detector::default_boxed(),
+            vad_buf: Vec::with_capacity(earshot::FRAME_SIZE * 2),
+            neural_prob: 0.0,
+        }
     }
 }
 
 impl InputActivity {
     fn observe(&mut self, pcm: &[i16], listening: bool, boost_db: i64) -> bool {
         const SUSTAINED_NOISE_FRAMES: u32 = 200; // 4.0 с непрерывного фона без пауз (слово «Джарвис» ~0.7 с)
+        self.vad_buf.extend_from_slice(pcm);
+        let mut max_neural = 0.0f32;
+        let mut ran_vad = false;
+        while self.vad_buf.len() >= earshot::FRAME_SIZE {
+            let p = self.vad.predict(&self.vad_buf[..earshot::FRAME_SIZE]).as_f32();
+            max_neural = max_neural.max(p);
+            ran_vad = true;
+            self.vad_buf.drain(..earshot::FRAME_SIZE);
+        }
+        if ran_vad {
+            self.neural_prob = max_neural;
+        } else {
+            self.neural_prob *= 0.85;
+        }
+        let neural = self.neural_prob;
+
         let scale = if boost_db > 0 {
             10f32.powf(boost_db.min(24) as f32 / 20.0)
         } else {
@@ -351,8 +377,15 @@ impl InputActivity {
         let mut active = false;
         for frame in pcm.chunks(RATE / 50).filter(|frame| frame.len() >= RATE / 250) {
             let level = frame.iter().map(|v| u32::from(v.unsigned_abs())).sum::<u32>() as f32 / frame.len() as f32;
-            let level_threshold = (self.background * 1.8).max(min_level);
-            let sample_threshold = (self.background * 2.2).max(min_sample) as u16;
+            let (lvl_mul, min_mul) = if neural >= 0.50 {
+                (1.35, 0.72) // нейросеть уверенно слышит человеческую речь — ловим даже тихий голос
+            } else if neural >= 0.20 {
+                (1.80, 1.00)
+            } else {
+                (2.35, 1.35) // шум без речевых формант отсекаем строже, сохраняя чувствительность к тихому голосу
+            };
+            let level_threshold = (self.background * lvl_mul).max(min_level * min_mul);
+            let sample_threshold = (self.background * (lvl_mul + 0.4)).max(min_sample * min_mul) as u16;
             let speech = level > level_threshold
                 && frame.iter().filter(|v| v.unsigned_abs() > sample_threshold).count() >= frame.len() / 12;
             if !speech {
@@ -594,6 +627,7 @@ impl Engine {
             speech_epoch: AtomicU64::new(0), speech_notify: tokio::sync::Notify::new(), saying: AtomicBool::new(false), previews: Default::default(),
             wake_replies: Default::default(), wake_reply_sequence: AtomicU64::new(0), cmds: Default::default(),
             last_error_notice: Mutex::default(), error_speaking: AtomicBool::new(false),
+            wake_verify_busy: Arc::new(AtomicBool::new(false)),
             initial_audio: Mutex::default(),
             mic_peak: std::sync::atomic::AtomicU16::new(0),
         })
@@ -814,11 +848,136 @@ impl Engine {
                             }
                         }
                         e.trigger("слово", p);
+                    } else if ready
+                        && enabled
+                        && !muted_input
+                        && let Some((border_tag, border_prob)) = det.take_borderline()
+                    {
+                        e.try_verify_borderline_wake(border_tag, border_prob);
                     }
                 }
             })
             .expect("поток движка");
         self.watch_alice();
+    }
+
+    /// 2-я ступень верификации пограничных срабатываний wake-word через локальный GigaAM-v3 (~50 мс в LAN):
+    /// ловит тихий или дальний зов («Аянами», «Джарвис») без увеличения ложных срабатываний.
+    fn try_verify_borderline_wake(self: &Arc<Self>, border_tag: Option<String>, border_prob: f32) {
+        if !self.host.supports_stt("local-rvc-voice") {
+            return;
+        }
+        if self.wake_verify_busy.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pcm: Vec<i16> = {
+            let st = self.st.lock().unwrap();
+            if st.busy || st.live.is_some() {
+                self.wake_verify_busy.store(false, Ordering::SeqCst);
+                return;
+            }
+            let take = (RATE * 135 / 100).min(st.ring.len()); // последние 1.35 с
+            let skip = st.ring.len().saturating_sub(take);
+            st.ring.iter().skip(skip).copied().collect()
+        };
+        if pcm.len() < RATE / 2 || peak(&pcm) < 120.0 {
+            self.wake_verify_busy.store(false, Ordering::SeqCst);
+            return;
+        }
+        let mut raw = Vec::with_capacity(pcm.len() * 2);
+        for s in pcm {
+            raw.extend_from_slice(&s.to_le_bytes());
+        }
+        let listener_phrase = self.listener.phrase();
+        let (lang, candidates) = self.store.with(|s| {
+            let mut cands: Vec<(String, String, String)> = Vec::new();
+            for p in &s.profiles {
+                let phrase = if !p.wake_profile.is_empty() {
+                    crate::wake_profiles::get(&self.data, &p.wake_profile)
+                        .map(|(ph, _)| ph)
+                        .unwrap_or_else(|_| p.name.clone())
+                } else {
+                    listener_phrase.clone()
+                };
+                cands.push((p.id.clone(), p.name.clone(), phrase));
+            }
+            (s.language.clone(), cands)
+        });
+        let e = self.clone();
+        let flag = self.wake_verify_busy.clone();
+        self.rt.spawn(async move {
+            struct BusyGuard(Arc<AtomicBool>);
+            impl Drop for BusyGuard {
+                fn drop(&mut self) {
+                    self.0.store(false, Ordering::SeqCst);
+                }
+            }
+            let _guard = BusyGuard(flag);
+            let srv = crate::tools::local_voice_url(&e.host);
+            let lang_q = if lang.trim().is_empty() { "ru" } else { lang.trim() };
+            let url = format!("{srv}/stt/wake-check?model=gigaam-v3&lang={lang_q}");
+            let Ok(resp) = crate::net::direct()
+                .post(&url)
+                .header("Content-Type", "application/octet-stream")
+                .body(raw)
+                .timeout(Duration::from_millis(450))
+                .send()
+                .await
+            else {
+                return;
+            };
+            if !resp.status().is_success() {
+                return;
+            }
+            let Ok(val) = resp.json::<serde_json::Value>().await else {
+                return;
+            };
+            let text = val["text"].as_str().unwrap_or("").trim();
+            if text.is_empty() {
+                return;
+            }
+            let norm = crate::fastcmd::norm_text(text);
+            let tokens: Vec<&str> = norm.split_whitespace().collect();
+            if tokens.is_empty() {
+                return;
+            }
+            let mut matched_pid: Option<String> = None;
+            let mut matched = false;
+            for (pid, name, phrase) in &candidates {
+                let name_n = crate::fastcmd::norm_text(name);
+                let phrase_n = crate::fastcmd::norm_text(phrase);
+                let hit_cand = (!phrase_n.is_empty() && norm.contains(&phrase_n))
+                    || (!name_n.is_empty() && norm.contains(&name_n))
+                    || tokens.iter().any(|tok| crate::fastcmd::is_clipped_wake_word(tok, phrase, name));
+                if hit_cand {
+                    matched = true;
+                    if border_tag.as_deref() == Some(pid.as_str()) || matched_pid.is_none() {
+                        matched_pid = Some(pid.clone());
+                    }
+                }
+            }
+            if !matched {
+                let lp = crate::fastcmd::norm_text(&listener_phrase);
+                matched = (!lp.is_empty() && norm.contains(&lp))
+                    || tokens.iter().any(|tok| crate::fastcmd::is_clipped_wake_word(tok, &listener_phrase, ""));
+            }
+            if !matched || e.talking() {
+                return;
+            }
+            let target_pid = border_tag.or(matched_pid);
+            if let Some(pid) = target_pid.as_deref()
+                && !pid.is_empty()
+            {
+                let cur = e.store.with(|s| s.active.clone());
+                if cur != pid
+                    && let Some((_, prof, _)) = e.switch_active_profile_silent(pid)
+                {
+                    log::info!("2-stage wake: переключил на «{}» по подтверждению «{text}»", prof.name);
+                }
+            }
+            log::info!("2-stage wake: GigaAM-v3 подтвердил «{text}» (oww={border_prob:.2})");
+            e.trigger("слово", border_prob.max(0.90));
+        });
     }
 
     /// Системное сообщение колонки: сразу локальный сигнал (без сети и ключей — подтверждение есть всегда),
